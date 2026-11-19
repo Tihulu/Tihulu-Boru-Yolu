@@ -20,6 +20,23 @@ class ExampleContractTests(unittest.TestCase):
             at[parts[-1]] = value
         return obj
 
+    def test_boru_core_independent_of_tihulu_auto(self):
+        self.assertEqual("boru_core", BASE["orchestrator"]["engine"])
+        self.assertFalse(BASE["orchestrator"]["tihulu_auto_required"])
+        self.assertFalse(BASE["services"]["tihulu_auto"]["enabled"])
+        self.assertEqual([], validate_example(BASE))
+
+    def test_legacy_adapter_not_mandatory(self):
+        bad = self.variant(orchestrator__tihulu_auto_required=True)
+        self.assertIn("TIHULU-AUTO must never be required", validate_example(bad))
+        bad2 = self.variant(services__tihulu_auto__required=True)
+        self.assertIn("legacy adapter must not be required", validate_example(bad2))
+
+    def test_standalone_opencode_and_jan(self):
+        for flag in ("standalone_opencode", "standalone_jan"):
+            bad = self.variant(**{"orchestrator__" + flag: False})
+            self.assertIn("OpenCode and Jan must remain standalone", validate_example(bad))
+
     def test_safe_default_example(self):
         self.assertEqual([], validate_example(BASE))
         self.assertFalse(BASE["execution"]["cloud_shell"]["enabled"])
