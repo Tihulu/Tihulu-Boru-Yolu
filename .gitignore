@@ -1,0 +1,19 @@
+# Keep credentials and user state out of public GitHub
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.sqlite
+*.db
+__pycache__/
+*.py[cod]
+.venv/
+.venv-*/
+.pytest_cache/
+.kandev/
+.langflow/
+local-state/
+private/
+logs/
+*.log

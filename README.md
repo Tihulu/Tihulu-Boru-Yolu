@@ -1,2 +1,84 @@
-# Tihulu-Boru-Yolu
-Tut sunun ucunu doseyelim abi...
+# TIHULU Boru Yolu
+
+**Local-first, user-controlled orchestration for AI coding agents, visual workflows, and hybrid local/cloud models.**
+
+> Status: **Architecture and source-only bootstrap**. This repository does not yet install or run a broker, executor, or validated Privacy Bridge. Never interpret a workflow diagram or configuration example as an enforced security boundary.
+
+## Purpose
+
+TIHULU Boru Yolu connects **Kandev** (tasks, roles, reviews), **Langflow** (visual pipelines), **TIHULU-AUTO** (routing, budgets, scheduling), **OpenCode** (coding agents), and **Jan** (local models) without replacing or modifying existing Jan/OpenCode installations during initial setup.
+
+It supports both preferences:
+- **Local-isolated Shell (default):** only an independently authorized local executor may invoke host tools; cloud models receive minimum necessary, validated information.
+- **Cloud Shell opt-in:** an owner can choose to allow a cloud-driven agent to request Shell operations **inside a separately isolated, project-scoped sandbox**, only through a trusted authorization broker and explicit, short-lived consent. No cloud-to-host Shell shortcut; no automatic escalation.
+
+Cloud *inference*, Shell *execution*, and private-data *disclosure* are **three independent controls**, not one ambiguous "local/cloud" toggle.
+
+## Components and ownership
+
+| Component | Responsibility | Not a security guarantee |
+| --- | --- | --- |
+| Kandev | Kanban, coding-agent profiles, workflow steps, worktrees, review and QA | A Kandev agent can invoke tools; task stages alone do not isolate Shell |
+| Langflow | Drag-and-drop DAGs, routing visualization, typed flow inputs/outputs | A flow node is not a trusted permission broker |
+| TIHULU-AUTO core | Model catalog, mode-aware selection, scheduling, fallback, budgets and resource leasing | A model prompt cannot authenticate an executor |
+| OpenCode | Primary/subagent sessions, coding workflows and provider adapters | A skill is not a subagent; effective permissions must be tested |
+| Jan | Existing local OpenAI-compatible model API | An accessible model ID does not prove loaded availability or tool compatibility |
+| Trusted broker / Privacy Bridge | Consent verification, execution restrictions, output release policy and audit | **Not implemented or validated yet** |
+
+## Policy choices
+
+| Execution profile | Cloud inference | Shell control | Local sensitive output |
+| --- | --- | --- | --- |
+| `LOCAL_ISOLATED` (**default**) | Optional, governed separately | Trusted local worker only | Minimized/typed; no raw forwarding |
+| `HYBRID_PRIVATE` | Allowed by owner | Trusted local worker only | Minimal approved disclosure |
+| `CLOUD_SHELL_APPROVAL` (**opt-in**) | Allowed | Cloud-driven requests only via owner-approved *sandbox broker* | Approved scope only; sanitize tool results |
+| `CLOUD_SHELL_TRUSTED` (**advanced opt-in**) | Allowed | Expiring, narrow, revocable sandbox capability | Disclosure remains separately controlled |
+
+`CLOUD_SHELL_TRUSTED` never means unrestricted host Shell; it is a convenience policy for preapproved *sandbox-scoped* operations. If unrestricted host access is desired, it is explicitly **out of scope for the initial release**.
+
+Routing presets `AUTO`, `ECONOMY`, `BALANCED`, `PERFORMANCE` and `MANUAL` are **orthogonal** to these security profiles. `LOCAL_ONLY` is a separate inference restriction.
+
+## Repository map
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Security profiles and consent](docs/SECURITY_MODES.md)
+- [Privacy Bridge contracts](docs/PRIVACY_BRIDGE.md)
+- [Routing, budgets, GPU lifecycle](docs/ROUTING_AND_RESOURCES.md)
+- [Kandev / Langflow / OpenCode / Jan integration](docs/INTEGRATIONS.md)
+- [Pop!_OS and Ubuntu setup](docs/INSTALL_UBUNTU_POPOS.md)
+- [Implementation roadmap](docs/ROADMAP.md)
+- [Acceptance and test matrix](docs/ACCEPTANCE.md)
+- [Threat model](docs/THREAT_MODEL.md)
+- [Operations, rollback and migration](docs/OPERATIONS.md)
+- [Architecture decisions](docs/ADRS/0001-control-plane-and-trust.md), [Shell policy decision](docs/ADRS/0002-shell-execution-profiles.md)
+- [Example configuration](examples/boru-yolu.example.json), [Flow sketch](examples/visual-flow.mmd)
+- [Static contract checks](scripts/check_project.py) and [unit tests](tests/test_contract.py)
+
+## Current boundaries
+
+1. Keep production OpenCode, Jan, models and chat sessions untouched at first.
+2. Bind new web services to loopback; no auto-start, cloud sync, remote sharing or exposed API by default.
+3. Do not enable Kandev/agent auto-install or workspace-wide Shell privileges.
+4. Do not infer availability or remaining credits from a model registry.
+5. Do not send configuration files, raw terminal logs, directory inventories, credentials or private task content to cloud services by default.
+6. Backups, real execution, deployments and security acceptance are **HOLD** until verified on a controlled Pop!_OS/Ubuntu machine.
+
+## Developer sanity check (source-only)
+
+~~~bash
+python3 scripts/check_project.py
+python3 -m unittest discover -s tests -v
+~~~
+
+This checks only the repository's example contracts; it does **not** start Jan, Kandev, Langflow, OpenCode or any executor.
+
+## Upstream references
+
+- [Kandev CLI and security notes](https://kandev.ai/docs/cli)
+- [Kandev agents and profiles](https://kandev.ai/docs/agents-and-profiles)
+- [Langflow installation](https://docs.langflow.org/getting-started-installation/)
+- [Langflow API/authentication](https://docs.langflow.org/api-keys-and-authentication)
+- [Langflow OpenAI-compatible endpoints](https://docs.langflow.org/bundles-openai-compatible)
+- [OpenCode tools and subagents](https://opencode.ai/docs/tools/)
+
+Kandev is AGPL-3.0 and Langflow is MIT at the time of planning. They remain external upstream projects; no upstream source is vendored here. The license for *this repository* must be chosen separately before release.
