@@ -9,15 +9,17 @@ Offer a **locally installable, account-free (no external vendor sign-in required
 ~~~mermaid
 flowchart TB
   U[Owner / local UI] --> K[Kandev: tasks, roles, PR review]
-  K --> A[Boru Adapter: job lifecycle and signed intent]
-  U --> L[Langflow: versioned visual flows]
+  U --> L[Langflow: visual flows]
+  K --> A[Boru Adapter: typed tasks]
   L --> A
-  A --> R[TIHULU-AUTO: router / scheduler / budget]
-  R --> M[OpenCode: primary and subagent sessions]
-  M --> J[Jan: local model API]
-  R --> C[Cloud LLM providers, when allowed]
-  R --> B[Trusted local policy / consent broker]
-  B --> X[Local worker / isolated cloud-controlled sandbox]
+  A --> R[Boru Core: own router / scheduler / budgets]
+  R --> O[OpenCode: optional standalone coding-agent adapter]
+  R --> J[Jan: direct local model API]
+  R --> C[Authorized cloud AI providers]
+  R -. optional legacy bridge, never required .-> T[TIHULU-AUTO]
+  O -. independently configured Jan integration .-> J
+  R --> B[Trusted local authorization broker]
+  B --> X[Local worker or isolated cloud-controlled sandbox]
   X --> B
   B --> P[Privacy Bridge: typed release gate]
   P --> R
@@ -25,15 +27,25 @@ flowchart TB
   A --> K
 ~~~
 
-The connecting **Boru Adapter**, trusted broker, sandbox provisioner and production Privacy Bridge are proposed components and require implementation. Diagram lines are *interfaces to build*, not proof of existing integration.
+This is a **proposed** integration topology, not live deployment evidence. **Boru Core is implemented independently** of TIHULU-AUTO. Both OpenCode and Jan remain standalone external applications; either can run normally with Boru Yolu, Kandev, Langflow or TIHULU-AUTO shut down. Jan can be accessed directly from Boru Core without going through OpenCode. OpenCode may have its own Jan connection without Boru Core.
 
-## Single source of truth
+## Ownership and dependency rules
 
-- **TIHULU-AUTO** owns task routing decisions, model selection, resource leases and retry state.
-- **Kandev** owns Kanban status, user-visible task assignment, reviews and worktree lifecycle.
-- **Langflow** owns flow definitions, transformations and visualization; it does not silently become a second router.
-- **Trusted broker** owns enforceable authorization/consent, not model prompts or Langflow condition nodes.
-- **Jan/OpenCode** stay as independent services; no modification to their model weights, databases or running sessions is assumed.
+- **Boru Core (native)** is the *only routing authority for Boru Yolu tasks*: scheduling, model selection, resource leases, retry state, budget accounting and real child-session evidence. This is a new implementation, **not a wrapper that requires TIHULU-AUTO to work**.
+- **TIHULU-AUTO** is a *separate unfinished project* and optional legacy adapter/import source only. It is disabled by default. It may be connected later through versioned interfaces, with explicit user approval and no automatic migration; it cannot be a dependency of M1–M8.
+- **OpenCode** remains an independently installed and usable coding application. Boru uses an optional supported OpenCode API/CLI adapter. Boru does not rewrite its global agent/provider settings, own its running sessions, or require any TIHULU-AUTO agent.
+- **Jan** remains an independent local model server. Boru can call its supported API directly without OpenCode, TIHULU-AUTO, Kandev or Langflow.
+- **Kandev** owns task board, user-facing assignments, reviews and worktrees; **Langflow** owns visual flow definitions. Both are optional control surfaces, not the engine for local model calls.
+- **Trusted broker** independently enforces consent, Shell restrictions and disclosure policies rather than trusting AI prompts or visual flow nodes.
+- Any optional component may be unavailable: record HOLD for only the affected integration while preserving Boru Core's independent provider/agent capabilities.
+
+## Standalone acceptance
+
+1. OpenCode starts and executes its existing independent workflows with Boru Yolu and TIHULU-AUTO absent.
+2. Jan serves its existing supported local model API with Boru Yolu and TIHULU-AUTO absent.
+3. Boru Core starts in its limited text-only test mode and invokes a directly configured Jan model with TIHULU-AUTO absent and no OpenCode subagent.
+4. An optional supported OpenCode child-session adapter provides real provider/model/session evidence without relying on TIHULU-AUTO-specific agents.
+5. Disabling an unavailable optional adapter never triggers credential exports, silent configuration writes or broader execution rights.
 
 ## Layers
 
