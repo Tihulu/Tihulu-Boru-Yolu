@@ -6,7 +6,7 @@
 
 ## Purpose
 
-TIHULU Boru Yolu connects **Kandev** (tasks, roles, reviews), **Langflow** (visual pipelines), **TIHULU-AUTO** (routing, budgets, scheduling), **OpenCode** (coding agents), and **Jan** (local models) without replacing or modifying existing Jan/OpenCode installations during initial setup.
+TIHULU Boru Yolu has its **own independent Boru Core** for routing, budgets, scheduling, and subagent orchestration. It optionally connects **Kandev** (tasks, roles, reviews), **Langflow** (visual pipelines), **OpenCode** (standalone coding agents), and **Jan** (standalone local models). **TIHULU-AUTO is an optional legacy integration, never a required dependency or a release blocker.** OpenCode and Jan keep working when Boru Yolu or TIHULU-AUTO is offline, uninstalled, or unfinished.
 
 It supports both preferences:
 - **Local-isolated Shell (default):** only an independently authorized local executor may invoke host tools; cloud models receive minimum necessary, validated information.
@@ -20,10 +20,13 @@ Cloud *inference*, Shell *execution*, and private-data *disclosure* are **three 
 | --- | --- | --- |
 | Kandev | Kanban, coding-agent profiles, workflow steps, worktrees, review and QA | A Kandev agent can invoke tools; task stages alone do not isolate Shell |
 | Langflow | Drag-and-drop DAGs, routing visualization, typed flow inputs/outputs | A flow node is not a trusted permission broker |
-| TIHULU-AUTO core | Model catalog, mode-aware selection, scheduling, fallback, budgets and resource leasing | A model prompt cannot authenticate an executor |
+| Boru Core (native) | Model catalog, mode-aware routing, subagent scheduler, fallback, budgets and resource leasing | A model prompt cannot authenticate an executor |
+| TIHULU-AUTO (optional) | Legacy workflow/agent bridge, import or migration when independently verified | Not a prerequisite, single routing authority or fallback requirement |
 | OpenCode | Primary/subagent sessions, coding workflows and provider adapters | A skill is not a subagent; effective permissions must be tested |
 | Jan | Existing local OpenAI-compatible model API | An accessible model ID does not prove loaded availability or tool compatibility |
 | Trusted broker / Privacy Bridge | Consent verification, execution restrictions, output release policy and audit | **Not implemented or validated yet** |
+
+**Dependency rule:** neither OpenCode nor Jan depends on Boru Core or TIHULU-AUTO; Boru Core must start and run without TIHULU-AUTO installed. Optional adapters are disabled by default and cannot change standalone app settings.
 
 ## Policy choices
 
@@ -50,7 +53,7 @@ Routing presets `AUTO`, `ECONOMY`, `BALANCED`, `PERFORMANCE` and `MANUAL` are **
 - [Acceptance and test matrix](docs/ACCEPTANCE.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Operations, rollback and migration](docs/OPERATIONS.md)
-- [Architecture decisions](docs/ADRS/0001-control-plane-and-trust.md), [Shell policy decision](docs/ADRS/0002-shell-execution-profiles.md)
+- [Architecture decisions](docs/ADRS/0001-control-plane-and-trust.md), [Shell policy decision](docs/ADRS/0002-shell-execution-profiles.md), [Boru Core independence (ADR-0003)](docs/ADRS/0003-boru-core-independence.md)
 - [Example configuration](examples/boru-yolu.example.json), [Flow sketch](examples/visual-flow.mmd)
 - [Static contract checks](scripts/check_project.py) and [unit tests](tests/test_contract.py)
 
