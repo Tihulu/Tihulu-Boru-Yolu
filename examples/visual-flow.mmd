@@ -1,6 +1,7 @@
 flowchart TD
   K["Kandev: task created"] --> A["Boru Adapter: typed task"]
-  A --> R["TIHULU-AUTO: classify / route"]
+  A --> R["Boru Core: classify / route / schedule"]
+  R -.-> T["Optional TIHULU-AUTO legacy adapter (disabled by default)"]
   R --> O{"Optimization mode"}
   O -->|ECONOMY| L["Suitable local Jan model"]
   O -->|AUTO/BALANCED| C{"Capability + budget"}
