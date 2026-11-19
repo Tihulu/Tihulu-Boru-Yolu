@@ -1,6 +1,6 @@
 # ADR-0001: Separate UI, routing and authorization owners
 
-- Status: **Proposed**
+- Status: **Superseded in part by [ADR-0003](0003-boru-core-independence.md) (routing ownership only); archived design retained**
 - Date: 2026-11-20
 
 ## Context
