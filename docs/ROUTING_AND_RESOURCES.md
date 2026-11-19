@@ -1,5 +1,9 @@
 # Model routing, optimization, fallback and resource management
 
+## Owner and independent providers
+
+**Boru Core is the routing and scheduling authority for Boru Yolu tasks.** It must function with TIHULU-AUTO uninstalled. TIHULU-AUTO is optional legacy integration, not a required API, process, agent name, routing service or credit source. Jan may be invoked directly; OpenCode is a separate optional agent adapter. Disconnection of either optional agent adapter cannot affect standalone OpenCode/Jan behavior. No silent import of historical TIHULU-AUTO configs or sessions.
+
 ## One optimizer plus independent restrictions
 
 Profiles select efficiency; restrictions select *who can receive data and control tools*.
