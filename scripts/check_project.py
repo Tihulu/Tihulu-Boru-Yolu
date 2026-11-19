@@ -15,7 +15,8 @@ REQUIRED_DOCS = [
     "docs/INTEGRATIONS.md", "docs/INSTALL_UBUNTU_POPOS.md",
     "docs/ROADMAP.md", "docs/ACCEPTANCE.md", "docs/THREAT_MODEL.md",
     "docs/OPERATIONS.md", "docs/ADRS/0001-control-plane-and-trust.md",
-    "docs/ADRS/0002-shell-execution-profiles.md", "examples/visual-flow.mmd",
+    "docs/ADRS/0002-shell-execution-profiles.md",
+    "docs/ADRS/0003-boru-core-independence.md", "examples/visual-flow.mmd",
 ]
 
 
@@ -23,6 +24,15 @@ def validate_example(c: dict) -> list[str]:
     """Validate documentation examples, NOT a production authorization engine."""
     errors = []
     try:
+        orch = c["orchestrator"]
+        if orch["engine"] != "boru_core":
+            errors.append("Boru Core must own orchestration")
+        if orch["tihulu_auto_required"] is not False:
+            errors.append("TIHULU-AUTO must never be required")
+        if orch["standalone_opencode"] is not True or orch["standalone_jan"] is not True:
+            errors.append("OpenCode and Jan must remain standalone")
+        if c["services"].get("tihulu_auto", {}).get("required", False):
+            errors.append("legacy adapter must not be required")
         routing = c["routing"]
         exe = c["execution"]
         cs = exe["cloud_shell"]
