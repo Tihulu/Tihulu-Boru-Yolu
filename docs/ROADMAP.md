@@ -14,9 +14,9 @@ Each milestone requires evidence and a reversible change. An incomplete mileston
 **Exit:** health and bind checks, uninstall and restore dry run, synthetic Kanban/flow; other sessions unchanged.
 **HOLD:** requires local host operator and approved installation.
 
-## M2 — Jan/OpenCode text-only compatibility
+## M2 — Independent Jan API and optional OpenCode adapter compatibility
 
-**Scope:** exact Jan model inventory, one-small-model 3-turn chat test, optional larger model sequential test; Kandev disposable OpenCode profile; Langflow Jan endpoint. Verify OpenCode real `subagent` invocation and differentiate it from `skill`.
+**Scope:** direct Jan model inventory and one-small-model 3-turn chat test through Boru Core **without TIHULU-AUTO**, optional larger model sequential test; separately verify unmodified OpenCode standalone operation and real `subagent` invocation through a disposable profile (not `skill`). Langflow and Kandev linkage can follow as optional pilots.
 **Exit:** child session evidence with actual provider and model; no Shell or private data.
 **HOLD:** live provider tests required.
 
@@ -28,7 +28,7 @@ Each milestone requires evidence and a reversible change. An incomplete mileston
 
 ## M4 — Routing modes and observability
 
-**Scope:** single TIHULU-AUTO router, AUTO/ECONOMY/BALANCED/PERFORMANCE/MANUAL; separate LOCAL_ONLY/CLOUD_ALLOWED; actual token metrics or labelled estimates; bounded fallback without side effects.
+**Scope:** independent **Boru Core** router (not TIHULU-AUTO), AUTO/ECONOMY/BALANCED/PERFORMANCE/MANUAL; separate LOCAL_ONLY/CLOUD_ALLOWED; actual token metrics or labelled estimates; bounded fallback without side effects.
 **Exit:** deterministic simulation of provider quota failures and actual, approved provider test; model selection changes with mode while execution permissions do not.
 **HOLD:** routing engine implementation and test evidence.
 
@@ -60,7 +60,8 @@ Each milestone requires evidence and a reversible change. An incomplete mileston
 - P0: publish baseline architecture and trust decisions
 - P0: test Kandev non-invasive local install
 - P0: test Langflow localhost Jan text-only flow
-- P0: validate effective OpenCode subagent tool and child provider
+- P0: prove independent Boru Core -> Jan text-only test with TIHULU-AUTO absent
+- P0: validate optional OpenCode subagent adapter and child provider without TIHULU-AUTO
 - P1: implement Boru Adapter task contract
 - P1: implement router/budget/fallback and test mode separation
 - P1: build policy broker with full consent test matrix
@@ -71,6 +72,8 @@ Each milestone requires evidence and a reversible change. An incomplete mileston
 - P2: public release/security review
 
 ## Dependencies and parallelism
+
+**No dependency on TIHULU-AUTO:** it may remain unfinished indefinitely without blocking any Boru Yolu milestone. The optional legacy adapter/import is a separately approved follow-up, not a release requirement. OpenCode and Jan are standalone third-party applications and must remain usable without Boru Yolu. Boru Core can invoke Jan directly before OpenCode, Langflow or Kandev integration exists.
 
 M1 and M2 can progress independently in *separate* disposable environments. M3 may prototype text-only before M5, but cannot execute host commands. M4 can use simulated models before live integration. M6 **depends on M5**. M8 depends on all required security and platform gates.
 
