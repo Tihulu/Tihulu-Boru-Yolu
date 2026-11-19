@@ -33,6 +33,9 @@
 | A18 | Up to 6 logical agents | Resource limits, evidence per child | HOLD |
 | A19 | Rollback | Jan/OpenCode unchanged and launchable | HOLD |
 | A20 | Static repo consistency | `scripts/check_project.py` + unittest | NOT RUN HERE |
+| A21 | Boru Core independence | Runs direct Jan text-only flow without TIHULU-AUTO installed | HOLD |
+| A22 | OpenCode and Jan standalone | Existing app/API and sessions function with Boru Yolu and TIHULU-AUTO stopped | HOLD |
+| A23 | Optional OpenCode agent adapter | Real child invocation without any TIHULU-AUTO config or agent; disabling adapter is non-disruptive | HOLD |
 
 ## Test matrix by OS
 
