@@ -2,7 +2,10 @@
   "schema_version": 1,
   "description": "Non-executable demonstration configuration; does not grant authorization.",
   "deployment": {
-    "platforms": ["pop-os-24.04", "ubuntu-24.04-lts"],
+    "platforms": [
+      "pop-os-24.04",
+      "ubuntu-24.04-lts"
+    ],
     "bind_host": "127.0.0.1",
     "auto_start": false
   },
@@ -22,7 +25,9 @@
       "live_owner_consent_required": true,
       "network_egress": false,
       "max_session_minutes": 15,
-      "allowed_workspace_aliases": ["synthetic-demo"]
+      "allowed_workspace_aliases": [
+        "synthetic-demo"
+      ]
     },
     "local_worker": {
       "required": true,
@@ -36,13 +41,34 @@
     "max_result_fields": 4
   },
   "services": {
-    "kandev": {"enabled": false, "base_url": "http://127.0.0.1:38429"},
-    "langflow": {"enabled": false, "base_url": "http://127.0.0.1:7860"},
-    "jan": {"enabled": false, "base_url": "http://127.0.0.1:1337/v1"},
-    "opencode": {"enabled": false}
+    "kandev": {
+      "enabled": false,
+      "base_url": "http://127.0.0.1:38429"
+    },
+    "langflow": {
+      "enabled": false,
+      "base_url": "http://127.0.0.1:7860"
+    },
+    "jan": {
+      "enabled": false,
+      "base_url": "http://127.0.0.1:1337/v1"
+    },
+    "opencode": {
+      "enabled": false
+    },
+    "tihulu_auto": {
+      "enabled": false,
+      "required": false
+    }
   },
   "models": {
     "discovery": "runtime_only",
     "credentials_in_config": false
+  },
+  "orchestrator": {
+    "engine": "boru_core",
+    "tihulu_auto_required": false,
+    "standalone_opencode": true,
+    "standalone_jan": true
   }
 }
