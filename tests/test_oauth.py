@@ -135,74 +135,103 @@ class AuthorizationUrlTests(unittest.TestCase):
 class RedirectCaptureTests(unittest.TestCase):
     """Loopback redirect capture: exact state, single response, no public bind."""
 
-    def build(self, redirect_host="127.0.0.1"):
-        probe = ThreadingHTTPServer((redirect_host, 0), _StubToken)
-        port = probe.server_address[1]
-        probe.server_close()
+    def build(self):
         config_obj = OAuthClientConfig(provider="test-provider",
                                        issuer="https://accounts.example.test",
                                        authorization_endpoint="https://accounts.example.test/authorize",
                                        token_endpoint="https://accounts.example.test/token",
                                        client_id="test-client",
-                                       redirect_uri="http://{}:{}/callback".format(redirect_host, port),
+                                       redirect_uri="http://127.0.0.1:0/callback",
                                        scopes=("openid",))
-        return OAuthFlow(config_obj), port
+        return OAuthFlow(config_obj)
+
+    def wait_listening(self, attempt, timeout=15):
+        self.assertTrue(attempt.listening.wait(timeout))
+        return attempt.redirect_port
 
     @staticmethod
-    def _deliver(port, code, state):
-        request = urllib.request.Request(
-            "http://127.0.0.1:{}/callback?code={}&state={}".format(port, code, state))
+    def deliver(port, code, state, error=None):
+        query = "error={}&state={}".format(error, state) if error else "code={}&state={}".format(code, state)
+        request = urllib.request.Request("http://127.0.0.1:{}/callback?{}".format(port, query))
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
                 response.read()
         except urllib.error.HTTPError:
             pass
 
+    def serve_async(self, flow, attempt):
+        outcome = {}
+
+        def run():
+            try:
+                outcome["code"] = flow.serve_redirect(attempt, timeout=25)
+            except Exception as error:  # stored, asserted on the test thread
+                outcome["error"] = error
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return outcome, thread
+
     def test_redirect_captures_code_with_exact_state(self):
-        flow, port = self.build()
+        flow = self.build()
         _, attempt = flow.start()
-        threading.Thread(target=self._deliver, args=(port, "delivered-code", attempt.state)).start()
-        self.assertEqual("delivered-code", flow.serve_redirect(attempt, timeout=25))
+        outcome, thread = self.serve_async(flow, attempt)
+        self.deliver(self.wait_listening(attempt), "delivered-code", attempt.state)
+        thread.join(timeout=30)
+        self.assertNotIn("error", outcome)
+        self.assertEqual("delivered-code", outcome.get("code"))
         self.assertTrue(attempt.finished.is_set())
         self.assertTrue(attempt.code.startswith("delivered-code"))
 
     def test_state_mismatch_is_denied(self):
         from boru.errors import PolicyViolation
 
-        flow, port = self.build()
+        flow = self.build()
         _, attempt = flow.start()
-        threading.Thread(target=self._deliver, args=(port, "delivered-code", "wrong-state")).start()
-        with self.assertRaises(PolicyViolation):
-            flow.serve_redirect(attempt, timeout=10)
+        outcome, thread = self.serve_async(flow, attempt)
+        self.deliver(self.wait_listening(attempt), "delivered-code", "wrong-state")
+        thread.join(timeout=30)
+        self.assertIsInstance(outcome.get("error"), PolicyViolation)
         self.assertIsNone(attempt.code)
 
     def test_provider_error_is_denied(self):
         from boru.errors import PolicyViolation
 
-        flow, port = self.build()
+        flow = self.build()
         _, attempt = flow.start()
-
-        def deliver_error(port, state):
-            request = urllib.request.Request(
-                "http://127.0.0.1:{}/callback?error=access_denied&state={}".format(port, state))
-            try:
-                with urllib.request.urlopen(request, timeout=5) as response:
-                    response.read()
-            except urllib.error.HTTPError:
-                pass
-
-        threading.Thread(target=deliver_error, args=(port, attempt.state)).start()
-        with self.assertRaises(PolicyViolation):
-            flow.serve_redirect(attempt, timeout=10)
+        outcome, thread = self.serve_async(flow, attempt)
+        self.deliver(self.wait_listening(attempt), None, attempt.state, error="access_denied")
+        thread.join(timeout=30)
+        self.assertIsInstance(outcome.get("error"), PolicyViolation)
         self.assertIsNone(attempt.code)
 
     def test_timeout_denies(self):
         from boru.errors import PolicyViolation
 
-        flow, port = self.build()
+        flow = self.build()
         _, attempt = flow.start()
         with self.assertRaises(PolicyViolation):
             flow.serve_redirect(attempt, timeout=0.2)
+
+    def test_busy_port_is_refused(self):
+        from boru.errors import PolicyViolation
+
+        blocker = ThreadingHTTPServer(("127.0.0.1", 0), _StubToken)
+        busy = blocker.server_address[1]
+        try:
+            config_obj = OAuthClientConfig(provider="test-provider",
+                                           issuer="https://accounts.example.test",
+                                           authorization_endpoint="https://accounts.example.test/authorize",
+                                           token_endpoint="https://accounts.example.test/token",
+                                           client_id="test-client",
+                                           redirect_uri="http://127.0.0.1:{}/callback".format(busy),
+                                           scopes=("openid",))
+            flow = OAuthFlow(config_obj)
+            _, attempt = flow.start()
+            with self.assertRaises(PolicyViolation):
+                flow.serve_redirect(attempt, timeout=2)
+        finally:
+            blocker.server_close()  # never started, so no shutdown() is needed
 
 
 class TokenVaultTests(unittest.TestCase):

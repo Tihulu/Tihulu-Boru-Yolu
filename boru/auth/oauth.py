@@ -111,6 +111,10 @@ class AuthorizationAttempt:
     code: Optional[str] = None
     error: Optional[str] = None
     finished: threading.Event = field(default_factory=threading.Event)
+    #: Actual port the loopback listener bound (equal to the configured port,
+    #: or an ephemeral port when the configuration used port 0).
+    redirect_port: int = 0
+    listening: threading.Event = field(default_factory=threading.Event)
 
 
 class OAuthFlow:
@@ -151,8 +155,8 @@ class OAuthFlow:
             raise PolicyViolation("redirect_uri host must be a numeric address")
         if not address.is_loopback:
             raise PolicyViolation("redirect_uri must be loopback")
-        port = parsed.port
-        if port is None or not isinstance(port, int) or not 1 <= port <= 65535:
+        port = parsed.port or 0
+        if not isinstance(port, int) or not 0 <= port <= 65535:
             raise PolicyViolation("redirect_uri port is invalid")
         captured: Dict[str, str] = {}
         response_seen = threading.Event()
@@ -175,8 +179,13 @@ class OAuthFlow:
                 self.end_headers()
                 self.wfile.write(body)
 
-        server = ThreadingHTTPServer((str(address), port), Redirect)
+        try:
+            server = ThreadingHTTPServer((str(address), port), Redirect)
+        except OSError as exc:  # port busy or not permitted
+            raise PolicyViolation("redirect listener cannot bind loopback") from exc
         server.daemon_threads = True
+        attempt.redirect_port = server.server_address[1]
+        attempt.listening.set()
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
