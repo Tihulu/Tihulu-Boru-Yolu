@@ -41,7 +41,8 @@ class CliTests(unittest.TestCase):
     def test_providers_command(self):
         result = run(["providers"])
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual([{"kind": "mock", "models": []}], json.loads(result.stdout)["providers"])
+        providers = json.loads(result.stdout)["providers"]
+        self.assertEqual([{"kind": "mock", "models": [], "connection_state": "local"}], providers)
 
     def test_state_dir_persists_across_invocations(self):
         first = run(["--state-dir", self.root, "demo"])

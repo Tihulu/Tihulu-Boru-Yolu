@@ -131,6 +131,22 @@ socket permission, persistent consent store or revocation of live grants is
 implemented here. Independent security review is required before any live
 disclosure path is enabled, and the live acceptance matrix entries remain HOLD.
 
+## Cloud provider (P7 source slice, no live calls)
+
+`boru/providers/cloud.py` is an OpenAI-compatible cloud transport with the same
+bounded-exchange rules as the Jan transport, plus:
+
+* HTTPS required unless the owner explicitly allows HTTP for a pinned host;
+* an explicit model allowlist;
+* credentials only as an **environment-variable name** in configuration, read
+  at request time and never stored, logged or sent to another provider;
+* an honest `connection_state`: `configured` (endpoint and models declared),
+  `authenticated` (a credential is present), or `unavailable`.  An
+  authenticated identity is **not** an inference entitlement: a
+  `model_test_passed` state requires a real authorized call, which this
+  repository does not make. `examples/cloud.example.json` demonstrates a
+  configured-but-not-authenticated provider.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation

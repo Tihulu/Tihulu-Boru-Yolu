@@ -51,19 +51,38 @@ def _text(value: Any, label: str, limit: int = 256) -> str:
 
 @dataclass(frozen=True)
 class ProviderConfig:
-    """Bounded description of one configured provider."""
+    """Bounded description of one configured provider.
+
+    ``api_key_env`` names an environment variable; credential values are never
+    stored in configuration, logs or prompts.
+    """
 
     kind: str
     endpoint: Optional[str] = None
     local_model_ids: Tuple[str, ...] = ()
     tool_execution_disabled: bool = True
+    allow_http: bool = False
+    api_key_env: Optional[str] = None
 
     def validate(self) -> List[str]:
         errors: List[str] = []
-        if self.kind not in ("mock", "jan"):
+        if self.kind not in ("mock", "jan", "cloud"):
             errors.append("unknown provider kind")
-        if self.tool_execution_disabled is not True:
+        if self.kind == "cloud":
+            if not isinstance(self.endpoint, str) or not self.endpoint.strip():
+                errors.append("cloud provider requires an explicit https endpoint")
+            elif not self.endpoint.strip().lower().startswith("https://") and not self.allow_http:
+                errors.append("cloud endpoints require https unless http is explicitly allowed")
+            if not self.local_model_ids:
+                errors.append("cloud provider requires an explicit model allowlist")
+        if self.kind != "cloud" and self.tool_execution_disabled is not True:
             errors.append("tool_execution_disabled must be True; Boru Core text-only transport refuses remote tool execution")
+        if not isinstance(self.allow_http, bool):
+            errors.append("allow_http must be a boolean")
+        if self.api_key_env is not None and (
+            not isinstance(self.api_key_env, str) or not self.api_key_env.strip() or len(self.api_key_env) > 64
+        ):
+            errors.append("api_key_env must be a bounded environment variable name")
         if self.kind == "jan":
             if not isinstance(self.endpoint, str) or not self.endpoint.strip():
                 errors.append("Jan provider requires an explicit endpoint")
@@ -159,7 +178,8 @@ class CoreConfig:
         for entry in providers_raw:
             if not isinstance(entry, dict):
                 raise ConfigurationError("provider entries must be objects")
-            unknown_entry = sorted(set(entry) - {"kind", "endpoint", "local_model_ids", "tool_execution_disabled"})
+            unknown_entry = sorted(set(entry) - {"kind", "endpoint", "local_model_ids",
+                                                 "tool_execution_disabled", "allow_http", "api_key_env"})
             if unknown_entry:
                 raise ConfigurationError("unknown provider field")
             models = entry.get("local_model_ids", [])
@@ -173,6 +193,8 @@ class CoreConfig:
                     endpoint=entry.get("endpoint"),
                     local_model_ids=tuple(models),
                     tool_execution_disabled=_bool(entry.get("tool_execution_disabled", True), "tool_execution_disabled"),
+                    allow_http=_bool(entry.get("allow_http", False), "allow_http"),
+                    api_key_env=entry.get("api_key_env"),
                 )
             )
         config = cls(
@@ -199,7 +221,8 @@ class CoreConfig:
             "max_output_tokens": self.max_output_tokens,
             "providers": [
                 {"kind": p.kind, "endpoint": p.endpoint, "local_model_ids": list(p.local_model_ids),
-                 "tool_execution_disabled": p.tool_execution_disabled}
+                 "tool_execution_disabled": p.tool_execution_disabled, "allow_http": p.allow_http,
+                 "api_key_env": p.api_key_env}
                 for p in self.providers
             ],
             "description": self.description,

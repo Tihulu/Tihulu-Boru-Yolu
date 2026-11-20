@@ -144,6 +144,46 @@ class JanProvider(ChatProvider):
             return http.client.HTTPSConnection(self._host, self._port, timeout=remaining)
         return http.client.HTTPConnection(self._host, self._port, timeout=remaining)
 
+    def _exchange_headers(self, method: str, path: str, payload: Optional[bytes], timeout: float,
+                          headers: Dict[str, str]) -> Tuple[int, bytes]:
+        """Bounded exchange with explicit headers (used by cloud providers too)."""
+        deadline = time.monotonic() + timeout
+        conn = self._connect(max(deadline - time.monotonic(), 0.05))
+        try:
+            conn.request(method, path, body=payload, headers=headers)
+            if conn.sock is not None:
+                conn.sock.settimeout(max(deadline - time.monotonic(), 0.05))
+            response = conn.getresponse()
+            chunks: List[bytes] = []
+            total = 0
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ProviderFailure("timeout", "provider deadline exceeded")
+                if conn.sock is not None:
+                    conn.sock.settimeout(max(remaining, 0.05))
+                chunk = response.read(8192)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_RESPONSE_BYTES:
+                    raise ProviderFailure("request_too_large", "response exceeds the bounded size")
+                chunks.append(chunk)
+            return response.status, b"".join(chunks)
+        except ProviderFailure:
+            raise
+        except socket.timeout:
+            raise ProviderFailure("timeout", "provider read timed out")
+        except (socket.error, OSError):
+            raise ProviderFailure("unavailable", "provider connection failed")
+        except http.client.HTTPException:
+            raise ProviderFailure("unavailable", "provider protocol error")
+        finally:
+            try:
+                conn.close()
+            except Exception:  # pragma: no cover - defensive cleanup
+                pass
+
     def _exchange(self, method: str, path: str, payload: Optional[bytes], timeout: float) -> Tuple[int, bytes]:
         """Perform one bounded request/response exchange.
 

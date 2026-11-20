@@ -73,6 +73,11 @@ def _registry_for(config: CoreConfig, providers: Dict[str, Any]):
 
             registry.register(ModelRecord(provider="mock", model_id=MODEL_ID, source="verified",
                                           health="healthy", tags=("text",), local=True))
+        elif entry.kind == "cloud":
+            provider_name = entry.api_key_env or "cloud"
+            for model_id in entry.local_model_ids:
+                registry.register(ModelRecord(provider=provider_name, model_id=model_id, source="configured",
+                                              health="unknown", tags=("text",), local=False))
     return registry
 
 
@@ -85,6 +90,7 @@ class BoruCore:
         self.policy = config.policy
         self.store = store if store is not None else TaskStore(max_records=config.max_records)
         self._clock = clock or utc_now
+        self._cloud_states: Dict[str, str] = {}
         self._providers = self._build_providers(config)
         self._queue: Dict[str, TaskEnvelope] = {}
         self.router = Router(registry) if registry is not None else Router(_registry_for(config, self._providers))
@@ -106,9 +112,26 @@ class BoruCore:
                     local_model_ids=entry.local_model_ids,
                     tool_execution_disabled=entry.tool_execution_disabled,
                 )
+            elif entry.kind == "cloud":
+                from .providers.cloud import CloudProvider
+
+                name = entry.api_key_env or "cloud"
+                provider = CloudProvider(
+                    name.split("-")[-1],
+                    entry.endpoint,
+                    model_ids=entry.local_model_ids,
+                    api_key_env=entry.api_key_env,
+                    allow_http=entry.allow_http,
+                )
+                providers[name] = provider
+                self._cloud_states[name] = provider.connection_state()
             else:  # pragma: no cover - config validation rejects this
                 raise PolicyViolation("provider kind is not supported")
         return providers
+
+    def provider_states(self) -> Dict[str, str]:
+        """Honest per-provider connection state, never an inferred entitlement."""
+        return dict(self._cloud_states)
 
     # -- task lifecycle ------------------------------------------------------
     def submit(self, envelope: TaskEnvelope) -> Tuple[TaskEnvelope, str]:

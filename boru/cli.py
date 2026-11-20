@@ -134,11 +134,17 @@ def _review(args) -> int:
 
 def _providers(args) -> int:
     config = _load_config(args.config)
-    entries = [
-        {"kind": entry.kind, "models": [] if entry.kind == "mock" else list(entry.local_model_ids)}
-        for entry in config.providers
-    ]
-    _emit({"providers": entries, "live_acceptance": "HOLD"}, args.show_text)
+    core = _open_core(config, args.state_dir)
+    try:
+        entries = [
+            {"kind": entry.kind, "models": [] if entry.kind == "mock" else list(entry.local_model_ids),
+             "connection_state": core.provider_states().get(entry.api_key_env or "", "local")
+            if entry.kind == "cloud" else "local"}
+            for entry in config.providers
+        ]
+    finally:
+        core.close()
+    _emit({"providers": entries, "identity_is_not_inference": True, "live_acceptance": "HOLD"}, args.show_text)
     return EXIT_OK
 
 
