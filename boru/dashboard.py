@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 
 from .errors import BoruError, StoreError
+from .i18n import translate, summary_labels
 
 
 def _summary(core) -> Dict[str, Any]:
@@ -64,12 +65,23 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _html(self, status: HTTPStatus, title: str, payload: Dict[str, Any]) -> None:
+    def _render(self, status: HTTPStatus, title: str, payload: Dict[str, Any], language: str = "en") -> None:
+        localized = summary_labels(language)
+        localized = summary_labels(language)
+        rows = "".join(
+            "<tr><th>{}</th><td>{}</td></tr>".format(
+                html.escape(localized.get(key, key)),
+                html.escape(translate("hold") if value == "HOLD" else str(value)),
+            )
+            for key, value in payload.items()
+        )
         body = (
-            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-            "<title>{}</title></head><body><h1>{}</h1><pre>{}</pre></body></html>"
-        ).format(html.escape(title), html.escape(title),
-                 html.escape(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True)))
+            "<!doctype html><html lang=\"{lang}\"><head><meta charset=\"utf-8\">"
+            "<title>{title}</title></head><body><h1>{title}</h1>"
+            "<table>{rows}</table><h2>{tasks}</h2><pre>{payload}</pre></body></html>"
+        ).format(lang=html.escape(language), title=html.escape(translate(title, language)),
+                 rows=rows, tasks=html.escape(localized["tasks"]),
+                 payload=html.escape(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True)))
         raw = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -78,8 +90,15 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_GET(self) -> None:
-        if self.path == "/":
-            self._html(HTTPStatus.OK, "Boru Core status", _summary(self.core))
+        if self.path == "/" or self.path.startswith("/?lang="):
+            language = "en"
+            if "?" in self.path:
+                for part in self.path.split("?", 1)[1].split("&"):
+                    if part.startswith("lang="):
+                        candidate = part[len("lang="):]
+                        if candidate in ("en", "tr", "de"):
+                            language = candidate
+            self._render(HTTPStatus.OK, "title", _summary(self.core), language)
             return
         if self.path == "/status":
             self._json(HTTPStatus.OK, _summary(self.core))

@@ -147,13 +147,25 @@ bounded-exchange rules as the Jan transport, plus:
   repository does not make. `examples/cloud.example.json` demonstrates a
   configured-but-not-authenticated provider.
 
-## Dashboard (P9 slice) and installer (P10 dry-run test)
+## 
 
 `boru/dashboard.py` is a loopback-only status surface: `GET /` renders a
 bounded HTML summary, `GET /status` returns JSON, `GET /task/<id>` shows one
 task, and `POST /review` performs an **explicit, accepted-flag** owner review.
 It performs no inference, changes no policy axis and exposes nothing beyond
-`127.0.0.1` / `::1`.
+`127.0.0.1` / `::1`. The root page localizes its fixed labels for English,
+Turkish and German via `boru/i18n.py` (`?lang=en|tr|de`); unsupported
+languages fall back to English. Only fixed labels are translated — task
+content, provider output, paths and credentials never pass through the i18n
+layer.
+
+The optional **OpenCode adapter** (`boru/adapters/opencode.py`) is disabled by
+default and speaks to a loopback OpenCode server through its official
+`/api/session`, `/api/session/{id}/prompt` and `/interrupt` endpoints. It
+requires a numeric loopback endpoint unless the owner explicitly allows a
+remote host, truncates prompt text to a bounded limit, maps errors to safe
+categories, and records the real session ID it received — a skill load or a
+simulated reply is never counted as a subagent call.
 
 `scripts/install_boru.sh` and `scripts/uninstall_boru.sh` are user-space
 scripts for a chosen directory with a `--dry-run` mode, owner-only state
