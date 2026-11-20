@@ -12,7 +12,7 @@ It supports both preferences:
 - **Local-isolated Shell (default):** only an independently authorized local executor may invoke host tools; cloud models receive minimum necessary, validated information.
 - **Cloud Shell opt-in:** an owner can choose to allow a cloud-driven agent to request Shell operations **inside a separately isolated, project-scoped sandbox**, only through a trusted authorization broker and explicit, short-lived consent. No cloud-to-host Shell shortcut; no automatic escalation.
 
-Cloud *inference*, Shell *execution*, and private-data *disclosure* are **three independent controls**, not one ambiguous "local/cloud" toggle.
+Cloud *inference*, Shell *execution*, and private-data *disclosure* are **three independent controls**, not one ambiguous "local/cloud" toggle. **Optimization is a fourth independent axis**: AUTO, ECONOMY (token-optimized), BALANCED, PERFORMANCE, and MANUAL never grant access to Shell, cloud inference, connected accounts or additional private data. Losing a provider or falling back to another cannot silently escalate permissions. These owner requirements are preserved independently of the unfinished TIHULU-AUTO project.
 
 ## Components and ownership
 
@@ -53,7 +53,7 @@ Routing presets `AUTO`, `ECONOMY`, `BALANCED`, `PERFORMANCE` and `MANUAL` are **
 - [Acceptance and test matrix](docs/ACCEPTANCE.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Operations, rollback and migration](docs/OPERATIONS.md)
-- [Architecture decisions](docs/ADRS/0001-control-plane-and-trust.md), [Shell policy decision](docs/ADRS/0002-shell-execution-profiles.md), [Boru Core independence (ADR-0003)](docs/ADRS/0003-boru-core-independence.md)
+- [Architecture decisions](docs/ADRS/0001-control-plane-and-trust.md), [Shell policy decision](docs/ADRS/0002-shell-execution-profiles.md), [Boru Core independence (ADR-0003)](docs/ADRS/0003-boru-core-independence.md), [Preserved optimization, privacy and Shell policies (ADR-0004)](docs/ADRS/0004-preserve-modes-and-privacy.md)
 - [Example configuration](examples/boru-yolu.example.json), [Flow sketch](examples/visual-flow.mmd)
 - [Static contract checks](scripts/check_project.py) and [unit tests](tests/test_contract.py)
 
