@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VALID_OPT = {"AUTO", "ECONOMY", "BALANCED", "PERFORMANCE", "MANUAL"}
 VALID_SCOPE = {"LOCAL_ONLY", "CLOUD_ALLOWED"}
+VALID_PRIVACY = {"MINIMUM_NECESSARY", "SCOPED_APPROVED"}
 VALID_EXEC = {"LOCAL_ISOLATED", "HYBRID_PRIVATE", "CLOUD_SHELL_APPROVAL", "CLOUD_SHELL_TRUSTED"}
 CLOUD_SHELL = {"CLOUD_SHELL_APPROVAL", "CLOUD_SHELL_TRUSTED"}
 REQUIRED_DOCS = [
@@ -16,7 +17,8 @@ REQUIRED_DOCS = [
     "docs/ROADMAP.md", "docs/ACCEPTANCE.md", "docs/THREAT_MODEL.md",
     "docs/OPERATIONS.md", "docs/ADRS/0001-control-plane-and-trust.md",
     "docs/ADRS/0002-shell-execution-profiles.md",
-    "docs/ADRS/0003-boru-core-independence.md", "examples/visual-flow.mmd",
+    "docs/ADRS/0003-boru-core-independence.md",
+    "docs/ADRS/0004-preserve-modes-and-privacy.md", "examples/visual-flow.mmd",
 ]
 
 
@@ -59,8 +61,12 @@ def validate_example(c: dict) -> list[str]:
                 errors.append("cloud Shell requires sandbox and independent owner consent")
         elif cs["enabled"]:
             errors.append("cloud_shell cannot be enabled in local-only Shell profile")
+        if privacy["policy"] not in VALID_PRIVACY:
+            errors.append("unknown privacy policy")
         if privacy["raw_tool_output_to_cloud"]:
             errors.append("raw_tool_output_to_cloud cannot be globally enabled")
+        if not isinstance(privacy["max_result_fields"], int) or isinstance(privacy["max_result_fields"], bool) or privacy["max_result_fields"] < 1:
+            errors.append("max_result_fields must be a positive integer")
         if not privacy["recipient_bound_disclosure_consent"]:
             errors.append("recipient-bound consent required")
         if deploy["auto_start"]:
