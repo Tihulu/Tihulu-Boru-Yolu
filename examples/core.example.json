@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Minimal offline-runnable Boru Core example (P1 slice). LOCAL_ONLY, LOCAL_ISOLATED, MINIMUM_NECESSARY. No credentials, no network, no autostart. Not a security boundary and not proof of live execution.",
+  "description": "Minimal offline-runnable Boru Core example (P1 slice). LOCAL_ONLY, LOCAL_ISOLATED, MINIMUM_NECESSARY. Outbound directions are declared here; an undeclared direction is refused before any call (issue #9). No credentials, no autostart.",
   "policy": {
     "optimization_mode": "AUTO",
     "inference_scope": "LOCAL_ONLY",
@@ -18,6 +18,13 @@
     {
       "kind": "mock",
       "tool_execution_disabled": true
+    }
+  ],
+  "classifications": [
+    {
+      "boundary": "model_inference",
+      "recipient": "local",
+      "data_class": "none"
     }
   ]
 }

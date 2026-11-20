@@ -311,3 +311,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** dashboard routes `/queue` and `/audit`, an audit section in the root page, an `audit` label for EN/TR/DE, and `DashboardAuditTests`.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **385 tests**. MOCK/STATIC only.
 - **Security implications:** the audit view shows bounded rows only (category, subject, reason, detail kind, timestamp) and no goal, path, content or token; no ledger means an empty list, never a crash; the dashboard stays loopback-only.
+
+---
+
+### 2026-11-21 00:20 UTC — cross-boundary tracer added (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/boundary.py` (`Classification`, `CrossBoundaryGuard`), config `classifications` + core enforcement before any Jan/cloud dispatch, `examples/core.example.json` declares its local direction, `tests/test_boundary.py`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **399 tests**. MOCK/STATIC only.
+- **Security implications:** an outbound request without a declared classification is refused with no network call (`HOLD/unclassified_boundary`, recorded in the ledger); data class above the declared one, and a grant mismatch, are denied; in-process providers need no crossing.

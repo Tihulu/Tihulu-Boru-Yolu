@@ -13,6 +13,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from .boundary import BOUNDARIES, DATA_CLASSES, RECIPIENTS, Classification
 from .errors import ConfigurationError
 from .policy import Policy
 
@@ -116,6 +117,38 @@ def _is_loopback_endpoint(endpoint: Any) -> bool:
 
 
 @dataclass(frozen=True)
+class ClassificationSpec:
+    """One declared outbound direction (issue #9 tracer)."""
+
+    boundary: str
+    recipient: str
+    data_class: str = "none"
+    grant_ref: Optional[str] = None
+    task_id: Optional[str] = None
+
+    def validate(self) -> List[str]:
+        errors: List[str] = []
+        if self.boundary not in BOUNDARIES:
+            errors.append("unknown boundary")
+        if self.recipient not in RECIPIENTS:
+            errors.append("unknown recipient")
+        if self.data_class not in DATA_CLASSES:
+            errors.append("unknown data class")
+        if self.data_class != "none" and not isinstance(self.grant_ref, str):
+            errors.append("a data-carrying classification needs a grant reference")
+        if self.data_class == "L2" and self.recipient != "cloud":
+            errors.append("L2 disclosure is only defined for a cloud recipient")
+        if self.task_id is not None and (not isinstance(self.task_id, str) or not self.task_id.strip()
+                                          or len(self.task_id) > 128):
+            errors.append("task_id must be a bounded non-empty string")
+        return errors
+
+    def to_classification(self) -> Classification:
+        return Classification(boundary=self.boundary, recipient=self.recipient,
+                              data_class=self.data_class, grant_ref=self.grant_ref)
+
+
+@dataclass(frozen=True)
 class CoreConfig:
     """Complete runtime configuration."""
 
@@ -129,6 +162,9 @@ class CoreConfig:
     description: str = ""
     cooldown_seconds: float = 60.0
     max_context_chars: int = 32 * 1024
+    #: Declared outbound directions. An undeclared direction is refused before
+    #: any network call (issue #9).
+    classifications: Tuple["ClassificationSpec", ...] = ()
 
     def validate(self) -> List[str]:
         errors: List[str] = []
@@ -148,6 +184,8 @@ class CoreConfig:
             errors.append("max_records must not be smaller than queue_limit")
         errors.extend(_float_errors(self.cooldown_seconds, "cooldown_seconds", 1.0, 3600.0))
         errors.extend(_int_errors(self.max_context_chars, "max_context_chars", 256, 1 << 20))
+        for spec in self.classifications:
+            errors.extend(spec.validate())
         if not self.providers:
             errors.append("at least one provider must be configured")
         for provider in self.providers:
@@ -165,7 +203,7 @@ class CoreConfig:
             raise ConfigurationError("configuration must be an object")
         allowed = {"version", "policy", "queue_limit", "max_records", "request_timeout",
                    "max_output_tokens", "providers", "description", "cooldown_seconds",
-                   "max_context_chars"}
+                   "max_context_chars", "classifications"}
         unknown = sorted(set(raw) - allowed)
         if unknown:
             raise ConfigurationError("unknown configuration field")
@@ -213,6 +251,24 @@ class CoreConfig:
                     model_response_is_path=_bool(entry.get("model_response_is_path", False), "model_response_is_path"),
                 )
             )
+        specs_raw = raw.get("classifications", [])
+        if not isinstance(specs_raw, list):
+            raise ConfigurationError("classifications must be a list")
+        specs = []
+        for entry in specs_raw:
+            if not isinstance(entry, dict):
+                raise ConfigurationError("classification entries must be objects")
+            unknown_entry = sorted(set(entry) - {"boundary", "recipient", "data_class",
+                                                "grant_ref", "task_id"})
+            if unknown_entry:
+                raise ConfigurationError("unknown classification field")
+            specs.append(ClassificationSpec(
+                boundary=_text(entry.get("boundary", ""), "boundary", 64),
+                recipient=_text(entry.get("recipient", ""), "recipient", 32),
+                data_class=entry.get("data_class", "none"),
+                grant_ref=entry.get("grant_ref"),
+                task_id=entry.get("task_id"),
+            ))
         config = cls(
             version=_int(raw.get("version", CONFIG_VERSION), "version", 1, 1),
             policy=policy,
@@ -224,10 +280,10 @@ class CoreConfig:
             description=_text(raw.get("description", ""), "description", 512) if raw.get("description") else "",
             cooldown_seconds=_positive_float(raw.get("cooldown_seconds", 60.0), "cooldown_seconds", 1.0, 3600.0),
             max_context_chars=_int(raw.get("max_context_chars", 32 * 1024), "max_context_chars", 256, 1 << 20),
+            classifications=tuple(specs),
         )
         config.assert_valid()
         return config
-
 
     def to_dict(self) -> dict:
         return {
@@ -247,6 +303,11 @@ class CoreConfig:
             "description": self.description,
             "cooldown_seconds": self.cooldown_seconds,
             "max_context_chars": self.max_context_chars,
+            "classifications": [
+                {"boundary": spec.boundary, "recipient": spec.recipient, "data_class": spec.data_class,
+                 "grant_ref": spec.grant_ref, "task_id": spec.task_id}
+                for spec in self.classifications
+            ],
         }
 
     @classmethod

@@ -327,6 +327,17 @@ owner's explicit review), `GET /audit` (bounded recent ledger rows), and
 `POST /review` which requires an explicit `accept: true`. The dashboard is
 loopback-only, performs no inference and changes no policy axis.
 
+## Cross-boundary tracer (issue #9)
+
+`boru/boundary.py` refuses an outbound request that was never classified.
+`CrossBoundaryGuard.declare()` records a classification per direction (task,
+recipient, boundary, data class, grant reference); `check()` then allows a call
+only when the request matches a declared direction, stays within the declared
+data class and carries the declared grant reference. `BoruCore` consults the
+guard before dispatching a Jan or cloud provider: an undeclared direction
+becomes `HOLD/unclassified_boundary` with **no network call**, recorded in the
+rejection ledger. In-process providers need no crossing.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard

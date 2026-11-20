@@ -26,6 +26,7 @@ from .errors import ContractError, PolicyViolation, StoreError, VerificationErro
 from .policy import LOCAL_PROVIDERS
 from .providers.base import ChatMessage, ChatReply, ProviderFailure
 from .audit import RejectionLedger
+from .boundary import CrossBoundaryGuard
 from .budgets import Budget, BudgetLedger, CooldownTracker, compact, estimate_message_tokens
 from .router import Router, RoutingDecision, fallback_order, should_retry
 from .scheduler import AgentScheduler, AgentSpec, build_envelopes
@@ -55,6 +56,7 @@ REASONS = {
     "budget_unverifiable": "budget_unverifiable",
     "budget_exceeded_pre": "budget_exceeded_pre_dispatch",
     "cost_ceiling_unresolved": "cost_ceiling_unresolvable_before_dispatch",
+    "unclassified_boundary": "unclassified_boundary",
     "budget_exceeded_post": "budget_exceeded_after_reported_usage",
     "context_compacted": "context_compacted",
     "deadline_exceeded": "deadline_exceeded",
@@ -100,6 +102,9 @@ class BoruCore:
         self._cloud_states: Dict[str, str] = {}
         self._providers = self._build_providers(config)
         self.audit = audit if audit is not None else RejectionLedger()
+        self.guard = CrossBoundaryGuard()
+        for spec in self.config.classifications:
+            self.guard.declare(spec.task_id or "*", spec.to_classification())
         self._queue: Dict[str, TaskEnvelope] = {}
         self._last_bound_input: Dict[str, int] = {}
         self.budgets = BudgetLedger(ceiling=Budget())
@@ -322,6 +327,14 @@ class BoruCore:
             candidate = remaining.pop(0)
             attempts += 1
             provider = self._providers.get(candidate.provider)
+            kind = self._provider_kind(candidate.provider)
+            if kind in ("jan", "cloud"):
+                # A real outbound transport must be declared before it is used.
+                recipient = "cloud" if kind == "cloud" else "local"
+                if not self._boundary_declared(envelope, recipient):
+                    self.audit.record("policy", envelope.task_id, "unclassified_boundary", "policy")
+                    self._hold(envelope, REASONS["unclassified_boundary"])
+                    return self._summary(envelope)
             if provider is None:
                 continue
             self.router.registry.mark_health(candidate.provider, candidate.model_id, "degraded", "provider_missing")
@@ -376,6 +389,26 @@ class BoruCore:
             REASONS["VERIFYING"], self._clock(),
         )
         return self._summary(envelope)
+
+    def _provider_kind(self, provider_name: str) -> str:
+        for entry in self.config.providers:
+            if entry.kind == "jan" and provider_name == "jan":
+                return "jan"
+            if entry.kind == "cloud" and provider_name == (entry.api_key_env or "cloud"):
+                return "cloud"
+            if entry.kind == "mock" and provider_name == "mock":
+                return "mock"
+        return "unknown"
+
+    def _boundary_declared(self, envelope: TaskEnvelope, recipient: str) -> bool:
+        """An outbound direction must be declared before any call (issue #9)."""
+        allowed, _ = self.guard.check(envelope.task_id, recipient=recipient, boundary="model_inference",
+                                      data_class="none")
+        if allowed:
+            return True
+        allowed, _ = self.guard.check("*", recipient=recipient, boundary="model_inference",
+                                      data_class="none")
+        return allowed
 
     def _decide(self, envelope: TaskEnvelope) -> Optional[RoutingDecision]:
         """Choose candidates without ever widening the policy axes."""
