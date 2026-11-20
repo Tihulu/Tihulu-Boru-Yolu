@@ -83,6 +83,13 @@ providers and execute tools server-side. Redirects are not followed, no
 environment proxy is consulted, request and response bytes are bounded and
 usage is recorded only when the provider reports it.
 
+`discover_models()` and `health()` are behind an explicit
+`allow_discovery` flag, because Jan's `/v1/models` may include remote
+providers: discovery lists only IDs that are also in the operator allowlist,
+and an absent allowlisted model is reported as `model_missing` rather than
+silently substituted. `health()` returns only `{"status", "models_listed"}` —
+never a model inventory.
+
 This is a **transport**, not an authorization: it does not authenticate the
 owner, grant Shell rights, or prove a security boundary.
 

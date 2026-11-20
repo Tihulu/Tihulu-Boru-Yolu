@@ -50,7 +50,11 @@ class JanProvider(ChatProvider):
         local_model_ids: Sequence[str],
         tool_execution_disabled: bool,
         api_prefix: str = "/v1",
+        allow_discovery: bool = False,
     ) -> None:
+        if not isinstance(allow_discovery, bool):
+            raise ValueError("allow_discovery must be a boolean")
+        self.allow_discovery = allow_discovery
         if tool_execution_disabled is not True:
             raise ValueError("tool_execution_disabled must be explicitly True")
         allowlist = tuple(local_model_ids or ())
@@ -108,6 +112,56 @@ class JanProvider(ChatProvider):
     def discover(self) -> Tuple[str, ...]:
         """Return the operator-configured allowlist (never the raw inventory)."""
         return self._allowlist
+
+    def health(self, timeout: float = 5.0) -> Dict[str, Any]:
+        """Bounded health probe. Never returns remote or model inventory data."""
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0.1 <= float(timeout) <= 30:
+            raise ProviderFailure("invalid_response", "invalid timeout")
+        status, raw = self._exchange("GET", "/" + self._prefix + "/models", None, float(timeout))
+        if status != 200:
+            raise self._http_failure(status)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise ProviderFailure("invalid_response", "provider returned malformed JSON")
+        data = payload.get("data") if isinstance(payload, dict) else None
+        count = len(data) if isinstance(data, list) else 0
+        return {"status": "ok", "models_listed": count}
+
+    def discover_models(self, timeout: float = 10.0) -> Tuple[str, ...]:
+        """Opt-in model listing through the supported Jan API.
+
+        Must be enabled explicitly by the operator because a Jan endpoint may
+        also serve remote providers; listing models does not make any of them
+        authorized. The returned IDs are cross-checked against the configured
+        local allowlist, and only allowlisted IDs are reported as usable.
+        """
+        if self.allow_discovery is not True:
+            raise ProviderFailure("policy_denied", "model discovery is not enabled")
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0.1 <= float(timeout) <= 60:
+            raise ProviderFailure("invalid_response", "invalid timeout")
+        status, raw = self._exchange("GET", "/" + self._prefix + "/models", None, float(timeout))
+        if status != 200:
+            raise self._http_failure(status)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise ProviderFailure("invalid_response", "provider returned malformed JSON")
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise ProviderFailure("invalid_response", "unexpected model listing")
+        found: List[str] = []
+        for entry in data[:256]:
+            if not isinstance(entry, dict):
+                raise ProviderFailure("invalid_response", "unexpected model listing")
+            model_id = entry.get("id")
+            if not isinstance(model_id, str) or not model_id.strip() or len(model_id) > 128:
+                raise ProviderFailure("invalid_response", "unexpected model listing")
+            if model_id in self._allowlist:
+                found.append(model_id)
+        if not found:
+            raise ProviderFailure("model_missing", "no allowlisted model is present")
+        return tuple(found)
 
     def chat(
         self,

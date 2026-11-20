@@ -276,3 +276,70 @@ class JanTransportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JanDiscoveryTests(unittest.TestCase):
+    """Opt-in, loopback model listing against a test-owned Jan-shaped server."""
+
+    def setUp(self):
+        self.models = {"data": [{"id": "local-a"}, {"id": "remote-b"}]}
+        self.requests = []
+
+        class Server(_Fixture):
+            def do_GET(self):
+                self.server.requests.append(self.path)
+                raw = json.dumps(self.server.models).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Server)
+        self.server.daemon_threads = True
+        self.server.requests = []
+        self.server.models = self.models
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = "http://127.0.0.1:{}/v1".format(self.server.server_address[1])
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def provider(self, **kwargs):
+        options = dict(local_model_ids=("local-a",), tool_execution_disabled=True)
+        options.update(kwargs)
+        return JanProvider(self.base, **options)
+
+    def test_discovery_is_off_by_default(self):
+        with self.assertRaises(ProviderFailure) as raised:
+            self.provider().discover_models()
+        self.assertEqual("policy_denied", raised.exception.category)
+        self.assertEqual([], self.server.requests)
+
+    def test_discovery_returns_only_allowlisted_ids(self):
+        provider = self.provider(allow_discovery=True)
+        self.assertEqual(("local-a",), provider.discover_models())
+        self.assertEqual(["/v1/models"], self.server.requests)
+
+    def test_missing_allowlisted_model_is_reported(self):
+        provider = self.provider(local_model_ids=("absent",), allow_discovery=True)
+        with self.assertRaises(ProviderFailure) as raised:
+            provider.discover_models()
+        self.assertEqual("model_missing", raised.exception.category)
+
+    def test_health_reports_only_a_count(self):
+        payload = self.provider(allow_discovery=True).health()
+        self.assertEqual({"status": "ok", "models_listed": 2}, payload)
+        self.assertNotIn("local-a", json.dumps(payload))
+
+    def test_bad_timeouts_are_refused_without_a_request(self):
+        for bad in (0, True, "5", 999):
+            with self.assertRaises(ProviderFailure):
+                self.provider(allow_discovery=True).health(timeout=bad)
+        self.assertEqual([], self.server.requests)
+
+    def test_bad_discovery_flag_is_refused(self):
+        with self.assertRaises(ValueError):
+            JanProvider(self.base, local_model_ids=("m",), tool_execution_disabled=True,
+                        allow_discovery="yes")

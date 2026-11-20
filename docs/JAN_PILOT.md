@@ -11,6 +11,12 @@ execute MCP tools server-side. A loopback URL therefore does not prove a model
 is local. `boru/providers/jan.py` refuses to guess: it requires an explicit
 endpoint, an explicit model allowlist and `tool_execution_disabled=True`.
 
+Optional discovery step (owner opt-in): add `"allow_discovery": true` to the
+provider entry, then run `python3 -m boru --config jan.pilot.json --state-dir local-state providers`
+and `python3 -m boru --config jan.pilot.json --state-dir local-state run --task discovery.json`
+with a task whose only purpose is to print the allowlisted models. Without that
+flag Boru never queries `/v1/models`.
+
 ## Preconditions (owner-verified, then recorded)
 
 1. Jan is running and reachable on a numeric loopback endpoint, for example
