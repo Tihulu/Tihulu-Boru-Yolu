@@ -133,16 +133,26 @@ oversized or nested payloads, missing fields, oversized results). L2 needs an
 explicit recipient-bound, field-scoped, expiring, nonce-protected owner grant;
 without it the answer is denial, never a raw fallback.
 
+`boru/broker.py` answers the adjacent question: may this named operation touch
+this named resource for this task, right now?  It never executes anything.  An
+operation must be on the owner's allowlist (`read_file_alias`, `list_dir_alias`,
+`probe_path_alias`, `run_synthetic_command`), a resource must be a declared
+**alias** — never a caller-supplied path, and escapes such as `..`, relative
+paths and symlinked aliases are refused — and the request must carry a valid
+worker attestation holding that resource scope plus a matching consent grant.
+Replay, expiry, revocation, malformed requests and missing consent all deny;
+an allowed decision becomes an `AuthorizationReceipt` carrying alias names and
+typed outcomes only.
+
 `boru/consent.py` persists those grants in an owner-only SQLite file
 (`boru-consent.sqlite`, mode 0600, single writer) so a revoked or expired grant
 stays denied after a restart, and it records every used nonce once. Grant
 fields, recipients, tasks and levels are validated; no token, path or model
 output is ever stored.
 
-This is still a **gate plus consent storage**, not a broker: no authenticated
-worker, OS confinement or socket permission is implemented. Independent
-security review is required before any live disclosure path is enabled, and the
-live acceptance matrix entries remain HOLD.
+The executor, OS confinement, an authenticated persistent worker identity
+store and a live socket are **not** implemented; those remain HOLD and are the
+subject of an independent security review before any restricted operation runs.
 
 ## Cloud provider (P7 source slice, no live calls)
 

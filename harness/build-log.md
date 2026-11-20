@@ -263,3 +263,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Not a skill load and not a simulation:** the provider/model identity and message id came from the live server response.
 - **Cleanup:** both pilot sessions (`ses_e058f2362ffeN0ZsdI1BLe7ZpH`, and an earlier one whose disposable directory did not exist) were deleted through the official API; no global agent, provider or configuration was modified, and no other session was touched.
 - **Boru adapter status:** `boru/adapters/opencode.py` remains source-tested only. Live integration through the adapter needs the owner to authorize the auth material (it accepts an environment-variable name); the CLI handled authentication for this pilot, so the adapter's live path stays HOLD.
+
+---
+
+### 2026-11-20 20:00 UTC — broker authorization slice added (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/broker.py` (operation allowlist, resource aliases with escape/symlink refusal, worker scopes, replay-protected nonces, `AuthorizationReceipt`) and `tests/test_broker.py` (negative paths: unknown operation, undeclared/traversing/symlinked resource, worker without scope, missing/expired/revoked grant, replayed nonce, malformed request, no consent store).
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **339 tests**. MOCK/STATIC only.
+- **Security implications:** nothing is executed; every denial path is closed and receipts carry alias names, never raw paths or file contents. The executor, OS confinement and an authenticated persistent worker store remain HOLD pending independent security review.
