@@ -126,10 +126,16 @@ oversized or nested payloads, missing fields, oversized results). L2 needs an
 explicit recipient-bound, field-scoped, expiring, nonce-protected owner grant;
 without it the answer is denial, never a raw fallback.
 
-This is a **gate**, not a broker: no authenticated worker, OS confinement,
-socket permission, persistent consent store or revocation of live grants is
-implemented here. Independent security review is required before any live
-disclosure path is enabled, and the live acceptance matrix entries remain HOLD.
+`boru/consent.py` persists those grants in an owner-only SQLite file
+(`boru-consent.sqlite`, mode 0600, single writer) so a revoked or expired grant
+stays denied after a restart, and it records every used nonce once. Grant
+fields, recipients, tasks and levels are validated; no token, path or model
+output is ever stored.
+
+This is still a **gate plus consent storage**, not a broker: no authenticated
+worker, OS confinement or socket permission is implemented. Independent
+security review is required before any live disclosure path is enabled, and the
+live acceptance matrix entries remain HOLD.
 
 ## Cloud provider (P7 source slice, no live calls)
 
