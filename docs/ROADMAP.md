@@ -1,5 +1,7 @@
 # Delivery roadmap — staged, rollback-first
 
+**Codex implementation source of truth:** [End-to-end playbook](CODEX_EXECUTION_PLAYBOOK.md) for P0–P10 build execution, linked acceptance and release gates, [start prompt](CODEX_START_PROMPT.md), and [resumable build log](../harness/build-log.md). The M0–M8 roadmap below is the earlier high-level milestone taxonomy and must be interpreted consistently with that playbook.
+
 **Policy freeze:** ADR-0004 preserves all owner-selected optimization modes, token budgets, privacy/minimal disclosure, LOCAL_ONLY/CLOUD_ALLOWED and four Shell profiles through the Boru Core independence transition. Neither optional TIHULU-AUTO nor OpenCode may be required for direct Jan inference. Changing a routing model cannot change any execution/disclosure grants.
 
 Each milestone requires evidence and a reversible change. An incomplete milestone is **HOLD**, not 99% complete. Do not move production settings or merge changes just because a document exists.
