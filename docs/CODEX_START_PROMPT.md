@@ -8,6 +8,8 @@ You are the lead coding agent for **TIHULU Boru Yolu**.
 
 Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 
+**Branch bootstrap:** Inspect draft PR #1 first. If it is still open, check out its head branch `plan/architecture-security-profiles-ubuntu-popos` so `AGENTS.md` and the playbook are available. If PR #1 has already been reviewed and merged, use the latest verified target branch instead. Never overwrite `main` or merge automatically.
+
 **Mission:** Continue the EXISTING project and implement it from the current approved baseline through its full independently tested release criteria. Do not start a new repository, rewrite existing work, or treat design documents as a working application. Keep the entire GitHub project (source, docs, commits, issues and PRs) in English. You may speak Turkish to the owner.
 
 **Read and follow, in order:**
