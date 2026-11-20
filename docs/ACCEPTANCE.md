@@ -36,7 +36,7 @@
 | A30 | Install/rollback round trip | user-space install → demo → uninstall, only Boru-owned paths removed | STATIC PASS (script round trip, not a clean-machine matrix) |
 | A21 | Boru Core independence | Runs direct Jan text-only flow without TIHULU-AUTO installed | LIVE PASS (3 x 3-turn conversations, direct evidence, allowlist refusal verified) |
 | A22 | OpenCode and Jan standalone | Existing app/API and sessions function with Boru Yolu and TIHULU-AUTO stopped | HOLD |
-| A23 | Optional OpenCode agent adapter | Real child invocation without any TIHULU-AUTO config or agent; disabling adapter is non-disruptive | HOLD |
+| A23 | Optional OpenCode agent adapter | Real child invocation without any TIHULU-AUTO config or agent; disabling adapter is non-disruptive | LIVE PASS for the child-session evidence (official CLI, disposable directory, sessions deleted); adapter live integration HOLD pending owner-authorized auth material |
 | A24 | Optimization policy isolation | AUTO/ECONOMY/BALANCED/PERFORMANCE/MANUAL never change Shell, disclosure or inference rights | HOLD |
 | A25 | Local-only under provider failure | LOCAL_ONLY blocks remote inference and fallback on 429, timeout and missing model | HOLD |
 | A26 | Privacy Bridge failure | No raw stdout, private source or unfiltered output leaves local boundary on success/failure | HOLD |

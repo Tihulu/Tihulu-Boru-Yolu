@@ -259,9 +259,16 @@ recorded, and `usage_if_observed` stays empty otherwise.
   and measured `usage_if_observed`; one was reviewed to `DONE`. A model outside
   the allowlist was refused with no provider call. Details are in
   `harness/build-log.md` (2026-11-20 18:30 UTC) and `docs/JAN_PILOT.md`.
-- **A22 OpenCode/Jan standalone:** Jan side covered by the same run (Boru ran
-  without TIHULU-AUTO, OpenCode, Kandev or Langflow); OpenCode standalone
-  session evidence remains HOLD.
+- **A22 Jan standalone:** covered by the same run (Boru ran without
+  TIHULU-AUTO, OpenCode, Kandev or Langflow).
+- **A23 OpenCode child session: LIVE PASS (partially bound to Boru).** A real
+  child session was created in a disposable, git-ignored directory through the
+  owner's own local OpenCode server and answered a synthetic one-word prompt;
+  the recording carries the session id, message id, agent `build`, model id and
+  provider id. The pilot was driven with the official `opencode api` command
+  (which authenticates itself) and both pilot sessions were deleted afterwards.
+  `boru/adapters/opencode.py` is still source-tested only: driving it live needs
+  the owner to authorize the auth material, so the adapter's live path is HOLD.
 
 ## Not implemented in this slice (HOLD)
 

@@ -250,3 +250,16 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Negative check (allowlist):** a task naming a model outside the allowlist produced `HOLD`/`missing_provider` **with no provider call** (previously it was silently substituted — see the defect below).
 - **Defect found and fixed during the live run:** (a) `Router.decide` honoured a task-level `selected_provider`/`selected_model` only in `MANUAL` mode, so a task-level selection in `AUTO` was silently overridden — the selection now binds the dispatch in every mode and an unpermitted selection is refused; (b) `ModelRegistry.candidates` accepted a *partial* capability-tag match, so a required tag could be ignored — tags must now all match; (c) the Jan transport now supports an explicit `model_response_is_path` option, because the live endpoint reports the on-disk model path rather than the model ID; identity is still verified (an exact ID match, or a path containing `/<id>/`). No local path, file content, device inventory or credential was recorded anywhere.
 - **Still HOLD:** OpenCode child-session pilot, provider OAuth round trip, broker/OS isolation and security review, cloud Shell, GitHub/GitLab/Actions scoped pilots, clean-machine Pop!_OS/Ubuntu matrix, license, owner release approval. `live_acceptance` output stays `HOLD` until the owner reviews each task.
+
+---
+
+### 2026-11-20 19:20 UTC — LIVE OpenCode child-session pilot PASSED (commit on `p1/boru-core-vertical-slice`)
+
+**Evidence class: LIVE** (real child session through the owner's own local OpenCode server, via the official authenticated CLI).
+
+- OpenCode version **2.3.2** on Pop!_OS, background service on `127.0.0.1` (`opencode service status`); its HTTP API requires authentication, so no token was harvested: the pilot was driven with the official `opencode api` command, which performs discovery and authentication itself.
+- **Child session:** id `ses_e058f2362ffeN0ZsdI1BLe7ZpH`, project `6dd2ba087fc647b4e1b07da3feecea0986412904`, created in a **disposable pilot directory** that is git-ignored by this repository.
+- **Assistant reply evidence:** message id `msg_1fa70f0ff001TB43YpT5L9puuQ`, agent `build`, model id `tidepool-alpha-free`, provider id `opencode`, finish `stop`, cost 0, tokens input 14213 / output 2 / reasoning 87, reply text `blue` to a synthetic one-word question.
+- **Not a skill load and not a simulation:** the provider/model identity and message id came from the live server response.
+- **Cleanup:** both pilot sessions (`ses_e058f2362ffeN0ZsdI1BLe7ZpH`, and an earlier one whose disposable directory did not exist) were deleted through the official API; no global agent, provider or configuration was modified, and no other session was touched.
+- **Boru adapter status:** `boru/adapters/opencode.py` remains source-tested only. Live integration through the adapter needs the owner to authorize the auth material (it accepts an environment-variable name); the CLI handled authentication for this pilot, so the adapter's live path stays HOLD.
