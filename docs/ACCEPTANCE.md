@@ -36,6 +36,12 @@
 | A21 | Boru Core independence | Runs direct Jan text-only flow without TIHULU-AUTO installed | HOLD |
 | A22 | OpenCode and Jan standalone | Existing app/API and sessions function with Boru Yolu and TIHULU-AUTO stopped | HOLD |
 | A23 | Optional OpenCode agent adapter | Real child invocation without any TIHULU-AUTO config or agent; disabling adapter is non-disruptive | HOLD |
+| A24 | Optimization policy isolation | AUTO/ECONOMY/BALANCED/PERFORMANCE/MANUAL never change Shell, disclosure or inference rights | HOLD |
+| A25 | Local-only under provider failure | LOCAL_ONLY blocks remote inference and fallback on 429, timeout and missing model | HOLD |
+| A26 | Privacy Bridge failure | No raw stdout, private source or unfiltered output leaves local boundary on success/failure | HOLD |
+| A27 | Cloud Shell grant isolation | Explicit, scoped, revocable, sandbox-only grants cannot become host Shell | HOLD |
+| A28 | Data disclosure and model fallback | New provider recipient requires matching disclosure consent; no silent additional data | HOLD |
+| A29 | Economy/performance and six agents | Measured token budgets, bounded concurrency and memory leases without extra privilege | HOLD |
 
 ## Test matrix by OS
 
