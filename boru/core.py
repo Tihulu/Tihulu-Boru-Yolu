@@ -26,6 +26,7 @@ from .errors import ContractError, PolicyViolation, StoreError, VerificationErro
 from .policy import LOCAL_PROVIDERS
 from .providers.base import ChatMessage, ChatReply, ProviderFailure
 from .router import Router, RoutingDecision, fallback_order, should_retry
+from .scheduler import AgentScheduler, AgentSpec, build_envelopes
 from .state import TaskState, TaskRecord, can_transition, utc_now
 from .store import TaskStore
 from .types import SCHEMA_VERSION, AgentResult, TaskEnvelope
@@ -87,6 +88,7 @@ class BoruCore:
         self._providers = self._build_providers(config)
         self._queue: Dict[str, TaskEnvelope] = {}
         self.router = Router(registry) if registry is not None else Router(_registry_for(config, self._providers))
+        self.scheduler = AgentScheduler(config.policy, max_agents=config.policy.max_agents)
 
     # -- construction --------------------------------------------------------
     def _build_providers(self, config: CoreConfig) -> Dict[str, Any]:
@@ -166,6 +168,67 @@ class BoruCore:
             names = [n for n in names if n == envelope.selected_provider]
         return names
 
+    # -- plans --------------------------------------------------------------
+    def submit_plan(self, specs: Sequence[AgentSpec], goal: str, parent: Optional[str] = None) -> List[str]:
+        """Submit a dependency-aware plan of logical agents and return task IDs."""
+        envelopes = build_envelopes(specs, goal, parent)
+        for spec, envelope in zip(specs, envelopes):
+            self.scheduler.add(spec)
+        submitted: List[str] = []
+        for envelope in envelopes:
+            self.submit(envelope)
+            submitted.append(envelope.task_id)
+        return submitted
+
+    def plan_states(self) -> Dict[str, TaskState]:
+        states: Dict[str, TaskState] = {}
+        for task_id in self.scheduler.tasks():
+            row = self.store.get(task_id)
+            states[task_id] = TaskState(row["state"]) if row else TaskState.CREATED
+        return states
+
+    def dispatch_ready(self) -> Optional[Dict[str, Any]]:
+        """Dispatch the next plan task whose dependencies are all DONE."""
+        states = self.plan_states()
+        for task_id in self.scheduler.ready(states):
+            return self.dispatch(task_id)
+        return None
+
+    def dispatch(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Dispatch one task by ID (dependency-independent entry point)."""
+        states = self.plan_states()
+        spec = self.scheduler.spec(task_id) if task_id in states else None
+        if spec is not None:
+            allowed, reason = self.scheduler.can_lease(spec)
+            if not allowed:
+                self._hold_by_id(task_id, reason)
+                return self.status(task_id)
+            self.scheduler.acquire(spec)
+        try:
+            summary = self._dispatch_queued(task_id)
+        finally:
+            if spec is not None:
+                self.scheduler.release(task_id)
+        return summary
+
+    def _hold_by_id(self, task_id: str, reason: str) -> None:
+        row = self.store.get(task_id)
+        if row is None:
+            return
+        state = TaskState(row["state"])
+        if can_transition(state, TaskState.HOLD):
+            self.store.transition(task_id, state.value, TaskState.HOLD.value, reason, self._clock())
+
+    def _dispatch_queued(self, task_id: str) -> Optional[Dict[str, Any]]:
+        for row in self.store.queued():
+            if row["task_id"] != task_id:
+                continue
+            envelope = self._queue.get(task_id) or self._restore(task_id)
+            if envelope is None:
+                return None
+            return self._run(envelope)
+        return None
+
     # -- dispatch ------------------------------------------------------------
     def dispatch_next(self) -> Optional[Dict[str, Any]]:
         """Run exactly one queued task and return a bounded status summary."""
@@ -173,6 +236,9 @@ class BoruCore:
         if target is None:
             return None
         envelope, state = target
+        return self._run(envelope)
+
+    def _run(self, envelope: TaskEnvelope) -> Optional[Dict[str, Any]]:
         if envelope.deadline is not None and self._deadline_passed(envelope.deadline):
             self._hold(envelope, REASONS["deadline_exceeded"])
             return self._summary(envelope)

@@ -106,9 +106,20 @@ never retries. Under `LOCAL_ONLY` the candidate list contains **no remote
 entry**, so no failure path can produce a remote call. `credits` and other
 unobservable values stay `UNKNOWN`.
 
+## Agent planning (P4 slice)
+
+`boru/scheduler.py` holds up to **six logical agents** as scheduling roles,
+never six concurrently loaded models. Plans declare `AgentSpec` entries with
+`depends_on` dependencies and an optional `large_local_model` flag. The default
+physical lease is **one** large local model until real RAM/VRAM measurements
+exist; leases are counted, never guessed from a device inventory. `dispatch_ready`
+runs only tasks whose dependencies are `DONE`, and `release` frees only
+Boru-owned leases — nothing can stop, unload or reconfigure an external Jan or
+OpenCode session.
+
 ## Not implemented in this slice (HOLD)
 
-Agent graphs and resource leases (P4), the trusted broker and Privacy Bridge
+The trusted broker and Privacy Bridge
 (P5), cloud-shell sandbox (P6), provider OAuth/API connections (P7),
 GitHub/GitLab/Actions connectors (P8), the dashboard (P9), and Linux
 install/rollback acceptance (P10).
