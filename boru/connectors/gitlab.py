@@ -26,7 +26,7 @@ class GitLabProvider(RepositoryProvider):
     name = "gitlab"
 
     def __init__(self, *, base_url: str = API_BASE, token_env: Optional[str] = None,
-                 transport=None, allow_http: bool = False) -> None:
+                 transport=None, allow_http: bool = False, audit=None) -> None:
         if token_env is not None and (not isinstance(token_env, str) or not token_env.strip()
                                       or len(token_env) > 64):
             raise PolicyViolation("token_env must be a bounded environment variable name")
@@ -39,6 +39,7 @@ class GitLabProvider(RepositoryProvider):
         self._transport = transport
         self._audit: List[Dict[str, Any]] = []
         self._calls: Dict[str, int] = {}
+        self._ledger = audit
 
     def capabilities(self) -> Tuple[Capability, ...]:
         return tuple(OPERATION_CAPABILITIES.values())
@@ -67,6 +68,8 @@ class GitLabProvider(RepositoryProvider):
         if not allowed:
             self._audit.append({"at": int(time.time()), "grant": grant.grant_id, "operation": operation,
                                 "decision": "deny", "reason": reason})
+            if self._ledger is not None:
+                self._ledger.record("connector", grant.grant_id, reason, operation)
             raise ConnectorDenied(reason)
         if not path:
             path = self._path_for(operation, payload or {})

@@ -11,6 +11,7 @@ import json
 import sys
 from typing import Any, Dict, List, Optional, Sequence
 
+from .audit import RejectionLedger
 from .config import CoreConfig, ProviderConfig, default_config
 from .core import BoruCore
 from .errors import BoruError, ConfigurationError
@@ -37,9 +38,11 @@ def _load_config(path: Optional[str]) -> CoreConfig:
     return default_config()
 
 
-def _open_core(config: CoreConfig, state_dir: Optional[str]) -> BoruCore:
+def _open_core(config: CoreConfig, state_dir: Optional[str],
+              audit_dir: Optional[str] = None) -> BoruCore:
     store = TaskStore(state_dir, max_records=config.max_records) if state_dir else TaskStore(max_records=config.max_records)
-    return BoruCore(config, store=store)
+    ledger = RejectionLedger(audit_dir) if audit_dir else None
+    return BoruCore(config, store=store, audit=ledger)
 
 
 def _task_from_file(path: str) -> TaskEnvelope:
@@ -63,6 +66,8 @@ def _add_common_shorthands(target: argparse.ArgumentParser) -> None:
                         help="dedicated local-state relative directory for durable task state")
     target.add_argument("--show-text", action="store_true", default=argparse.SUPPRESS,
                         help="include local reply text in output (local owner only)")
+    target.add_argument("--audit-dir", dest="audit_dir", default=argparse.SUPPRESS,
+                        help="existing owner-only directory for the local rejection ledger")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-dir", dest="state_dir", default=None,
                         help="dedicated local-state relative directory for durable task state")
     parser.add_argument("--show-text", action="store_true", help="include local reply text in output (local owner only)")
+    parser.add_argument("--audit-dir", dest="audit_dir", default=None,
+                        help="existing owner-only directory for the local rejection ledger")
     sub = parser.add_subparsers(dest="command", required=True)
 
     demo = sub.add_parser("demo", help="run the fixed offline synthetic task (mock provider, no network)")
@@ -96,7 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _run_demo(args) -> int:
     config = _load_config(args.config)
     envelope = TaskEnvelope(task_id="demo-1", goal="Synthetic offline acknowledgement for the P1 demo.")
-    with _open_core(config, args.state_dir) as core:
+    with _open_core(config, args.state_dir, args.audit_dir) as core:
         core.submit(envelope)
         summary = core.dispatch_next() or {"task_id": envelope.task_id, "state": "MISSING"}
         _emit(dict(summary, demo=True, text=core.result_text(envelope.task_id) if args.show_text else None),
@@ -107,7 +114,7 @@ def _run_demo(args) -> int:
 def _run_task(args) -> int:
     config = _load_config(args.config)
     envelope = _task_from_file(args.task)
-    with _open_core(config, args.state_dir) as core:
+    with _open_core(config, args.state_dir, args.audit_dir) as core:
         core.submit(envelope)
         summary = core.dispatch_next() or {"task_id": envelope.task_id, "state": "MISSING"}
         _emit(dict(summary, text=core.result_text(envelope.task_id) if args.show_text else None), args.show_text)

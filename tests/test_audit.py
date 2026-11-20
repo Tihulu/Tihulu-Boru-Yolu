@@ -190,3 +190,70 @@ class LedgerWiringTests(unittest.TestCase):
         payload = repr(self.ledger.recent(8))
         self.assertNotIn("synthetic goal text", payload)
         self.assertNotIn("/home/", payload)
+
+
+class LedgerWiringExtendedTests(unittest.TestCase):
+    """Connector and disclosure denials also land in the shared ledger."""
+
+    def setUp(self):
+        from boru.audit import RejectionLedger
+
+        self.ledger = RejectionLedger()
+
+    def tearDown(self):
+        self.ledger.close()
+
+    def test_github_connector_denial_is_recorded(self):
+        from boru.connectors.github import GitHubProvider
+        from boru.connectors.base import Grant, Capability
+        from boru.errors import ConnectorDenied
+        import time
+
+        provider = GitHubProvider(audit=self.ledger)
+        grant = Grant(grant_id="g1", account="owner", repository="owner/repo", reference="main",
+                      operations=("create_issue",), capabilities=(Capability.REPO_READ,),
+                      max_calls=2, issued_at=time.time(), expires_at=time.time() + 60, nonce="n1")
+        with self.assertRaises(ConnectorDenied):
+            provider.call(grant, "create_issue", {"repository": "owner/repo"})
+        rows = [(r["category"], r["subject"], r["reason"], r["detail_kind"]) for r in self.ledger.recent(4)]
+        self.assertIn(("connector", "g1", "capability_not_granted", "create_issue"), rows)
+
+    def test_gitlab_connector_denial_is_recorded(self):
+        from boru.connectors.gitlab import GitLabProvider
+        from boru.connectors.base import Grant, Capability
+        from boru.errors import ConnectorDenied
+        import time
+
+        provider = GitLabProvider(audit=self.ledger)
+        grant = Grant(grant_id="g2", account="owner", repository="owner/project", reference="main",
+                      operations=("merge_pull",), capabilities=(Capability.REPO_READ,),
+                      max_calls=2, issued_at=time.time(), expires_at=time.time() + 60, nonce="n2")
+        with self.assertRaises(ConnectorDenied):
+            provider.call(grant, "merge_pull", {"repository": "owner/project", "issue": 1})
+        rows = [(r["category"], r["subject"], r["reason"]) for r in self.ledger.recent(4)]
+        self.assertIn(("connector", "g2", "capability_not_granted"), rows)
+
+    def test_disclosure_denial_is_recorded(self):
+        from boru.privacy import DisclosureGate, DisclosureRequest
+
+        gate = DisclosureGate("MINIMUM_NECESSARY", audit=self.ledger)
+        decision, payload, reason = gate.release(
+            DisclosureRequest(task_id="t1", recipient="cloud", level="L0",
+                              fields=("raw_stdout",), payload={"raw_stdout": "x"}))
+        self.assertEqual("deny", decision.value)
+        rows = [(r["category"], r["subject"], r["reason"], r["detail_kind"]) for r in self.ledger.recent(4)]
+        self.assertIn(("disclosure", "t1", "private_field_refused", "L0"), rows)
+
+    def test_no_ledger_means_no_crash(self):
+        from boru.connectors.github import GitHubProvider
+        from boru.connectors.base import Grant, Capability
+        from boru.errors import ConnectorDenied
+        import time
+
+        provider = GitHubProvider()
+        grant = Grant(grant_id="g3", account="owner", repository="owner/repo", reference="main",
+                      operations=("create_issue",), capabilities=(Capability.REPO_READ,),
+                      max_calls=2, issued_at=time.time(), expires_at=time.time() + 60, nonce="n3")
+        with self.assertRaises(ConnectorDenied):
+            provider.call(grant, "create_issue", {"repository": "owner/repo"})
+        self.assertTrue(provider.audit())

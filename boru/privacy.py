@@ -152,7 +152,9 @@ class ConsentStore:
 class DisclosureGate:
     """Fail-closed typed release gate."""
 
-    def __init__(self, policy_policy: str, *, max_result_fields: int = 4, allow_raw: bool = False) -> None:
+    def __init__(self, policy_policy: str, *, max_result_fields: int = 4, allow_raw: bool = False,
+                 audit=None) -> None:
+        self.audit = audit
         if policy_policy not in ("MINIMUM_NECESSARY", "SCOPED_APPROVED"):
             raise PolicyViolation("unknown disclosure policy")
         if isinstance(max_result_fields, bool) or not isinstance(max_result_fields, int) or not 1 <= max_result_fields <= 32:
@@ -165,6 +167,7 @@ class DisclosureGate:
         """Return (decision, released_field_names, reason)."""
         problems = request.validate()
         if problems:
+            self._record(request, "malformed_request")
             return GateDecision.DENY, (), "malformed_request"
         if request.level == "L2" and self.disclosure_policy != "SCOPED_APPROVED":
             return GateDecision.DENY, (), "policy_requires_scoped_approved"
@@ -191,11 +194,16 @@ class DisclosureGate:
                 return GateDecision.DENY, (), "missing_grant"
         return GateDecision.RELEASE, tuple(request.fields), ""
 
+    def _record(self, request: DisclosureRequest, reason: str) -> None:
+        if self.audit is not None:
+            self.audit.record("disclosure", request.task_id, reason, request.level)
+
     def release(self, request: DisclosureRequest, consent: Optional[ConsentStore] = None,
                 now: Optional[float] = None) -> Tuple[GateDecision, Dict[str, Any], Optional[str]]:
         """Release the minimum typed payload; anything else is refused."""
         decision, fields, reason = self.classify(request)
         if decision is not GateDecision.RELEASE:
+            self._record(request, reason)
             return decision, {}, reason
         payload = {name: request.payload[name] for name in fields}
         if request.level == "L2":

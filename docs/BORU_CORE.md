@@ -310,9 +310,16 @@ policy refusals on submit (`policy`), task holds and failures with their stable
 reason codes (`scheduler`: `budget_exceeded_pre_dispatch`,
 `budget_exceeded_after_reported_usage`, `deadline_exceeded`,
 `provider_unavailable`, `missing_provider`, `cost_ceiling_unresolvable_before_dispatch`),
-and broker denials with the request's operation as the detail kind (`broker`).
+broker denials with the request's operation as the detail kind (`broker`),
+disclosure refusals with the level as the detail kind (`disclosure`), and
+GitHub/GitLab connector denials with the operation as the detail kind
+(`connector`).
 Nothing else is recorded, and no row contains a task goal, path, file content,
 token or provider text.
+
+Durable usage: `python -m boru --audit-dir local-state/audit ...` writes the
+same ledger into `boru-audit.sqlite` inside the owner-only directory you name,
+shared by the core, broker, disclosure gate and repository connectors.
 
 ## Not implemented in this slice (HOLD)
 

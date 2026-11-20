@@ -296,3 +296,10 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `BoruCore` and `Broker` accept an optional `RejectionLedger` (in-memory by default, durable file on request); `LedgerWiringTests` assert the recorded rows.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **367 tests**. MOCK/STATIC only.
 - **Security implications:** denied submissions and holds now produce sanitized local audit rows; no task goal, path, file content, token or provider text is ever recorded. Connector and disclosure denials are recorded by their own layers where a ledger is supplied; remaining paths stay HOLD.
+
+---
+
+### 2026-11-20 23:15 UTC — ledger shared by all layers + durable `--audit-dir` (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `DisclosureGate`, `GitHubProvider`, `GitLabProvider` accept an optional ledger and record their denials; CLI gained `--audit-dir` for a durable owner-directory ledger; `LedgerWiringExtendedTests`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **371 tests**; a CLI run with `--audit-dir` produced one sanitized `scheduler/budget_exceeded_pre_dispatch` row in a 0600 file. MOCK/STATIC only.
