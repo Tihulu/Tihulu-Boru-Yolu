@@ -55,11 +55,10 @@ def validate_request_scope(
     request_body = body if body is not None else {}
 
     if operation == "list_repositories":
-        # Listing is account-wide; this cannot prove the bound account's
-        # identity. It must remain independently gated by token permissions.
-        if "repository" in params and params["repository"] != grant.repository:
-            raise ConnectorDenied("repository_not_granted")
-    elif params.get("repository") != grant.repository:
+        # Account-wide listing cannot be authorized by a repository-bound
+        # grant. Fail closed until an explicit account-scoped grant exists.
+        raise ConnectorDenied("account_scope_required")
+    if params.get("repository") != grant.repository:
         raise ConnectorDenied("repository_not_granted")
 
     for values in (params, request_body):
