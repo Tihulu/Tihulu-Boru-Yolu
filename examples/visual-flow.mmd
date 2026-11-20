@@ -1,0 +1,28 @@
+flowchart TD
+  K["Kandev: task created"] --> A["Boru Adapter: typed task"]
+  A --> R["Boru Core: classify / route / schedule"]
+  R -.-> T["Optional TIHULU-AUTO legacy adapter (disabled by default)"]
+  R --> O{"Optimization mode"}
+  O -->|ECONOMY| L["Suitable local Jan model"]
+  O -->|AUTO/BALANCED| C{"Capability + budget"}
+  O -->|PERFORMANCE| P["Best authorized models / parallel DAG"]
+  O -->|MANUAL| M["Explicit selected model"]
+  C -->|Local sufficient| L
+  C -->|Cloud justified and allowed| V["Approved cloud model"]
+  L --> Q["Verify actual child result"]
+  V --> Q
+  P --> Q
+  M --> Q
+  Q --> X{"Tool operation required?"}
+  X -->|No| Z["Kandev review / QA"]
+  X -->|Yes| S{"Execution profile"}
+  S -->|LOCAL_ISOLATED / HYBRID_PRIVATE| W["Trusted local worker"]
+  S -->|CLOUD_SHELL_*| G["Owner capability grant + sandbox broker"]
+  W --> F["Deterministic Privacy Bridge"]
+  G --> F
+  F --> D{"Disclosure authorized?"}
+  D -->|Yes, typed only| Z
+  D -->|Additional protected fields| U["Ask owner for exact disclosure"]
+  U --> D
+  D -->|Denied / unavailable| H["HOLD, no leak"]
+  Z --> T["Evidence / status / release"]
