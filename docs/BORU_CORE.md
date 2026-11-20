@@ -147,9 +147,27 @@ bounded-exchange rules as the Jan transport, plus:
   repository does not make. `examples/cloud.example.json` demonstrates a
   configured-but-not-authenticated provider.
 
+## Dashboard (P9 slice) and installer (P10 dry-run test)
+
+`boru/dashboard.py` is a loopback-only status surface: `GET /` renders a
+bounded HTML summary, `GET /status` returns JSON, `GET /task/<id>` shows one
+task, and `POST /review` performs an **explicit, accepted-flag** owner review.
+It performs no inference, changes no policy axis and exposes nothing beyond
+`127.0.0.1` / `::1`.
+
+`scripts/install_boru.sh` and `scripts/uninstall_boru.sh` are user-space
+scripts for a chosen directory with a `--dry-run` mode, owner-only state
+directory, launcher in a chosen `--bin-dir`, no sudo, no system service and no
+autostart. `tests/test_install_scripts.py` runs a real install, runs
+`python3 -m boru demo` from the installed copy, then uninstalls and verifies
+only the Boru-owned paths were removed. This is a script round-trip on this
+machine, **not** the Pop!_OS/Ubuntu clean-machine acceptance matrix.
+
 ## Not implemented in this slice (HOLD)
 
-The trusted broker, authenticated worker and OS isolation
+The trusted broker, authenticated worker and OS isolation; dashboard
+localization/accessibility review; remote provider OAuth; the full OS
+acceptance matrix (A01–A19), repository license choice and release approval.
 (P5), cloud-shell sandbox (P6), provider OAuth/API connections (P7),
 GitHub/GitLab/Actions connectors (P8), the dashboard (P9), and Linux
 install/rollback acceptance (P10).

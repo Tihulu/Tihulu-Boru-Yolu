@@ -15,6 +15,7 @@ import os
 import sqlite3
 import stat
 import tempfile
+import threading
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .errors import ConfigurationError, DuplicateTask, StoreError
@@ -77,7 +78,11 @@ class TaskStore:
         if self._path and not os.path.exists(self._path):
             descriptor = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
             os.close(descriptor)
-        self._db = sqlite3.connect(self._path or ":memory:", isolation_level=None)
+        # A single-writer lock already exists on disk; this in-process lock only
+        # serialises the SQLite handle across the (loopback) dashboard threads.
+        self._guard = threading.RLock()
+        self._db = sqlite3.connect(self._path or ":memory:", isolation_level=None,
+                                   check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._lock_fd = None
         self._closed = False
@@ -177,6 +182,10 @@ class TaskStore:
     # -- writes --------------------------------------------------------------
     def submit(self, task_id: str, idempotency_key: str, envelope: Any, state: str, at: str) -> Tuple[bool, Dict[str, Any]]:
         """Insert a task idempotently; returns ``(created, stored)``."""
+        with self._guard:
+            return self._submit(task_id, idempotency_key, envelope, state, at)
+
+    def _submit(self, task_id: str, idempotency_key: str, envelope: Any, state: str, at: str) -> Tuple[bool, Dict[str, Any]]:
         task_id = _bounded(task_id, 128, "task_id")
         idempotency_key = _bounded(idempotency_key, 128, "idempotency_key")
         fingerprint = _canonical(envelope)
@@ -203,14 +212,20 @@ class TaskStore:
         return False, dict(row)
 
     def count(self) -> int:
-        return int(self._db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0])
+        with self._guard:
+            return int(self._db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0])
 
     def ensure_capacity(self) -> None:
-        if self.count() >= self.max_records:
-            raise StoreError("task record limit reached")
+        with self._guard:
+            if int(self._db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]) >= self.max_records:
+                raise StoreError("task record limit reached")
 
     def transition(self, task_id: str, expected: str, target: str, reason: str, at: str) -> str:
         """Compare-and-set state transition; returns the previous state."""
+        with self._guard:
+            return self._transition(task_id, expected, target, reason, at)
+
+    def _transition(self, task_id: str, expected: str, target: str, reason: str, at: str) -> str:
         task_id = _bounded(task_id, 128, "task_id")
         reason = _bounded(reason, 200, "reason")
         cursor = self._db.execute(
@@ -229,6 +244,10 @@ class TaskStore:
         return expected
 
     def save_result(self, task_id: str, attempt_id: str, result: Any) -> None:
+        with self._guard:
+            return self._save_result(task_id, attempt_id, result)
+
+    def _save_result(self, task_id: str, attempt_id: str, result: Any) -> None:
         _bounded(attempt_id, 128, "attempt_id")
         payload = json.dumps(result.to_dict() if hasattr(result, "to_dict") else result, sort_keys=True, ensure_ascii=True)
         if len(payload) > 256 * 1024:
@@ -240,6 +259,10 @@ class TaskStore:
 
     # -- reads ---------------------------------------------------------------
     def get(self, task_id: str) -> Optional[Dict[str, Any]]:
+        with self._guard:
+            return self._get(task_id)
+
+    def _get(self, task_id: str) -> Optional[Dict[str, Any]]:
         row = self._db.execute("SELECT * FROM tasks WHERE task_id = ?", (_bounded(task_id, 128, "task_id"),)).fetchone()
         if row is None:
             return None
@@ -253,6 +276,10 @@ class TaskStore:
         return data
 
     def queued(self, limit: int = 32) -> List[Dict[str, Any]]:
+        with self._guard:
+            return self._queued(limit)
+
+    def _queued(self, limit: int) -> List[Dict[str, Any]]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 256:
             raise StoreError("limit must be a bounded positive integer")
         rows = self._db.execute(
@@ -263,7 +290,8 @@ class TaskStore:
 
     def envelope(self, task_id: str) -> Dict[str, Any]:
         """Return the stored canonical envelope for a task."""
-        row = self._db.execute("SELECT envelope FROM tasks WHERE task_id = ?", (_bounded(task_id, 128, "task_id"),)).fetchone()
+        with self._guard:
+            row = self._db.execute("SELECT envelope FROM tasks WHERE task_id = ?", (_bounded(task_id, 128, "task_id"),)).fetchone()
         if row is None:
             raise StoreError("unknown task")
         try:
@@ -272,12 +300,17 @@ class TaskStore:
             raise StoreError("stored envelope is corrupt")
 
     def pending(self) -> List[Dict[str, Any]]:
-        rows = self._db.execute(
-            "SELECT task_id, state FROM tasks WHERE state IN ('RUNNING','VERIFYING') ORDER BY created_at"
-        ).fetchall()
-        return [dict(row) for row in rows]
+        with self._guard:
+            rows = self._db.execute(
+                "SELECT task_id, state FROM tasks WHERE state IN ('RUNNING','VERIFYING') ORDER BY created_at"
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def by_state(self, states: Iterable[str]) -> List[Dict[str, Any]]:
+        with self._guard:
+            return self._by_state(states)
+
+    def _by_state(self, states: Iterable[str]) -> List[Dict[str, Any]]:
         wanted = tuple(states)
         if not wanted:
             return []
