@@ -23,6 +23,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "state": {"en": "State", "tr": "Durum", "de": "Zustand"},
     "evidence": {"en": "Evidence class", "tr": "Kanıt sınıfı", "de": "Belegklasse"},
     "live_acceptance": {"en": "Live acceptance", "tr": "Canlı kabul", "de": "Live-Abnahme"},
+    "audit": {"en": "Recent rejections", "tr": "Son reddiyeler", "de": "Letzte Ablehnungen"},
     "hold": {"en": "HOLD", "tr": "BEKLEMEDE", "de": "ANGEHALTEN"},
     "review": {"en": "Review", "tr": "İnceleme", "de": "Überprüfung"},
 }

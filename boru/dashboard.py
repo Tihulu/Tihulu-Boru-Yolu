@@ -21,6 +21,10 @@ from .errors import BoruError, StoreError
 from .i18n import translate, summary_labels
 
 
+def core_rows(core, state: str) -> List[Dict[str, Any]]:
+    return [row for row in core.store.by_state((state,)) if row["state"] == state]
+
+
 def _summary(core) -> Dict[str, Any]:
     rows = core.store.by_state((
         "CREATED", "CLASSIFIED", "PLANNED", "QUEUED", "RUNNING", "VERIFYING", "REVIEW",
@@ -53,6 +57,7 @@ def _summary(core) -> Dict[str, Any]:
 
 class _Handler(BaseHTTPRequestHandler):
     core = None  # type: ignore[assignment]
+    audit = None
 
     def log_message(self, *args):  # keep the console clean
         return
@@ -68,6 +73,11 @@ class _Handler(BaseHTTPRequestHandler):
     def _render(self, status: HTTPStatus, title: str, payload: Dict[str, Any], language: str = "en") -> None:
         localized = summary_labels(language)
         localized = summary_labels(language)
+        audit_rows = self.audit.recent(8) if self.audit is not None else []
+        audit_line = "".join(
+            "<li>{} / {}</li>".format(html.escape(str(row.get("category"))), html.escape(str(row.get("reason"))))
+            for row in audit_rows
+        )
         rows = "".join(
             "<tr><th>{}</th><td>{}</td></tr>".format(
                 html.escape(localized.get(key, key)),
@@ -78,9 +88,12 @@ class _Handler(BaseHTTPRequestHandler):
         body = (
             "<!doctype html><html lang=\"{lang}\"><head><meta charset=\"utf-8\">"
             "<title>{title}</title></head><body><h1>{title}</h1>"
-            "<table>{rows}</table><h2>{tasks}</h2><pre>{payload}</pre></body></html>"
+            "<table>{rows}</table><h2>{tasks}</h2><pre>{payload}</pre>"
+            "<h2>{audit_title}</h2><ul>{audit}</ul></body></html>"
         ).format(lang=html.escape(language), title=html.escape(translate(title, language)),
                  rows=rows, tasks=html.escape(localized["tasks"]),
+                 audit_title=html.escape(localized["audit"]),
+                 audit=audit_line or "<li>no rejections recorded</li>",
                  payload=html.escape(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True)))
         raw = body.encode("utf-8")
         self.send_response(status)
@@ -100,8 +113,16 @@ class _Handler(BaseHTTPRequestHandler):
                             language = candidate
             self._render(HTTPStatus.OK, "title", _summary(self.core), language)
             return
-        if self.path == "/status":
+        if self.path == "/status" or self.path.startswith("/status?lang="):
             self._json(HTTPStatus.OK, _summary(self.core))
+            return
+        if self.path == "/audit":
+            rows = self.audit.recent(32) if self.audit is not None else []
+            self._json(HTTPStatus.OK, {"rejections": rows, "live_acceptance": "HOLD"})
+            return
+        if self.path == "/queue":
+            review = core_rows(self.core, "REVIEW")
+            self._json(HTTPStatus.OK, {"awaiting_review": review, "live_acceptance": "HOLD"})
             return
         if self.path.startswith("/task/"):
             task_id = self.path[len("/task/"):]
@@ -143,10 +164,10 @@ class _Handler(BaseHTTPRequestHandler):
 class BoruDashboard:
     """Loopback-only status surface for one Boru Core instance."""
 
-    def __init__(self, core, host: str = "127.0.0.1", port: int = 0) -> None:
+    def __init__(self, core, host: str = "127.0.0.1", port: int = 0, audit=None) -> None:
         if host not in ("127.0.0.1", "localhost", "::1"):
             raise ValueError("dashboard must bind loopback only")
-        handler = type("BoruHandler", (_Handler,), {"core": core})
+        handler = type("BoruHandler", (_Handler,), {"core": core, "audit": audit})
         self._server = ThreadingHTTPServer((host, port), handler)
         self._server.daemon_threads = True
         self._thread: Optional[threading.Thread] = None

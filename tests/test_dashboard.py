@@ -110,3 +110,71 @@ class DashboardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DashboardAuditTests(DashboardTests):
+    """The dashboard exposes only bounded, sanitized review/audit views."""
+
+    def setUp(self):
+        from boru.audit import RejectionLedger
+
+        super().setUp()
+        self.dashboard.stop()
+        self.ledger = RejectionLedger()
+        self.dashboard = BoruDashboard(self.engine, audit=self.ledger)
+        self.host, self.port = self.dashboard.start()
+
+    def tearDown(self):
+        self.dashboard.stop()
+        self.ledger.close()
+        self.engine.close()
+
+    def get(self, path):
+        import urllib.error
+        import urllib.request
+
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:{}{}".format(self.port, path),
+                                        timeout=5) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read().decode("utf-8"))
+
+    def test_audit_view_is_bounded_and_sanitized(self):
+        self.ledger.record("policy", "task-1", "task_axes_refused", "policy")
+        status, payload = self.get("/audit")
+        self.assertEqual(200, status)
+        self.assertEqual([{"category": "policy", "reason": "task_axes_refused", "subject": "task-1",
+                           "detail_kind": "policy", "at": payload["rejections"][0]["at"]}],
+                         [dict(row) for row in payload["rejections"]])
+        self.assertNotIn("ping", repr(payload))
+        self.assertEqual("HOLD", payload["live_acceptance"])
+
+    def test_audit_view_without_a_ledger(self):
+        dashboard = BoruDashboard(self.engine)
+        dashboard.start()
+        try:
+            status, payload = self.get("/audit")
+            self.assertEqual(200, status)
+            self.assertEqual([], payload["rejections"])
+        finally:
+            dashboard.stop()
+
+    def test_review_queue_view(self):
+        status, payload = self.get("/queue")
+        self.assertEqual(200, status)
+        self.assertEqual(["t1"], [row["task_id"] for row in payload["awaiting_review"]])
+
+    def test_root_page_contains_an_audit_section(self):
+        import urllib.request
+
+        with urllib.request.urlopen("http://127.0.0.1:{}/".format(self.port), timeout=5) as response:
+            body = response.read().decode("utf-8")
+        self.assertIn("Recent rejections", body)
+        self.assertIn("no rejections recorded", body)
+
+    def test_loopback_only(self):
+        from boru.dashboard import BoruDashboard as Dashboard
+
+        with self.assertRaises(ValueError):
+            Dashboard(self.engine, host="0.0.0.0", audit=self.ledger)

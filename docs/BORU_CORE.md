@@ -321,6 +321,12 @@ Durable usage: `python -m boru --audit-dir local-state/audit ...` writes the
 same ledger into `boru-audit.sqlite` inside the owner-only directory you name,
 shared by the core, broker, disclosure gate and repository connectors.
 
+Dashboard routes: `GET /` (bounded HTML status with a recent-rejections
+section), `GET /status`, `GET /task/<id>`, `GET /queue` (tasks awaiting the
+owner's explicit review), `GET /audit` (bounded recent ledger rows), and
+`POST /review` which requires an explicit `accept: true`. The dashboard is
+loopback-only, performs no inference and changes no policy axis.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard
