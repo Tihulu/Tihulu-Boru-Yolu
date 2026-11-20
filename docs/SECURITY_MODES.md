@@ -1,5 +1,7 @@
 # Execution policies, user-controlled Shell and consent
 
+**Preservation requirement:** [ADR-0004](ADRS/0004-preserve-modes-and-privacy.md) locks the original optimization, privacy and Shell profiles during the Boru Core independence refactor. No mode changes privileges implicitly.
+
 ## Product principle
 
 The **owner chooses** whether a cloud model may drive Shell tasks. This is a legitimate feature, not a permission bypass. The choice must be **explicit, scoped, revocable and enforced outside the model**. The default always remains local-isolated.
