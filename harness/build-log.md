@@ -280,3 +280,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **350 tests**. MOCK/STATIC only.
 - **Security implications:** `list_dir_alias` returns a count, never names; `read_file_alias` reports size, never content; requesting `content`/`raw_stdout`/`file_contents` is refused; expired or forged receipts are refused; symlinked aliases are refused at construction. No subprocess, shell, network or mutation exists in this worker, and no live restricted operation was run.
 - **Still HOLD:** an authenticated persistent worker store, live socket, OS confinement, mutating/subprocess operations, L2 excerpt release and independent security review.
+
+---
+
+### 2026-11-20 21:30 UTC — local rejection ledger added (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/audit.py` (`RejectionLedger` — append-only, bounded, owner-confined SQLite sink with 12 fixed categories and sanitized fields) and `tests/test_audit.py`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **362 tests**. MOCK/STATIC only.
+- **Security implications:** audit rows carry no payload, path, token or provider text; there is no update/delete API; retention is bounded and prunes only the oldest rows; the file is 0600 inside an owner-named directory; group/world-writable directories and symlinked paths are refused.

@@ -28,7 +28,7 @@
 | A13 | Cloud Shell revocation | Stops pending jobs and prohibits new ones | HOLD |
 | A14 | Privacy Bridge | Typed minimal disclosure; no raw stdout | STATIC PASS (MOCK): gate + broker + bounded worker refuse content/listings/raw fields; live disclosure path HOLD |
 | A15 | Protected extra data | Exact recipient/field approval before disclosure | HOLD |
-| A16 | Adversarial inputs | Prompt-injection, replay, schema overflow denied | HOLD |
+| A16 | Adversarial inputs | Prompt-injection, replay, schema overflow denied | STATIC PASS (MOCK): policy axes, grant replay/expiry/revocation, malformed contracts, private-field refusal, off-trajectory paths not introduced |
 | A17 | Resource lifecycle | Owned models only, cancel/unload no leaks | HOLD |
 | A18 | Up to 6 logical agents | Resource limits, evidence per child | HOLD |
 | A19 | Rollback | Jan/OpenCode unchanged and launchable | HOLD |

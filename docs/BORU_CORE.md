@@ -246,6 +246,18 @@ Tests prove a read-only profile creates no outbound request for any write
 operation, the call ceiling and expiry are enforced, workflow endpoints are the
 official ones, and HTTP 403/404/429/invalid JSON never leak a body.
 
+## Local rejection ledger (audit slice)
+
+`boru/audit.py` is the bounded, append-only local audit sink required by
+`docs/OPERATIONS.md`: every denial (policy, contract, broker, disclosure,
+connector, provider, budget, scheduler, executor, review, store, config) is
+appended once, in an owner-only (0600) file inside the directory you name.
+Entries hold only a category, a bounded subject identifier, a stable reason
+code and a bounded detail kind — **no payload, no path, no token and no
+provider text** — and there is no update or delete API, so an audit row cannot
+be rewritten. Retention is bounded by a documented cap that prunes only the
+oldest rows.
+
 ## Budgets, cooldowns and context bounds (P3 slice)
 
 `boru/budgets.py` enforces ceilings honestly:
