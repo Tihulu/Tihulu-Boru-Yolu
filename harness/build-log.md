@@ -7,6 +7,7 @@
 - **Repository:** `Tihulu/Tihulu-Boru-Yolu`
 - **Current planning branch:** `plan/architecture-security-profiles-ubuntu-popos`
 - **Current planning PR:** #1 — draft, not merged.
+- **Master delivery coordination:** issue #13 (Codex P0–P10); workstream issues #2–#12 remain linked.
 - **Current work:** documented project/architecture, ADR-0001 to ADR-0004, static contracts and test scaffold, Codex execution playbook.
 - **Runtime state:** Boru Core, trusted broker, Privacy Bridge, Kandev/Langflow, provider OAuth, GitHub/GitLab app adapter, agent scheduler and installer are **NOT IMPLEMENTED / LIVE ACCEPTANCE HOLD** in this repository. Do not infer working software from documentation.
 - **Existing Jan/OpenCode:** external user applications; independent, untouched by these repository-planning commits. No host-level verification conducted in this session.
