@@ -41,6 +41,13 @@ Cloud *inference*, Shell *execution*, and private-data *disclosure* are **three 
 
 Routing presets `AUTO`, `ECONOMY`, `BALANCED`, `PERFORMANCE` and `MANUAL` are **orthogonal** to these security profiles. `LOCAL_ONLY` is a separate inference restriction.
 
+## Codex implementation handoff
+
+- **[Single Codex start/resume prompt](docs/CODEX_START_PROMPT.md)** — hand to Codex after opening this repository.
+- **[End-to-end execution playbook](docs/CODEX_EXECUTION_PLAYBOOK.md)** — P0–P10 development, dependencies, security gates and release definition.
+- **[Persistent Codex instructions](AGENTS.md)** and **[evidence-based build log](harness/build-log.md)** — ensure each new session resumes without restarting or declaring untested work done.
+- The current baseline is **draft PR #1**, not a finished application. This repo is safe for source-only coding tasks, not assumed to have live local Shell or provider credentials.
+
 ## Repository map
 
 - [Architecture](docs/ARCHITECTURE.md)
