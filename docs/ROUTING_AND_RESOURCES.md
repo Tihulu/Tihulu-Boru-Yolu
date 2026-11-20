@@ -1,5 +1,7 @@
 # Model routing, optimization, fallback and resource management
 
+**Policy compatibility:** [ADR-0004](ADRS/0004-preserve-modes-and-privacy.md) preserves token-optimized and performance presets and forbids implicit changes to inference, Shell or disclosure permissions during fallback, failover or optional adapter migration.
+
 ## Owner and independent providers
 
 **Boru Core is the routing and scheduling authority for Boru Yolu tasks.** It must function with TIHULU-AUTO uninstalled. TIHULU-AUTO is optional legacy integration, not a required API, process, agent name, routing service or credit source. Jan may be invoked directly; OpenCode is a separate optional agent adapter. Disconnection of either optional agent adapter cannot affect standalone OpenCode/Jan behavior. No silent import of historical TIHULU-AUTO configs or sessions.
