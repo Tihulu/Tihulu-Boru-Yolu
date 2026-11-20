@@ -37,6 +37,42 @@ class ExampleContractTests(unittest.TestCase):
             bad = self.variant(**{"orchestrator__" + flag: False})
             self.assertIn("OpenCode and Jan must remain standalone", validate_example(bad))
 
+    def test_mode_switch_does_not_change_permissions(self):
+        base = BASE
+        for mode in ("AUTO", "ECONOMY", "BALANCED", "PERFORMANCE", "MANUAL"):
+            changed = self.variant(routing__optimization_mode=mode)
+            self.assertEqual(base["execution"], changed["execution"])
+            self.assertEqual(base["privacy"], changed["privacy"])
+            self.assertEqual(base["routing"]["inference_scope"], changed["routing"]["inference_scope"])
+            self.assertEqual([], validate_example(changed))
+
+    def test_privacy_policy_scoped_approved_does_not_enable_raw_stdout(self):
+        allowed = self.variant(privacy__policy="SCOPED_APPROVED")
+        self.assertEqual([], validate_example(allowed))
+        self.assertFalse(allowed["privacy"]["raw_tool_output_to_cloud"])
+        bad = self.variant(privacy__policy="SCOPED_APPROVED", privacy__raw_tool_output_to_cloud=True)
+        self.assertIn("raw_tool_output_to_cloud cannot be globally enabled", validate_example(bad))
+
+    def test_unknown_privacy_policy_rejected(self):
+        bad = self.variant(privacy__policy="UNRESTRICTED")
+        self.assertIn("unknown privacy policy", validate_example(bad))
+
+    def test_unbounded_result_fields_rejected(self):
+        for value in (0, -1, True):
+            bad = self.variant(privacy__max_result_fields=value)
+            self.assertIn("max_result_fields must be a positive integer", validate_example(bad))
+
+    def test_local_only_economy_and_performance_forbid_cloud_fallback(self):
+        for mode in ("ECONOMY", "PERFORMANCE"):
+            bad = self.variant(routing__optimization_mode=mode,
+                               routing__inference_scope="LOCAL_ONLY")
+            self.assertIn("LOCAL_ONLY forbids cloud fallback", validate_example(bad))
+            good = self.variant(routing__optimization_mode=mode,
+                                routing__inference_scope="LOCAL_ONLY",
+                                routing__cloud_fallback_enabled=False)
+            self.assertEqual([], validate_example(good))
+            self.assertEqual("LOCAL_ISOLATED", good["execution"]["profile"])
+
     def test_safe_default_example(self):
         self.assertEqual([], validate_example(BASE))
         self.assertFalse(BASE["execution"]["cloud_shell"]["enabled"])
