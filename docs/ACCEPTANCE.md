@@ -22,7 +22,7 @@
 | A07 | Kandev -> adapter -> Langflow | One task, one flow, correct status | HOLD |
 | A08 | AUTO vs ECONOMY vs PERFORMANCE | Observable policy-dependent selection | HOLD |
 | A09 | LOCAL_ONLY no cloud | Zero provider requests on all failure paths | HOLD |
-| A10 | Token/rate-limit fallback | Bounded retries, no policy escalation | HOLD |
+| A10 | Token/rate-limit fallback | Bounded retries, no policy escalation | STATIC PASS (MOCK): reservation + observed-usage recheck, cooldown, bounded fallback; LIVE HOLD |
 | A11 | Local Shell only | Cloud cannot bypass local broker | HOLD |
 | A12 | Cloud Shell opt-in | Sandbox + live scoped grant required | HOLD |
 | A13 | Cloud Shell revocation | Stops pending jobs and prohibits new ones | HOLD |

@@ -136,12 +136,52 @@ class DispatchTests(RecordingProvider):
         self.assertEqual("deadline_exceeded", summary["reason"])
         engine.close()
 
-    def test_budget_hold_makes_no_call(self):
+    def test_ceiling_over_estimate_holds_without_a_call(self):
         engine = core()
         engine.submit(TaskEnvelope(task_id="t1", goal="g", token_budget=100))
         summary = engine.dispatch_next()
         self.assertEqual("HOLD", summary["state"])
-        self.assertEqual("budget_unverifiable", summary["reason"])
+        self.assertEqual("budget_exceeded_pre_dispatch", summary["reason"])
+        engine.close()
+
+    def test_generous_ceiling_dispatches_and_records_usage(self):
+        engine = core()
+        engine.submit(TaskEnvelope(task_id="t1", goal="g", token_budget=100000))
+        summary = engine.dispatch_next()
+        self.assertEqual("REVIEW", summary["state"])
+        self.assertEqual({"input_tokens": 8, "output_tokens": 8, "total_tokens": 16},
+                         summary["usage_if_observed"])
+        observed = engine.budgets.observed("t1")
+        self.assertEqual(4, observed["estimated_input"])  # labelled estimate
+        self.assertEqual(16, observed["observed_total"])  # labelled observation
+        engine.close()
+
+    def test_cost_ceiling_refuses_an_unbounded_spend(self):
+        engine = core()
+        engine.submit(TaskEnvelope(task_id="t1", goal="g", cost_budget_usd=0.0001))
+        summary = engine.dispatch_next()
+        self.assertEqual("HOLD", summary["state"])
+        self.assertEqual("cost_ceiling_unresolvable_before_dispatch", summary["reason"])
+        engine.close()
+
+    def test_reported_usage_over_ceiling_holds_after_the_call(self):
+        from boru.config import CoreConfig, ProviderConfig
+        from boru.providers.base import ChatReply
+
+        engine = BoruCore(CoreConfig(providers=(ProviderConfig(kind="mock"),), max_output_tokens=8))
+        engine.submit(TaskEnvelope(task_id="t1", goal="g", token_budget=30))
+        original = engine._providers["mock"].chat
+
+        def overstated(model_id, messages, **kwargs):
+            reply = original(model_id, messages, **kwargs)
+            return ChatReply(provider="mock", model_id=model_id, request_id=reply.request_id,
+                             content=reply.content, evidence_class="simulated",
+                             usage={"input_tokens": 20, "output_tokens": 20, "total_tokens": 40})
+
+        engine._providers["mock"].chat = overstated
+        summary = engine.dispatch_next()
+        self.assertEqual("HOLD", summary["state"])
+        self.assertEqual("budget_exceeded_after_reported_usage", summary["reason"])
         engine.close()
 
     def test_cancel_prevents_dispatch(self):

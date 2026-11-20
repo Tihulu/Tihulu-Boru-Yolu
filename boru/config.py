@@ -119,6 +119,8 @@ class CoreConfig:
     max_output_tokens: int = MAX_OUTPUT_TOKENS
     providers: Tuple[ProviderConfig, ...] = ()
     description: str = ""
+    cooldown_seconds: float = 60.0
+    max_context_chars: int = 32 * 1024
 
     def validate(self) -> List[str]:
         errors: List[str] = []
@@ -136,6 +138,8 @@ class CoreConfig:
         errors.extend(_float_errors(self.request_timeout, "request_timeout", 0.1, 120.0))
         if self.max_records < self.queue_limit:
             errors.append("max_records must not be smaller than queue_limit")
+        errors.extend(_float_errors(self.cooldown_seconds, "cooldown_seconds", 1.0, 3600.0))
+        errors.extend(_int_errors(self.max_context_chars, "max_context_chars", 256, 1 << 20))
         if not self.providers:
             errors.append("at least one provider must be configured")
         for provider in self.providers:
@@ -152,7 +156,8 @@ class CoreConfig:
         if not isinstance(raw, dict):
             raise ConfigurationError("configuration must be an object")
         allowed = {"version", "policy", "queue_limit", "max_records", "request_timeout",
-                   "max_output_tokens", "providers", "description"}
+                   "max_output_tokens", "providers", "description", "cooldown_seconds",
+                   "max_context_chars"}
         unknown = sorted(set(raw) - allowed)
         if unknown:
             raise ConfigurationError("unknown configuration field")
@@ -206,6 +211,8 @@ class CoreConfig:
             max_output_tokens=_int(raw.get("max_output_tokens", MAX_OUTPUT_TOKENS), "max_output_tokens", 1, 8192),
             providers=tuple(providers),
             description=_text(raw.get("description", ""), "description", 512) if raw.get("description") else "",
+            cooldown_seconds=_positive_float(raw.get("cooldown_seconds", 60.0), "cooldown_seconds", 1.0, 3600.0),
+            max_context_chars=_int(raw.get("max_context_chars", 32 * 1024), "max_context_chars", 256, 1 << 20),
         )
         config.assert_valid()
         return config
@@ -226,6 +233,8 @@ class CoreConfig:
                 for p in self.providers
             ],
             "description": self.description,
+            "cooldown_seconds": self.cooldown_seconds,
+            "max_context_chars": self.max_context_chars,
         }
 
     @classmethod

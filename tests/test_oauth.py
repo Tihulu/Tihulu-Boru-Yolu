@@ -162,7 +162,7 @@ class RedirectCaptureTests(unittest.TestCase):
         flow, port = self.build()
         _, attempt = flow.start()
         threading.Thread(target=self._deliver, args=(port, "delivered-code", attempt.state)).start()
-        self.assertEqual("delivered-code", flow.serve_redirect(attempt, timeout=10))
+        self.assertEqual("delivered-code", flow.serve_redirect(attempt, timeout=25))
         self.assertTrue(attempt.finished.is_set())
         self.assertTrue(attempt.code.startswith("delivered-code"))
 

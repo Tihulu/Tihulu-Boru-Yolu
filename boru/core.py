@@ -25,6 +25,7 @@ from .config import CoreConfig
 from .errors import ContractError, PolicyViolation, StoreError, VerificationError
 from .policy import LOCAL_PROVIDERS
 from .providers.base import ChatMessage, ChatReply, ProviderFailure
+from .budgets import Budget, BudgetLedger, CooldownTracker, compact, estimate_message_tokens
 from .router import Router, RoutingDecision, fallback_order, should_retry
 from .scheduler import AgentScheduler, AgentSpec, build_envelopes
 from .state import TaskState, TaskRecord, can_transition, utc_now
@@ -51,6 +52,10 @@ REASONS = {
     "provider_unavailable": "provider_unavailable",
     "invalid_reply": "invalid_reply",
     "budget_unverifiable": "budget_unverifiable",
+    "budget_exceeded_pre": "budget_exceeded_pre_dispatch",
+    "cost_ceiling_unresolved": "cost_ceiling_unresolvable_before_dispatch",
+    "budget_exceeded_post": "budget_exceeded_after_reported_usage",
+    "context_compacted": "context_compacted",
     "deadline_exceeded": "deadline_exceeded",
     "verification_failed": "verification_failed",
     "interrupted": "interrupted",
@@ -93,8 +98,13 @@ class BoruCore:
         self._cloud_states: Dict[str, str] = {}
         self._providers = self._build_providers(config)
         self._queue: Dict[str, TaskEnvelope] = {}
+        self._last_bound_input: Dict[str, int] = {}
+        self.budgets = BudgetLedger(ceiling=Budget())
+        self.cooldowns = CooldownTracker(seconds=config.cooldown_seconds)
         self.router = Router(registry) if registry is not None else Router(_registry_for(config, self._providers))
         self.scheduler = AgentScheduler(config.policy, max_agents=config.policy.max_agents)
+        self.budgets = BudgetLedger(ceiling=Budget())
+        self.cooldowns = CooldownTracker(seconds=config.cooldown_seconds)
 
     # -- construction --------------------------------------------------------
     def _build_providers(self, config: CoreConfig) -> Dict[str, Any]:
@@ -265,9 +275,24 @@ class BoruCore:
         if envelope.deadline is not None and self._deadline_passed(envelope.deadline):
             self._hold(envelope, REASONS["deadline_exceeded"])
             return self._summary(envelope)
-        if envelope.token_budget is not None or envelope.cost_budget_usd is not None:
-            self._hold(envelope, REASONS["budget_unverifiable"])
+        if envelope.cost_budget_usd is not None:
+            # Cost cannot be bounded before a call without a provider price
+            # table, so Boru refuses to start rather than spend unbounded money.
+            self._hold(envelope, REASONS["cost_ceiling_unresolved"])
             return self._summary(envelope)
+        ceiling = Budget(max_total_tokens=envelope.token_budget)
+        ceiling.assert_valid()
+        messages = self._messages(envelope)
+        if len("".join(m.content for m in messages)) > self.config.max_context_chars:
+            messages = compact(messages, max_chars=self.config.max_context_chars).messages
+        estimated_input = estimate_message_tokens(messages)
+        allowed, reason = self.budgets.reserve(
+            envelope.task_id, estimated_input=estimated_input,
+            requested_output=self.config.max_output_tokens, ceiling=ceiling)
+        if not allowed:
+            self._hold(envelope, REASONS["budget_exceeded_pre"])
+            return self._summary(envelope)
+        self._last_bound_input[envelope.task_id] = estimated_input
         previous = self.store.transition(
             envelope.task_id, TaskState.QUEUED.value, TaskState.RUNNING.value,
             REASONS["RUNNING"], self._clock(),
@@ -283,7 +308,8 @@ class BoruCore:
             self._hold(envelope, reason)
             return self._summary(envelope)
         attempt_id = "att-" + uuid.uuid4().hex
-        remaining = list(decision.ordered)
+        remaining = [c for c in decision.ordered
+                     if self.cooldowns.available(c.provider, c.model_id)] or list(decision.ordered)
         attempts = 0
         while remaining and attempts <= self.policy.max_retries:
             candidate = remaining.pop(0)
@@ -301,6 +327,8 @@ class BoruCore:
                 )
             except ProviderFailure as failure:
                 self.router.registry.mark_health(candidate.provider, candidate.model_id, "degraded", failure.category)
+                if failure.category in ("rate_limited", "timeout", "server_error"):
+                    self.cooldowns.cool(candidate.provider, candidate.model_id)
                 if should_retry(failure.category) and remaining and attempts <= self.policy.max_retries:
                     continue
                 if failure.category in ("timeout", "unavailable", "rate_limited", "server_error", "unauthorized"):
@@ -310,7 +338,7 @@ class BoruCore:
                 return self._summary(envelope)
             if attempts > 1 or True:
                 self.router.registry.mark_tested(candidate.provider, candidate.model_id, self._clock())
-            return self._record(envelope, attempt_id, candidate.provider, candidate.model_id, reply)
+            return self._record(envelope, attempt_id, candidate.provider, candidate.model_id, reply, ceiling)
         self._hold(envelope, REASONS["provider_unavailable"])
         return self._summary(envelope)
         result = self._result(envelope, attempt_id, provider_name, model_id, reply)
@@ -366,13 +394,18 @@ class BoruCore:
             self.store.transition(envelope.task_id, state.value, TaskState.FAILED.value, reason, self._clock())
             self._queue.pop(envelope.task_id, None)
 
-    def _record(self, envelope, attempt_id, provider_name, model_id, reply) -> Dict[str, Any]:
+    def _record(self, envelope, attempt_id, provider_name, model_id, reply, ceiling) -> Dict[str, Any]:
         """Verify and store a reply; only REVIEW is reachable from here."""
         result = self._result(envelope, attempt_id, provider_name, model_id, reply)
         problems = result.validate(self.policy.max_result_fields)
         if problems or not self._reply_matches(reply, provider_name, model_id):
             self.store.save_result(envelope.task_id, attempt_id, result)
             self._fail(envelope, REASONS["verification_failed"])
+            return self._summary(envelope)
+        ceiling_ok, ceiling_reason = self.budgets.record(
+            envelope.task_id, dict(reply.usage), None)
+        if not ceiling_ok and (ceiling.max_total_tokens or ceiling.max_cost_usd):
+            self._hold(envelope, REASONS["budget_exceeded_post"])
             return self._summary(envelope)
         self.store.save_result(envelope.task_id, attempt_id, result)
         self._queue.pop(envelope.task_id, None)

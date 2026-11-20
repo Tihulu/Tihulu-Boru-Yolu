@@ -213,6 +213,30 @@ Tests prove a read-only profile creates no outbound request for any write
 operation, the call ceiling and expiry are enforced, workflow endpoints are the
 official ones, and HTTP 403/404/429/invalid JSON never leak a body.
 
+## Budgets, cooldowns and context bounds (P3 slice)
+
+`boru/budgets.py` enforces ceilings honestly:
+
+* a pre-dispatch reservation uses a **labelled deterministic estimate**
+  (≈4 characters/token) plus the configured output ceiling; a task whose
+  projection exceeds `token_budget` is held with
+  `budget_exceeded_pre_dispatch` and **zero** provider calls;
+* after the reply, actually *reported* usage is rechecked; exceeding the
+  ceiling holds the task as `budget_exceeded_after_reported_usage` — no extra
+  call, no permission widening, no silent fallback to an unmeasured path;
+* a `cost_budget_usd` cannot be bounded before a call without a provider price
+  table, so Boru refuses to start with `cost_ceiling_unresolvable_before_dispatch`
+  instead of guessing a cost;
+* `CooldownTracker` deprioritizes a candidate after `rate_limited`, `timeout`
+  or `server_error`; if every candidate is cooling, the task is held rather
+  than switching to a wider candidate;
+* `compact()` deterministically bounds a conversation (system instruction plus
+  the most recent turns) and reports how many turns were dropped. It is a
+  heuristic bound, explicitly **not** semantic summarization.
+
+Unknown usage stays unknown: only keys a provider actually reported are
+recorded, and `usage_if_observed` stays empty otherwise.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard
