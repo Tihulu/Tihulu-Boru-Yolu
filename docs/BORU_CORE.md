@@ -195,6 +195,20 @@ API base URL is HTTPS-only unless the owner explicitly allows HTTP for a pinned
 host, tokens only enter via an environment-variable name, and a token is
 identity only — it authorizes nothing by itself.
 
+`boru/auth/` implements the **official authorization-code + PKCE** flow:
+`PkcePair` (S256), fresh `state` and `nonce`, a bounded numeric-loopback
+redirect listener that captures exactly one authorization response and then
+stops, state/nonce verification, and a token exchange that records an opaque
+token **handle** in `TokenVault`. Token values are never stored in
+configuration, prompts, logs, issues or CI artifacts; only handles, provider,
+account, scopes and expiry are recorded, in an owner-only file. Endpoints must
+be HTTPS and the redirect URI must be a numeric loopback address.
+
+No provider is connected by this repository, and browser-only or
+device-code modes stay `UNSUPPORTED` until a provider's official documentation
+confirms them for this application category. Sign-in identity is not inference
+entitlement: a `MODEL_TEST_PASSED` claim always requires a real authorized call.
+
 Tests prove a read-only profile creates no outbound request for any write
 operation, the call ceiling and expiry are enforced, workflow endpoints are the
 official ones, and HTTP 403/404/429/invalid JSON never leak a body.
