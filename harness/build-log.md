@@ -182,3 +182,20 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **287 tests**; OAuth redirect capture verified against a test-owned loopback endpoint. MOCK/STATIC only.
 - **Security implications:** HTTPS-only endpoints, numeric-loopback redirect, single-use state and nonce, opaque token handles only (no token values anywhere), and no claim of a connected provider or of inference entitlement.
 - **Blocked:** real provider registration/consent, live OAuth round trip, and all remaining live gates.
+
+---
+
+### 2026-11-20 10:50 UTC — Round handoff (commit `971140e`, CI run 34 success)
+
+- **Verified at this commit:** `scripts/check_project.py` PASS; `python3 -m unittest discover -s tests` PASS **287 tests**; `boru demo --show-text` -> `REVIEW` / `simulated` / `live_acceptance=HOLD`. All MOCK/STATIC.
+- **Implemented and unit/integration-tested (source level):** P1 core contracts/states/state-store/CLI/providers; P2 optional loopback OpenCode adapter; P3 mode-aware routing and bounded policy-safe fallback; P4 DAG planner with counted leases; P5 fail-closed disclosure gate + persistent consent store; P7 cloud transport, OAuth/PKCE flow, token handle vault; P8 grant-bound GitHub connector; P9 loopback dashboard with EN/TR/DE labels; P10 user-space install/rollback round trip.
+- **Remaining HOLD with exact next actions:**
+  1. Live Jan 3-turn pilot — start Jan's local API server (still not listening in this session), then follow `docs/JAN_PILOT.md` with an owner-confirmed endpoint, local model ID and tools-disabled setting.
+  2. Live OpenCode child-session pilot in a disposable profile (real session ID, provider/model).
+  3. Provider registration + live OAuth round trip for one provider (identity vs inference verification).
+  4. Broker hardening: authenticated worker identity, OS confinement, independent security review.
+  5. Cloud Shell sandbox (blocked by item 4 + owner consent).
+  6. Live GitHub/GitLab/Actions scoped pilots, webhook ingress policy.
+  7. Dashboard accessibility review and remaining localization polish.
+  8. Clean-machine Pop!_OS/Ubuntu acceptance matrix, repository license choice, owner release approval.
+- **Resume:** check out `p1/boru-core-vertical-slice`, read `docs/BORU_CORE.md` and this entry, run the two verification commands, then attempt item 1 or the next source-only slice. Do not rewrite existing modules; extend them.
