@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "description": "Minimal offline-runnable Boru Core example (P1 slice). LOCAL_ONLY, LOCAL_ISOLATED, MINIMUM_NECESSARY. No credentials, no network, no autostart. Not a security boundary and not proof of live execution.",
+  "policy": {
+    "optimization_mode": "AUTO",
+    "inference_scope": "LOCAL_ONLY",
+    "execution_profile": "LOCAL_ISOLATED",
+    "disclosure_policy": "MINIMUM_NECESSARY",
+    "max_agents": 6,
+    "max_retries": 2,
+    "cloud_fallback_enabled": false
+  },
+  "queue_limit": 16,
+  "max_records": 1024,
+  "request_timeout": 30.0,
+  "max_output_tokens": 256,
+  "providers": [
+    {
+      "kind": "mock",
+      "tool_execution_disabled": true
+    }
+  ]
+}

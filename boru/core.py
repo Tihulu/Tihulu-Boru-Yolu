@@ -1,0 +1,413 @@
+"""Boru Core: scheduling, dispatch, verification and durable task state.
+
+Design constraints enforced here rather than in prompts:
+
+* The four policy axes are read from one immutable ``Policy``; no model
+  reply, routing preset or provider switch can widen them.
+* A completed reply only reaches ``REVIEW``.  ``DONE`` requires an explicit
+  owner review recorded in the local task history, and the evidence class is
+  preserved so a simulated result is never relabelled as live.
+* ``MANUAL`` routing needs an owner-selected provider/model; otherwise the
+  task is held, never silently substituted.
+* P1 supports text-only local providers.  A cloud request under ``CLOUD_ALLOWED``
+  is held as ``unsupported_inference`` because no cloud provider is configured
+  or verified in this slice.
+* Budget ceilings are held *before* dispatch when usage cannot be reserved:
+  Boru Core never issues a call it cannot account for.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from .config import CoreConfig
+from .errors import ContractError, PolicyViolation, StoreError, VerificationError
+from .policy import LOCAL_PROVIDERS
+from .providers.base import ChatMessage, ChatReply, ProviderFailure
+from .state import TaskState, TaskRecord, can_transition, utc_now
+from .store import TaskStore
+from .types import SCHEMA_VERSION, AgentResult, TaskEnvelope
+
+CAPABILITIES = ("text",)
+
+#: Stable audit reasons. Provider text is never used as a reason category.
+REASONS = {
+    "CREATED": "submitted",
+    "CLASSIFIED": "classified",
+    "PLANNED": "planned",
+    "QUEUED": "queued",
+    "RUNNING": "dispatch_started",
+    "VERIFYING": "reply_recorded",
+    "REVIEW": "reply_recorded",
+    "DONE": "owner_review_done",
+    "FAILED": "owner_review_failed",
+    "CANCELLED": "cancelled",
+    "unsupported_capability": "unsupported_capability",
+    "unsupported_inference": "unsupported_inference",
+    "manual_selection_required": "manual_selection_required",
+    "provider_unavailable": "provider_unavailable",
+    "invalid_reply": "invalid_reply",
+    "budget_unverifiable": "budget_unverifiable",
+    "deadline_exceeded": "deadline_exceeded",
+    "verification_failed": "verification_failed",
+    "interrupted": "interrupted",
+    "missing_provider": "missing_provider",
+}
+
+
+class BoruCore:
+    """Local-first orchestrator with durable, reviewable task state."""
+
+    def __init__(self, config: CoreConfig, store: Optional[TaskStore] = None, clock=None) -> None:
+        config.assert_valid()
+        self.config = config
+        self.policy = config.policy
+        self.store = store if store is not None else TaskStore(max_records=config.max_records)
+        self._clock = clock or utc_now
+        self._providers = self._build_providers(config)
+        self._queue: Dict[str, TaskEnvelope] = {}
+
+    # -- construction --------------------------------------------------------
+    def _build_providers(self, config: CoreConfig) -> Dict[str, Any]:
+        providers: Dict[str, Any] = {}
+        for entry in config.providers:
+            if entry.kind == "mock":
+                from .providers.mock import MockProvider
+
+                providers["mock"] = MockProvider()
+            elif entry.kind == "jan":
+                from .providers.jan import JanProvider
+
+                providers["jan"] = JanProvider(
+                    entry.endpoint,
+                    local_model_ids=entry.local_model_ids,
+                    tool_execution_disabled=entry.tool_execution_disabled,
+                )
+            else:  # pragma: no cover - config validation rejects this
+                raise PolicyViolation("provider kind is not supported")
+        return providers
+
+    # -- task lifecycle ------------------------------------------------------
+    def submit(self, envelope: TaskEnvelope) -> Tuple[TaskEnvelope, str]:
+        """Queue one task; returns ``(envelope, state)``."""
+        envelope.assert_valid()
+        errors = self._task_policy_errors(envelope)
+        if errors:
+            raise PolicyViolation("; ".join(errors))
+        self.store.ensure_capacity()
+        key = envelope.idempotency_key or envelope.task_id
+        created, row = self.store.submit(
+            envelope.task_id, key, envelope.to_dict(), TaskState.CREATED.value, self._clock()
+        )
+        if not created:
+            stored_state = row["state"]
+            state = TaskState(stored_state)
+            if state is not TaskState.QUEUED:
+                raise StoreError("task already recorded in state " + stored_state)
+            self._queue[envelope.task_id] = envelope
+            return envelope, state.value
+        for source, target in (
+            (TaskState.CREATED, TaskState.CLASSIFIED),
+            (TaskState.CLASSIFIED, TaskState.PLANNED),
+            (TaskState.PLANNED, TaskState.QUEUED),
+        ):
+            self.store.transition(
+                envelope.task_id, source.value, target.value, REASONS[target.value], self._clock()
+            )
+        self._queue[envelope.task_id] = envelope
+        return envelope, TaskState.QUEUED.value
+
+    def _task_policy_errors(self, envelope: TaskEnvelope) -> List[str]:
+        errors: List[str] = []
+        axes = (envelope.inference_scope, envelope.execution_profile, envelope.disclosure_policy)
+        if axes != (self.policy.inference_scope, self.policy.execution_profile, self.policy.disclosure_policy):
+            errors.append("task axes must match the approved policy")
+        if envelope.routing_mode != self.policy.optimization_mode:
+            errors.append("routing mode must match the approved policy")
+        allowed = set(CAPABILITIES)
+        if set(envelope.capability_tags) - allowed:
+            errors.append("P1 supports text capability only")
+        if envelope.max_parallel > self.policy.max_agents:
+            errors.append("max_parallel exceeds the approved agent limit")
+        if envelope.consent_reference:
+            errors.append("consent_reference is a reference, not an authorization")
+        if self.policy.optimization_mode == "MANUAL" and not (envelope.selected_provider and envelope.selected_model):
+            errors.append("MANUAL routing requires an owner-selected provider and model")
+        if not self._providers_for(envelope):
+            errors.append("no configured provider can serve this task")
+        return errors
+
+    def _providers_for(self, envelope: TaskEnvelope) -> List[str]:
+        names = sorted(self._providers)
+        if self.policy.inference_scope == "LOCAL_ONLY":
+            names = [n for n in names if n in LOCAL_PROVIDERS]
+        if envelope.selected_provider:
+            names = [n for n in names if n == envelope.selected_provider]
+        return names
+
+    # -- dispatch ------------------------------------------------------------
+    def dispatch_next(self) -> Optional[Dict[str, Any]]:
+        """Run exactly one queued task and return a bounded status summary."""
+        target = self._next_queued()
+        if target is None:
+            return None
+        envelope, state = target
+        if envelope.deadline is not None and self._deadline_passed(envelope.deadline):
+            self._hold(envelope, REASONS["deadline_exceeded"])
+            return self._summary(envelope)
+        if envelope.token_budget is not None or envelope.cost_budget_usd is not None:
+            self._hold(envelope, REASONS["budget_unverifiable"])
+            return self._summary(envelope)
+        previous = self.store.transition(
+            envelope.task_id, TaskState.QUEUED.value, TaskState.RUNNING.value,
+            REASONS["RUNNING"], self._clock(),
+        )
+        if previous != TaskState.QUEUED.value:
+            return self._summary(envelope)
+        provider_names = self._providers_for(envelope)
+        if self.policy.inference_scope != "LOCAL_ONLY" and not provider_names:
+            self._hold(envelope, REASONS["unsupported_inference"])
+            return self._summary(envelope)
+        if not provider_names:
+            self._hold(envelope, REASONS["missing_provider"])
+            return self._summary(envelope)
+        provider_name = provider_names[0]
+        provider = self._providers[provider_name]
+        model_id = envelope.selected_model or self._configured_model(provider_name)
+        if model_id is None:
+            self._hold(envelope, REASONS["missing_provider"])
+            return self._summary(envelope)
+        attempt_id = "att-" + uuid.uuid4().hex
+        try:
+            reply = provider.chat(
+                model_id,
+                self._messages(envelope),
+                max_tokens=self.config.max_output_tokens,
+                timeout=self.config.request_timeout,
+            )
+        except ProviderFailure as failure:
+            if failure.category in ("timeout", "unavailable", "rate_limited", "server_error", "unauthorized"):
+                self._hold(envelope, REASONS["provider_unavailable"])
+            else:
+                self.store.transition(
+                    envelope.task_id, TaskState.RUNNING.value, TaskState.FAILED.value,
+                    REASONS["invalid_reply"], self._clock(),
+                )
+            return self._summary(envelope)
+        result = self._result(envelope, attempt_id, provider_name, model_id, reply)
+        problems = result.validate(self.policy.max_result_fields)
+        if problems or not self._reply_matches(reply, provider_name, model_id):
+            self.store.transition(
+                envelope.task_id, TaskState.RUNNING.value, TaskState.VERIFYING.value,
+                REASONS["VERIFYING"], self._clock(),
+            )
+            self.store.transition(
+                envelope.task_id, TaskState.VERIFYING.value, TaskState.REVIEW.value,
+                REASONS["VERIFYING"], self._clock(),
+            )
+            self.store.transition(
+                envelope.task_id, TaskState.REVIEW.value, TaskState.FAILED.value,
+                REASONS["verification_failed"], self._clock(),
+            )
+            self.store.save_result(envelope.task_id, attempt_id, result)
+            return self._summary(envelope)
+        self.store.save_result(envelope.task_id, attempt_id, result)
+        self._queue.pop(envelope.task_id, None)
+        self.store.transition(
+            envelope.task_id, TaskState.RUNNING.value, TaskState.VERIFYING.value,
+            REASONS["VERIFYING"], self._clock(),
+        )
+        self.store.transition(
+            envelope.task_id, TaskState.VERIFYING.value, TaskState.REVIEW.value,
+            REASONS["VERIFYING"], self._clock(),
+        )
+        return self._summary(envelope)
+
+    def _next_queued(self) -> Optional[Tuple[TaskEnvelope, str]]:
+        """Return the next dispatchable task, restoring envelopes on restart."""
+        for row in self.store.queued():
+            envelope = self._queue.get(row["task_id"])
+            if envelope is None:
+                envelope = self._restore(row["task_id"])
+                if envelope is None:
+                    continue
+            return envelope, row["state"]
+        return None
+
+    def _restore(self, task_id: str) -> Optional[TaskEnvelope]:
+        """Rebuild an envelope from durable state (no resubmission, no re-run)."""
+        try:
+            raw = self.store.envelope(task_id)
+        except StoreError:
+            return None
+        try:
+            return TaskEnvelope.from_dict(raw)
+        except ContractError:
+            return None
+
+    @staticmethod
+    def _deadline_passed(deadline: str) -> bool:
+        try:
+            parsed = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        return datetime.now(timezone.utc) >= parsed
+
+    def _hold(self, envelope: TaskEnvelope, reason: str) -> None:
+        row = self.store.get(envelope.task_id)
+        if row is None:
+            return
+        state = TaskState(row["state"])
+        for target in ("HOLD",):
+            if can_transition(state, TaskState.HOLD):
+                self.store.transition(envelope.task_id, state.value, target, reason, self._clock())
+                return
+
+    def _messages(self, envelope: TaskEnvelope) -> List[ChatMessage]:
+        payload = dict(envelope.payload or {})
+        raw = payload.get("messages")
+        if isinstance(raw, list) and raw:
+            messages = []
+            for turn in raw:
+                if not isinstance(turn, dict):
+                    raise PolicyViolation("messages must be role/content objects")
+                unknown = sorted(set(turn) - {"role", "content"})
+                if unknown:
+                    raise PolicyViolation("messages carry unexpected fields")
+                messages.append(ChatMessage(role=str(turn["role"]), content=str(turn["content"])))
+            return messages
+        return [ChatMessage(role="user", content=envelope.goal)]
+
+    def _configured_model(self, provider_name: str) -> Optional[str]:
+        """Return the operator-configured model for a provider.
+
+        P1 does not rank models; it uses the first configured entry and marks
+        mode-dependent selection as a later phase.
+        """
+        try:
+            models = list(self._providers[provider_name].discover())
+        except Exception:  # pragma: no cover - providers are defensive
+            return None
+        return models[0] if models else None
+
+    def _reply_matches(self, reply: ChatReply, provider_name: str, model_id: str) -> bool:
+        return (
+            reply.provider == provider_name
+            and reply.model_id == model_id
+            and reply.evidence_class in ("direct", "simulated")
+            and isinstance(reply.request_id, str)
+            and bool(reply.request_id.strip())
+        )
+
+    def _result(self, envelope, attempt_id, provider_name, model_id, reply) -> AgentResult:
+        return AgentResult(
+            task_id=envelope.task_id,
+            attempt_id=attempt_id,
+            status="completed",
+            model_provider=provider_name,
+            model_id=model_id,
+            evidence_class=reply.evidence_class,
+            typed_result={"text": reply.content},
+            child_session_ref=None,
+            evidence_refs=(reply.request_id,),
+            duration_ms=None,
+            usage_if_observed=dict(reply.usage),
+            redaction_policy_revision=SCHEMA_VERSION,
+            disclosure_level="L0",
+        )
+
+    # -- review / cancellation ----------------------------------------------
+    def review(self, task_id: str, *, accept: bool) -> str:
+        row = self.store.get(task_id)
+        if row is None:
+            raise StoreError("unknown task")
+        state = TaskState(row["state"])
+        if state is not TaskState.REVIEW:
+            raise VerificationError("task is not awaiting review")
+        reason = REASONS["DONE"] if accept else REASONS["FAILED"]
+        target = TaskState.DONE if accept else TaskState.FAILED
+        self.store.transition(task_id, state.value, target.value, reason, self._clock())
+        self._queue.pop(task_id, None)
+        return target.value
+
+    def cancel(self, task_id: str) -> str:
+        row = self.store.get(task_id)
+        if row is None:
+            raise StoreError("unknown task")
+        state = TaskState(row["state"])
+        if state is TaskState.CANCELLED:
+            return state.value
+        self._queue.pop(task_id, None)
+        if state in (TaskState.QUEUED, TaskState.HOLD, TaskState.REVIEW) and can_transition(state, TaskState.CANCELLED):
+            self.store.transition(task_id, state.value, TaskState.CANCELLED.value, REASONS["CANCELLED"], self._clock())
+            return TaskState.CANCELLED.value
+        if can_transition(state, TaskState.HOLD):
+            self.store.transition(task_id, state.value, TaskState.HOLD.value, REASONS["CANCELLED"], self._clock())
+        for row_pending in self.store.pending():
+            if row_pending["task_id"] == task_id and row_pending["state"] in (TaskState.RUNNING.value, TaskState.VERIFYING.value):
+                self.store.transition(task_id, row_pending["state"], TaskState.HOLD.value, REASONS["interrupted"], self._clock())
+                return TaskState.HOLD.value
+        return state.value
+
+    def recover(self) -> List[str]:
+        """Move interrupted in-flight tasks back to a safe state on startup."""
+        moved: List[str] = []
+        for row in self.store.pending():
+            state = row["state"]
+            if state in (TaskState.RUNNING.value, TaskState.VERIFYING.value):
+                self.store.transition(row["task_id"], state, TaskState.HOLD.value, REASONS["interrupted"], self._clock())
+                moved.append(row["task_id"])
+        for row in self.store.by_state((TaskState.QUEUED.value,)):
+            self._queue.setdefault(row["task_id"], None)  # queue not repopulated without the envelope
+        return moved
+
+    def result_text(self, task_id: str) -> Optional[str]:
+        """Return the recorded local reply text for an owner-side inspection."""
+        row = self.store.get(task_id)
+        if row is None:
+            raise StoreError("unknown task")
+        attempts = row.get("attempts") or []
+        if not attempts:
+            return None
+        typed = attempts[-1].get("typed_result") or {}
+        text = typed.get("text")
+        return text if isinstance(text, str) else None
+
+    def status(self, task_id: str) -> Dict[str, Any]:
+        row = self.store.get(task_id)
+        if row is None:
+            raise StoreError("unknown task")
+        return self._summary_from_row(row)
+
+    # -- summaries -----------------------------------------------------------
+    def _summary(self, envelope: TaskEnvelope) -> Dict[str, Any]:
+        row = self.store.get(envelope.task_id)
+        if row is None:
+            return {"task_id": envelope.task_id, "state": "MISSING"}
+        return self._summary_from_row(row)
+
+    @staticmethod
+    def _summary_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        attempts = row.get("attempts") or []
+        latest = attempts[-1] if attempts else {}
+        return {
+            "task_id": row["task_id"],
+            "state": row["state"],
+            "reason": row["events"][-1]["reason"] if row["events"] else None,
+            "provider": latest.get("model_provider"),
+            "model_id": latest.get("model_id"),
+            "evidence_class": latest.get("evidence_class"),
+            "usage_if_observed": latest.get("usage_if_observed") or {},
+            "live_acceptance": "HOLD",
+        }
+
+    def close(self) -> None:
+        """Release the local state store this core used."""
+        self.store.close()
+
+    def __enter__(self) -> "BoruCore":
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        self.close()
