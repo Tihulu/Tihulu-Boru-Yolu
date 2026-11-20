@@ -1,5 +1,7 @@
 # Delivery roadmap — staged, rollback-first
 
+**Policy freeze:** ADR-0004 preserves all owner-selected optimization modes, token budgets, privacy/minimal disclosure, LOCAL_ONLY/CLOUD_ALLOWED and four Shell profiles through the Boru Core independence transition. Neither optional TIHULU-AUTO nor OpenCode may be required for direct Jan inference. Changing a routing model cannot change any execution/disclosure grants.
+
 Each milestone requires evidence and a reversible change. An incomplete milestone is **HOLD**, not 99% complete. Do not move production settings or merge changes just because a document exists.
 
 ## M0 — Repository and compatibility baseline (documentation)
