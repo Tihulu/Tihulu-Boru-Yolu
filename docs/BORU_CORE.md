@@ -117,9 +117,23 @@ runs only tasks whose dependencies are `DONE`, and `release` frees only
 Boru-owned leases — nothing can stop, unload or reconfigure an external Jan or
 OpenCode session.
 
+## Privacy gate (P5 source slice, not a boundary)
+
+`boru/privacy.py` is a deterministic, fail-closed release gate: it decides
+which typed fields may leave for one named recipient and refuses everything
+else (private-carrying field names, fields outside the level allowlist,
+oversized or nested payloads, missing fields, oversized results). L2 needs an
+explicit recipient-bound, field-scoped, expiring, nonce-protected owner grant;
+without it the answer is denial, never a raw fallback.
+
+This is a **gate**, not a broker: no authenticated worker, OS confinement,
+socket permission, persistent consent store or revocation of live grants is
+implemented here. Independent security review is required before any live
+disclosure path is enabled, and the live acceptance matrix entries remain HOLD.
+
 ## Not implemented in this slice (HOLD)
 
-The trusted broker and Privacy Bridge
+The trusted broker, authenticated worker and OS isolation
 (P5), cloud-shell sandbox (P6), provider OAuth/API connections (P7),
 GitHub/GitLab/Actions connectors (P8), the dashboard (P9), and Linux
 install/rollback acceptance (P10).
