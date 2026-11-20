@@ -26,7 +26,7 @@
 | A11 | Local Shell only | Cloud cannot bypass local broker | STATIC PASS (MOCK): allowlist/alias/scope/replay/expiry/revocation all deny; executor and OS isolation still HOLD |
 | A12 | Cloud Shell opt-in | Sandbox + live scoped grant required | HOLD |
 | A13 | Cloud Shell revocation | Stops pending jobs and prohibits new ones | HOLD |
-| A14 | Privacy Bridge | Typed minimal disclosure; no raw stdout | HOLD |
+| A14 | Privacy Bridge | Typed minimal disclosure; no raw stdout | STATIC PASS (MOCK): gate + broker + bounded worker refuse content/listings/raw fields; live disclosure path HOLD |
 | A15 | Protected extra data | Exact recipient/field approval before disclosure | HOLD |
 | A16 | Adversarial inputs | Prompt-injection, replay, schema overflow denied | HOLD |
 | A17 | Resource lifecycle | Owned models only, cancel/unload no leaks | HOLD |

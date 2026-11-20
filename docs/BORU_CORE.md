@@ -150,9 +150,19 @@ stays denied after a restart, and it records every used nonce once. Grant
 fields, recipients, tasks and levels are validated; no token, path or model
 output is ever stored.
 
-The executor, OS confinement, an authenticated persistent worker identity
-store and a live socket are **not** implemented; those remain HOLD and are the
-subject of an independent security review before any restricted operation runs.
+`boru/executor.py` adds the bounded local worker that performs the *acquisition
+and reduction* steps for the three read-only operations: `probe_path_alias`
+returns `exists`/`type`/`size`, `list_dir_alias` returns a bounded
+`entry_count` (never names), and `read_file_alias` reports `exists`/`size`
+without ever producing file content. Aliases are opened with
+`O_DIRECTORY|O_NOFOLLOW`, receipts must be unexpired and carry an allowlisted
+operation, and requesting any field the operation does not produce — including
+`content`, `raw_stdout` or `file_contents` — is refused.
+
+Still **not** implemented: an authenticated persistent worker identity store, a
+live socket, OS confinement, any mutating or subprocess operation, and the
+release of L2 excerpts to a model. Those remain HOLD pending an independent
+security review.
 
 ## Cloud provider (P7 source slice, no live calls)
 

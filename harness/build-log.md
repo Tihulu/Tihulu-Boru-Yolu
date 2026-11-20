@@ -271,3 +271,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `boru/broker.py` (operation allowlist, resource aliases with escape/symlink refusal, worker scopes, replay-protected nonces, `AuthorizationReceipt`) and `tests/test_broker.py` (negative paths: unknown operation, undeclared/traversing/symlinked resource, worker without scope, missing/expired/revoked grant, replayed nonce, malformed request, no consent store).
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **339 tests**. MOCK/STATIC only.
 - **Security implications:** nothing is executed; every denial path is closed and receipts carry alias names, never raw paths or file contents. The executor, OS confinement and an authenticated persistent worker store remain HOLD pending independent security review.
+
+---
+
+### 2026-11-20 20:40 UTC — bounded local worker added (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/executor.py` (`LocalExecutor` — alias-confined read-only acquisition returning typed fields only; `O_DIRECTORY|O_NOFOLLOW`; receipt-bound) and `tests/test_executor.py`; receipt validation now rejects an operation outside the allowlist.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **350 tests**. MOCK/STATIC only.
+- **Security implications:** `list_dir_alias` returns a count, never names; `read_file_alias` reports size, never content; requesting `content`/`raw_stdout`/`file_contents` is refused; expired or forged receipts are refused; symlinked aliases are refused at construction. No subprocess, shell, network or mutation exists in this worker, and no live restricted operation was run.
+- **Still HOLD:** an authenticated persistent worker store, live socket, OS confinement, mutating/subprocess operations, L2 excerpt release and independent security review.

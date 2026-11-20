@@ -132,6 +132,8 @@ class AuthorizationReceipt:
         errors: List[str] = []
         _bounded(self.receipt_id, 96, "receipt_id")
         _bounded(self.operation, 64, "operation")
+        if self.operation not in ALLOWED_OPERATIONS:
+            errors.append("unknown authorized operation")
         _bounded(self.resource_alias, MAX_ALIAS, "resource_alias")
         _bounded(self.task_id, MAX_TASK_ID, "task_id")
         _bounded(self.worker_id, 128, "worker_id")
