@@ -216,6 +216,12 @@ device-code modes stay `UNSUPPORTED` until a provider's official documentation
 confirms them for this application category. Sign-in identity is not inference
 entitlement: a `MODEL_TEST_PASSED` claim always requires a real authorized call.
 
+`boru/connectors/gitlab.py` implements the same contract for GitLab.com and
+owner-allowlisted self-managed instances against the official `/api/v4` API:
+project paths are percent-encoded, `PRIVATE-TOKEN` is read only from an
+environment-variable name, and the same grant boundary, call ceiling, expiry,
+audit redaction and read-only isolation apply.
+
 Tests prove a read-only profile creates no outbound request for any write
 operation, the call ceiling and expiry are enforced, workflow endpoints are the
 official ones, and HTTP 403/404/429/invalid JSON never leak a body.

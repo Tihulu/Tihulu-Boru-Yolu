@@ -162,3 +162,88 @@ class GitHubProviderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GitLabProviderTests(unittest.TestCase):
+    """GitLab connector: grant boundary, official endpoints, no leaks."""
+
+    def setUp(self):
+        self.provider = GitLabProvider()
+        self.grant = grant(nonce="gl-1")
+
+    def test_https_required(self):
+        with self.assertRaises(PolicyViolation):
+            GitLabProvider(base_url="http://gitlab.example")
+
+    def test_https_allowed_for_gitlab_com(self):
+        self.assertEqual("https://gitlab.com", GitLabProvider().base_url)
+
+    def test_bad_token_env_rejected(self):
+        for bad in ("", "x" * 200, 5):
+            with self.assertRaises(PolicyViolation):
+                GitLabProvider(token_env=bad)
+
+    def test_denied_operations_make_no_request(self):
+        requests = []
+        self.provider._transport = lambda method, path, body: requests.append((method, path)) or (200, b"{}")
+        for operation in WRITE_OPERATIONS:
+            with self.assertRaises(ConnectorDenied):
+                self.provider.call(self.grant, operation, {"repository": "owner/project"})
+        self.assertEqual([], requests)
+
+    def test_read_is_allowed_and_audited(self):
+        seen = []
+        self.provider._transport = lambda method, path, body: seen.append((method, path, body)) or (200, b'[]')
+        payload = self.provider.call(self.grant, "list_issues", {"repository": "owner/project"})
+        self.assertEqual([], payload)
+        self.assertEqual([("GET", "/api/v4/projects/owner%2Fproject/issues?per_page=100", {})], seen)
+
+    def test_write_grant_and_official_endpoints(self):
+        seen = []
+        self.provider._transport = lambda method, path, body: seen.append((method, path, body)) or (201, b'{"iid":1}')
+        subject = grant(operations=("create_issue",), capabilities=(Capability.ISSUE_WRITE,), nonce="gl-2")
+        self.provider.call(subject, "create_issue", {"repository": "owner/project"}, body={"title": "x"})
+        self.assertEqual(("POST", "/api/v4/projects/owner%2Fproject/issues", {"title": "x"}), seen[0])
+
+    def test_pipeline_endpoints_are_official(self):
+        self.provider._transport = lambda method, path, body: (200, b'{}')
+        reader = grant(operations=("get_run",), nonce="gl-3")
+        self.provider.call(reader, "get_run", {"repository": "owner/project", "run_id": 42})
+        dispatch = grant(operations=("dispatch_workflow",), capabilities=(Capability.ACTIONS_DISPATCH,),
+                         nonce="gl-4")
+        self.provider.call(dispatch, "dispatch_workflow", {"repository": "owner/project"}, body={"ref": "main"})
+        paths = [event.get("path") for event in self.provider.audit()]
+        self.assertIn("/api/v4/projects/owner%2Fproject/pipelines/42", paths)
+        self.assertIn("/api/v4/projects/owner%2Fproject/pipeline", paths)
+
+    def test_token_only_from_environment_name(self):
+        import os
+
+        os.environ["BORU_TEST_GITLAB_TOKEN"] = "not-a-real-token"
+        provider = GitLabProvider(token_env="BORU_TEST_GITLAB_TOKEN",
+                                  transport=lambda method, path, body: (200, b'{}'))
+        reader = grant(operations=("list_issues",), nonce="gl-5")
+        provider.call(reader, "list_issues", {"repository": "owner/project"})
+        del os.environ["BORU_TEST_GITLAB_TOKEN"]
+        self.assertTrue(provider.audit())
+        self.assertNotIn("not-a-real-token", str(provider.audit()))
+
+    def test_error_mapping_never_leaks_body(self):
+        self.provider._transport = lambda method, path, body: (403, b'{"message":"SECRET-BODY"}')
+        with self.assertRaises(ConnectorDenied) as raised:
+            self.provider.call(self.grant, "list_issues", {"repository": "owner/project"})
+        self.assertEqual("http_403", str(raised.exception))
+        self.assertNotIn("SECRET-BODY", str(self.provider.audit()))
+
+    def test_call_ceiling_and_expiry(self):
+        self.provider._transport = lambda method, path, body: (200, b'{}')
+        ceiling = grant(max_calls=1, nonce="gl-6")
+        self.provider.call(ceiling, "list_issues", {"repository": "owner/project"})
+        with self.assertRaises(ConnectorDenied):
+            self.provider.call(ceiling, "list_issues", {"repository": "owner/project"})
+        expired = grant(issued_at=time.time() - 30, expires_at=time.time() - 1, nonce="gl-7")
+        with self.assertRaises(ConnectorDenied):
+            self.provider.call(expired, "list_issues", {"repository": "owner/project"})
+
+
+from boru.connectors.gitlab import GitLabProvider  # noqa: E402
