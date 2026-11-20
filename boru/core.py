@@ -25,6 +25,7 @@ from .config import CoreConfig
 from .errors import ContractError, PolicyViolation, StoreError, VerificationError
 from .policy import LOCAL_PROVIDERS
 from .providers.base import ChatMessage, ChatReply, ProviderFailure
+from .audit import RejectionLedger
 from .budgets import Budget, BudgetLedger, CooldownTracker, compact, estimate_message_tokens
 from .router import Router, RoutingDecision, fallback_order, should_retry
 from .scheduler import AgentScheduler, AgentSpec, build_envelopes
@@ -89,7 +90,8 @@ def _registry_for(config: CoreConfig, providers: Dict[str, Any]):
 class BoruCore:
     """Local-first orchestrator with durable, reviewable task state."""
 
-    def __init__(self, config: CoreConfig, store: Optional[TaskStore] = None, clock=None, registry=None) -> None:
+    def __init__(self, config: CoreConfig, store: Optional[TaskStore] = None, clock=None, registry=None,
+                 audit: Optional[RejectionLedger] = None) -> None:
         config.assert_valid()
         self.config = config
         self.policy = config.policy
@@ -97,6 +99,7 @@ class BoruCore:
         self._clock = clock or utc_now
         self._cloud_states: Dict[str, str] = {}
         self._providers = self._build_providers(config)
+        self.audit = audit if audit is not None else RejectionLedger()
         self._queue: Dict[str, TaskEnvelope] = {}
         self._last_bound_input: Dict[str, int] = {}
         self.budgets = BudgetLedger(ceiling=Budget())
@@ -151,6 +154,7 @@ class BoruCore:
         envelope.assert_valid()
         errors = self._task_policy_errors(envelope)
         if errors:
+            self.audit.record("policy", envelope.task_id, "task_axes_refused", "policy")
             raise PolicyViolation("; ".join(errors))
         self.store.ensure_capacity()
         key = envelope.idempotency_key or envelope.task_id
@@ -236,6 +240,7 @@ class BoruCore:
         if spec is not None:
             allowed, reason = self.scheduler.can_lease(spec)
             if not allowed:
+                self.audit.record("scheduler", task_id, reason, "lease")
                 self._hold_by_id(task_id, reason)
                 return self.status(task_id)
             self.scheduler.acquire(spec)
@@ -388,6 +393,7 @@ class BoruCore:
             return None
 
     def _fail(self, envelope: TaskEnvelope, reason: str) -> None:
+        self.audit.record("scheduler", envelope.task_id, reason, "failed")
         row = self.store.get(envelope.task_id)
         if row is None:
             return
@@ -448,6 +454,7 @@ class BoruCore:
         return datetime.now(timezone.utc) >= parsed
 
     def _hold(self, envelope: TaskEnvelope, reason: str) -> None:
+        self.audit.record("scheduler", envelope.task_id, reason, "hold")
         row = self.store.get(envelope.task_id)
         if row is None:
             return

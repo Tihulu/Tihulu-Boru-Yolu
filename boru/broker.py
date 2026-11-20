@@ -153,7 +153,7 @@ class Broker:
     POLICY_REVISION = 1
 
     def __init__(self, *, worker: WorkerIdentity, scopes: ScopeAllowlist, consent,
-                 receipt_ttl_seconds: float = 60.0) -> None:
+                 receipt_ttl_seconds: float = 60.0, audit=None) -> None:
         if receipt_ttl_seconds is None or isinstance(receipt_ttl_seconds, bool) \
                 or not isinstance(receipt_ttl_seconds, (int, float)) \
                 or not 1.0 <= float(receipt_ttl_seconds) <= 3600:
@@ -171,12 +171,15 @@ class Broker:
         self.consent = consent
         self.receipt_ttl_seconds = float(receipt_ttl_seconds)
         self._nonces: Set[str] = set()
+        self.audit = audit
 
     # -- decisions -----------------------------------------------------------
     def authorize(self, request: OperationRequest, *, now: Optional[float] = None) -> Tuple[str, Optional[AuthorizationReceipt], str]:
         """Return ``(decision, receipt_or_none, reason)``."""
         reason = self._check(request, now=now)
         if reason:
+            if self.audit is not None:
+                self.audit.record("broker", request.task_id, reason, request.operation)
             return "deny", None, reason
         stamp = time.time() if now is None else now
         receipt = AuthorizationReceipt(

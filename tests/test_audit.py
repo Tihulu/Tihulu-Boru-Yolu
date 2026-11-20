@@ -122,3 +122,71 @@ class LedgerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LedgerWiringTests(unittest.TestCase):
+    """Denial paths must actually record a sanitized row."""
+
+    def setUp(self):
+        from boru.audit import RejectionLedger
+        from boru.config import CoreConfig, ProviderConfig
+        from boru.core import BoruCore
+
+        self.ledger = RejectionLedger()
+        self.engine = BoruCore(CoreConfig(providers=(ProviderConfig(kind="mock"),)), audit=self.ledger)
+
+    def tearDown(self):
+        self.engine.close()
+        self.ledger.close()
+
+    def test_policy_rejection_is_recorded(self):
+        from boru.errors import PolicyViolation
+        from boru.types import TaskEnvelope
+
+        with self.assertRaises(PolicyViolation):
+            self.engine.submit(TaskEnvelope(task_id="t1", goal="g", inference_scope="CLOUD_ALLOWED"))
+        rows = self.ledger.recent(4)
+        self.assertEqual([row["reason"] for row in rows], ["task_axes_refused"])
+        self.assertEqual("policy", rows[0]["category"])
+        self.assertEqual("t1", rows[0]["subject"])
+
+    def test_budget_hold_is_recorded(self):
+        from boru.types import TaskEnvelope
+
+        self.engine.submit(TaskEnvelope(task_id="t2", goal="g", token_budget=1))
+        self.engine.dispatch_next()
+        reasons = [row["reason"] for row in self.ledger.recent(8)]
+        self.assertIn("budget_exceeded_pre_dispatch", reasons)
+
+    def test_deadline_hold_is_recorded(self):
+        from boru.types import TaskEnvelope
+
+        self.engine.submit(TaskEnvelope(task_id="t3", goal="g", deadline="2000-01-01T00:00:00Z"))
+        self.engine.dispatch_next()
+        self.assertIn("deadline_exceeded", [row["reason"] for row in self.ledger.recent(8)])
+
+    def test_broker_denial_is_recorded(self):
+        from boru.broker import Broker, OperationRequest, ScopeAllowlist, WorkerIdentity
+        from boru.consent import ConsentStore
+
+        consent = ConsentStore()
+        broker = Broker(worker=WorkerIdentity("w1", scopes=("demo",)),
+                        scopes=ScopeAllowlist({"demo": "/tmp/boru-scope"}), consent=consent,
+                        audit=self.ledger)
+        request = OperationRequest(operation="host_shell", resource_alias="demo", requester="owner",
+                                   task_id="t4", worker=WorkerIdentity("w1", scopes=("demo",)),
+                                   fields=(), nonce="n1", grant_id="g1")
+        broker.authorize(request)
+        rows = self.ledger.recent(8)
+        self.assertIn(("broker", "t4", "operation_not_allowed"),
+                      [(row["category"], row["subject"], row["reason"]) for row in rows])
+
+    def test_rows_never_carry_the_task_goal_or_paths(self):
+        from boru.types import TaskEnvelope
+
+        self.engine.submit(TaskEnvelope(task_id="t5", goal="synthetic goal text",
+                                        deadline="2000-01-01T00:00:00Z"))
+        self.engine.dispatch_next()
+        payload = repr(self.ledger.recent(8))
+        self.assertNotIn("synthetic goal text", payload)
+        self.assertNotIn("/home/", payload)

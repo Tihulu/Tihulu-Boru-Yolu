@@ -302,6 +302,18 @@ recorded, and `usage_if_observed` stays empty otherwise.
   `boru/adapters/opencode.py` is still source-tested only: driving it live needs
   the owner to authorize the auth material, so the adapter's live path is HOLD.
 
+## Ledger wiring
+
+`BoruCore` and `Broker` accept an optional `RejectionLedger` (an in-memory sink
+by default, or a durable file when you pass one). Recorded denial paths today:
+policy refusals on submit (`policy`), task holds and failures with their stable
+reason codes (`scheduler`: `budget_exceeded_pre_dispatch`,
+`budget_exceeded_after_reported_usage`, `deadline_exceeded`,
+`provider_unavailable`, `missing_provider`, `cost_ceiling_unresolvable_before_dispatch`),
+and broker denials with the request's operation as the detail kind (`broker`).
+Nothing else is recorded, and no row contains a task goal, path, file content,
+token or provider text.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard
