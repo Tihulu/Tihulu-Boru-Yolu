@@ -73,7 +73,7 @@ refused before any call.
 
 ## Status values
 
-- Transport + fixture tests: implemented, passing (MOCK/FIXTURE).
-- Live Jan pilot: **HOLD**, pending owner approval and an explicit endpoint,
-  model ID and tool-execution confirmation.
-- Standalone Jan/OpenCode verification (A22, A21): **HOLD**.
+- Transport + fixture tests: implemented and passing (MOCK/FIXTURE).
+- **Live pilot: EXECUTED 2026-11-20 — three synthetic three-turn conversations completed through Boru Core against the owner's local Jan server, each recorded as `REVIEW` with `provider=jan`, `evidence_class=direct` and the measured `usage_if_observed`; one task was explicitly reviewed to `DONE`. A model outside the allowlist was refused with no provider call.**
+- Two findings from the live run, both fixed: a task-level model selection was silently overridden in `AUTO` mode (now binds in every mode), and a partial capability-tag match was accepted (tags must all match). The endpoint reports the on-disk model path rather than the model ID, so `model_response_is_path` is an explicit, verified option — the path itself is never recorded.
+- Standalone Jan/OpenCode verification (A22, A21): partially covered by this run for Jan (Boru ran with TIHULU-AUTO absent and without OpenCode); OpenCode child-session evidence remains HOLD.

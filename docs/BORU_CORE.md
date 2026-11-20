@@ -250,6 +250,19 @@ official ones, and HTTP 403/404/429/invalid JSON never leak a body.
 Unknown usage stays unknown: only keys a provider actually reported are
 recorded, and `usage_if_observed` stays empty otherwise.
 
+## Live evidence so far (per acceptance entries)
+
+- **A21 / Boru → Jan direct, three turns: LIVE PASS.** Three synthetic three-turn
+  conversations ran through Boru Core against the owner's loopback Jan server
+  (explicit endpoint, explicit allowlisted local model, tools disabled). Each
+  recorded `provider=jan`, `model_id=<allowlisted id>`, `evidence_class=direct`
+  and measured `usage_if_observed`; one was reviewed to `DONE`. A model outside
+  the allowlist was refused with no provider call. Details are in
+  `harness/build-log.md` (2026-11-20 18:30 UTC) and `docs/JAN_PILOT.md`.
+- **A22 OpenCode/Jan standalone:** Jan side covered by the same run (Boru ran
+  without TIHULU-AUTO, OpenCode, Kandev or Langflow); OpenCode standalone
+  session evidence remains HOLD.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard

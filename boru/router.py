@@ -164,6 +164,12 @@ class Router:
         required_context: Optional[int] = None,
         max_parallel: int = 1,
     ) -> RoutingDecision:
+        """Return the permitted candidates for this dispatch.
+
+        An explicit task-level selection binds the dispatch in *every* mode: a
+        selection outside the permitted candidates is refused rather than
+        silently substituted. ``MANUAL`` requires a selection.
+        """
         if mode not in OPTIMIZATION_MODES:
             raise PolicyViolation("unknown optimization mode")
         if inference_scope not in ("LOCAL_ONLY", "CLOUD_ALLOWED"):
@@ -176,15 +182,18 @@ class Router:
             raise PolicyViolation("required_context must be a positive integer")
         local_only = inference_scope == "LOCAL_ONLY"
         records = self.registry.candidates(tags=required_tags, local_only=local_only)
-        if mode == "MANUAL":
+        if selected_provider or selected_model:
             if not (selected_provider and selected_model):
-                raise PolicyViolation("MANUAL routing requires an owner selection")
+                raise PolicyViolation("selected_provider and selected_model must be provided together")
             match = [r for r in records if (r.provider, r.model_id) == (selected_provider, selected_model)]
             if not match:
                 raise PolicyViolation("selected model is not a permitted candidate")
-            chosen = RankedCandidate(provider=selected_provider, model_id=selected_model, score=float(_confidence(match[0])),
-                                     local=match[0].local, reasons=("owner_selected",))
+            chosen = RankedCandidate(provider=selected_provider, model_id=selected_model,
+                                     score=float(_confidence(match[0])), local=match[0].local,
+                                     reasons=("owner_selected",))
             return RoutingDecision(selected=chosen, ordered=(chosen,), mode=mode)
+        if mode == "MANUAL":
+            raise PolicyViolation("MANUAL routing requires an owner selection")
         ranked = rank(mode, records, local_only=local_only, required_tags=required_tags,
                       complexity=complexity, required_context=required_context)
         if not ranked:
@@ -192,10 +201,9 @@ class Router:
                                    excluded=tuple(
                                        ((r.provider, r.model_id), "not_permitted" if local_only and not r.local else "unavailable")
                                        for r in records))
-        selected = ranked[0]
         # ``ordered`` is the full permitted fallback chain; ``max_parallel``
         # bounds parallel dispatch, never the fallback options.
-        return RoutingDecision(selected=selected, ordered=tuple(ranked), mode=mode)
+        return RoutingDecision(selected=ranked[0], ordered=tuple(ranked), mode=mode)
 
 
 def fallback_order(decision: RoutingDecision, *, failed: Optional[Tuple[str, str]] = None) -> Tuple[RankedCandidate, ...]:

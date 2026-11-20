@@ -236,3 +236,17 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `boru/connectors/gitlab.py` (official `/api/v4` connector, same grant boundary as GitHub), `GitLabProvider` tests.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **315 tests**. MOCK/STATIC only — no live GitLab call, no credential.
 - **Security implications:** denied operations make zero outbound requests; read-only profiles cannot write/merge/release; token only via an environment-variable name; audit events carry no token or response body.
+
+---
+
+### 2026-11-20 18:30 UTC — LIVE Jan pilot PASSED (commit on `p1/boru-core-vertical-slice`)
+
+**Evidence class: LIVE** (real local inference through Boru Core, TIHULU-AUTO absent, no OpenCode/Kandev/Langflow involved).
+
+- **Endpoint/model used:** loopback Jan server, `Jan-v3_5-4B-Q4_K_M` (explicit allowlist entry, loopback endpoint from the owner's own server, server-side tool execution disabled by configuration).
+- **Run 1 (`chat-1`, 3 turns, synthetic memory check):** state `REVIEW` -> explicit owner review -> `DONE`; `provider=jan`, `model_id=Jan-v3_5-4B-Q4_K_M`, `evidence_class=direct` preserved after the review, `usage_if_observed` = input 48 / output 2 / total 50. The model returned the single word it was asked to remember.
+- **Run 2 (`chat-2`, 3 turns, synthetic numeric check):** `REVIEW`, `direct`, same provider/model identity, usage 48/2/50 (usage observed and consistent).
+- **Run 3 (`chat-3`, 3 turns, single-word check):** `REVIEW`, `direct`, usage 43/2/45.
+- **Negative check (allowlist):** a task naming a model outside the allowlist produced `HOLD`/`missing_provider` **with no provider call** (previously it was silently substituted — see the defect below).
+- **Defect found and fixed during the live run:** (a) `Router.decide` honoured a task-level `selected_provider`/`selected_model` only in `MANUAL` mode, so a task-level selection in `AUTO` was silently overridden — the selection now binds the dispatch in every mode and an unpermitted selection is refused; (b) `ModelRegistry.candidates` accepted a *partial* capability-tag match, so a required tag could be ignored — tags must now all match; (c) the Jan transport now supports an explicit `model_response_is_path` option, because the live endpoint reports the on-disk model path rather than the model ID; identity is still verified (an exact ID match, or a path containing `/<id>/`). No local path, file content, device inventory or credential was recorded anywhere.
+- **Still HOLD:** OpenCode child-session pilot, provider OAuth round trip, broker/OS isolation and security review, cloud Shell, GitHub/GitLab/Actions scoped pilots, clean-machine Pop!_OS/Ubuntu matrix, license, owner release approval. `live_acceptance` output stays `HOLD` until the owner reviews each task.

@@ -175,10 +175,9 @@ class ModelRegistry:
         if local_only:
             records = [r for r in records if r.local]
         if tags:
+            # Capability tags must ALL match; a partial match is not a match.
             required = set(tags)
-            records = [r for r in records if set(r.tags).issuperset(required)] or [
-                r for r in records if set(r.tags) & required
-            ]
+            records = [r for r in records if set(r.tags).issuperset(required)]
         return sorted(records, key=lambda r: (-_score(r, tags), r.provider, r.model_id))
 
     def select(self, mode: str, inference_scope: str, tags: Sequence[str] = ()) -> List[ModelRecord]:

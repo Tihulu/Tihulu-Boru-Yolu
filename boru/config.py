@@ -66,6 +66,8 @@ class ProviderConfig:
     #: Opt-in model listing through the provider API. Disabled by default
     #: because a local endpoint may also serve remote providers.
     allow_discovery: bool = False
+    #: Accept a provider that reports the on-disk model path instead of the ID.
+    model_response_is_path: bool = False
 
     def validate(self) -> List[str]:
         errors: List[str] = []
@@ -82,8 +84,9 @@ class ProviderConfig:
             errors.append("tool_execution_disabled must be True; Boru Core text-only transport refuses remote tool execution")
         if not isinstance(self.allow_http, bool):
             errors.append("allow_http must be a boolean")
-        if not isinstance(self.allow_discovery, bool):
-            errors.append("allow_discovery must be a boolean")
+        for name in ("allow_discovery", "model_response_is_path"):
+            if not isinstance(getattr(self, name), bool):
+                errors.append(name + " must be a boolean")
         if self.api_key_env is not None and (
             not isinstance(self.api_key_env, str) or not self.api_key_env.strip() or len(self.api_key_env) > 64
         ):
@@ -190,7 +193,7 @@ class CoreConfig:
                 raise ConfigurationError("provider entries must be objects")
             unknown_entry = sorted(set(entry) - {"kind", "endpoint", "local_model_ids",
                                                  "tool_execution_disabled", "allow_http", "api_key_env",
-                                                 "allow_discovery"})
+                                                 "allow_discovery", "model_response_is_path"})
             if unknown_entry:
                 raise ConfigurationError("unknown provider field")
             models = entry.get("local_model_ids", [])
@@ -207,6 +210,7 @@ class CoreConfig:
                     allow_http=_bool(entry.get("allow_http", False), "allow_http"),
                     api_key_env=entry.get("api_key_env"),
                     allow_discovery=_bool(entry.get("allow_discovery", False), "allow_discovery"),
+                    model_response_is_path=_bool(entry.get("model_response_is_path", False), "model_response_is_path"),
                 )
             )
         config = cls(
@@ -236,7 +240,8 @@ class CoreConfig:
             "providers": [
                 {"kind": p.kind, "endpoint": p.endpoint, "local_model_ids": list(p.local_model_ids),
                  "tool_execution_disabled": p.tool_execution_disabled, "allow_http": p.allow_http,
-                 "api_key_env": p.api_key_env, "allow_discovery": p.allow_discovery}
+                 "api_key_env": p.api_key_env, "allow_discovery": p.allow_discovery,
+                 "model_response_is_path": p.model_response_is_path}
                 for p in self.providers
             ],
             "description": self.description,

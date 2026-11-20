@@ -51,10 +51,18 @@ class JanProvider(ChatProvider):
         tool_execution_disabled: bool,
         api_prefix: str = "/v1",
         allow_discovery: bool = False,
+        model_response_is_path: bool = False,
     ) -> None:
         if not isinstance(allow_discovery, bool):
             raise ValueError("allow_discovery must be a boolean")
+        if not isinstance(model_response_is_path, bool):
+            raise ValueError("model_response_is_path must be a boolean")
         self.allow_discovery = allow_discovery
+        # Jan may report the on-disk model path instead of the model ID. This
+        # opt-in keeps identity verification strict: a response is accepted
+        # only when it equals the requested ID or contains "/<id>/" in a path.
+        # The path itself is never stored or returned.
+        self.model_response_is_path = model_response_is_path
         if tool_execution_disabled is not True:
             raise ValueError("tool_execution_disabled must be explicitly True")
         allowlist = tuple(local_model_ids or ())
@@ -334,7 +342,7 @@ class JanProvider(ChatProvider):
             raise ProviderFailure("invalid_response", "empty provider content")
         if len(content) > MAX_RESPONSE_BYTES:
             raise ProviderFailure("request_too_large", "content exceeds the bounded size")
-        if data.get("model") != model_id:
+        if not self._model_matches(data.get("model"), model_id):
             raise ProviderFailure("invalid_response", "provider returned a different model")
         request_id = data.get("id")
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
@@ -347,6 +355,16 @@ class JanProvider(ChatProvider):
             evidence_class="direct",
             usage=self._parse_usage(data.get("usage")),
         )
+
+    def _model_matches(self, reported: Any, model_id: str) -> bool:
+        """Strict identity check that tolerates a documented local-path reply."""
+        if not isinstance(reported, str) or not reported.strip():
+            return False
+        if reported == model_id:
+            return True
+        if self.model_response_is_path and len(reported) <= 512 and "/{}/".format(model_id) in reported:
+            return True
+        return False
 
     @staticmethod
     def _parse_usage(usage: Any) -> Dict[str, int]:

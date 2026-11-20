@@ -122,6 +122,7 @@ class BoruCore:
                     local_model_ids=entry.local_model_ids,
                     tool_execution_disabled=entry.tool_execution_disabled,
                     allow_discovery=entry.allow_discovery,
+                    model_response_is_path=entry.model_response_is_path,
                 )
             elif entry.kind == "cloud":
                 from .providers.cloud import CloudProvider

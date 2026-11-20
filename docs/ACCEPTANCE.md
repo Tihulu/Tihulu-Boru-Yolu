@@ -17,7 +17,7 @@
 | A02 | Ubuntu LTS isolated install | No changes to Jan/OpenCode live state | HOLD |
 | A03 | Kandev bind / authentication exposure | Loopback only for pilot, no unintended remote listener | HOLD |
 | A04 | Langflow local authentication | Login enabled, no anonymous API access | HOLD |
-| A05 | Jan chat via Langflow | Correct actual local model, 3 turns | HOLD |
+| A05 | Jan chat via Langflow | Correct actual local model, 3 turns | HOLD (direct Langflow path not exercised; A21 covers direct Jan) |
 | A06 | OpenCode subagent via Kandev | Verified child session and model, not skill fallback | HOLD |
 | A07 | Kandev -> adapter -> Langflow | One task, one flow, correct status | HOLD |
 | A08 | AUTO vs ECONOMY vs PERFORMANCE | Observable policy-dependent selection | HOLD |
@@ -34,7 +34,7 @@
 | A19 | Rollback | Jan/OpenCode unchanged and launchable | HOLD |
 | A20 | Static repo consistency | `scripts/check_project.py` + unittest | STATIC PASS (225 tests on P1/P3/P4/P5/P7/P9/P10 slices, MOCK only) |
 | A30 | Install/rollback round trip | user-space install → demo → uninstall, only Boru-owned paths removed | STATIC PASS (script round trip, not a clean-machine matrix) |
-| A21 | Boru Core independence | Runs direct Jan text-only flow without TIHULU-AUTO installed | HOLD |
+| A21 | Boru Core independence | Runs direct Jan text-only flow without TIHULU-AUTO installed | LIVE PASS (3 x 3-turn conversations, direct evidence, allowlist refusal verified) |
 | A22 | OpenCode and Jan standalone | Existing app/API and sessions function with Boru Yolu and TIHULU-AUTO stopped | HOLD |
 | A23 | Optional OpenCode agent adapter | Real child invocation without any TIHULU-AUTO config or agent; disabling adapter is non-disruptive | HOLD |
 | A24 | Optimization policy isolation | AUTO/ECONOMY/BALANCED/PERFORMANCE/MANUAL never change Shell, disclosure or inference rights | HOLD |

@@ -138,3 +138,39 @@ class FallbackIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SelectionBindingTests(unittest.TestCase):
+    """A task-level selection binds the dispatch in every mode."""
+
+    def setUp(self):
+        self.router = Router(registry())
+
+    def test_selection_is_honored_in_auto_mode(self):
+        decision = self.router.decide(mode="AUTO", inference_scope="LOCAL_ONLY",
+                                      selected_provider="mock", selected_model="small-text")
+        self.assertEqual(("mock", "small-text"), decision.selected.key)
+        self.assertEqual(("owner_selected",), decision.selected.reasons)
+        self.assertEqual(1, len(decision.ordered))
+
+    def test_unpermitted_selection_is_refused_not_substituted(self):
+        with self.assertRaises(PolicyViolation):
+            self.router.decide(mode="AUTO", inference_scope="LOCAL_ONLY",
+                               selected_provider="mock", selected_model="not-configured")
+        with self.assertRaises(PolicyViolation):
+            self.router.decide(mode="AUTO", inference_scope="LOCAL_ONLY",
+                               selected_provider="remote", selected_model="cloud-text")
+        with self.assertRaises(PolicyViolation):
+            self.router.decide(mode="AUTO", inference_scope="LOCAL_ONLY",
+                               selected_provider="mock", selected_model="small-text",
+                               required_tags=("text", "code"))
+        with self.assertRaises(PolicyViolation):
+            self.router.decide(mode="AUTO", inference_scope="LOCAL_ONLY", selected_model="small-text")
+
+    def test_selection_cannot_widen_scope(self):
+        with self.assertRaises(PolicyViolation):
+            self.router.decide(mode="AUTO", inference_scope="LOCAL_ONLY",
+                               selected_provider="remote", selected_model="cloud-text", )
+        decision = self.router.decide(mode="AUTO", inference_scope="CLOUD_ALLOWED",
+                                      selected_provider="remote", selected_model="cloud-text")
+        self.assertEqual("cloud-text", decision.selected.model_id)
