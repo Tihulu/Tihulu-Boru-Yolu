@@ -5,6 +5,7 @@ from boru.config import CoreConfig, ProviderConfig
 from boru.core import BoruCore
 from boru.errors import PolicyViolation, StoreError
 from boru.policy import Policy
+from boru.registry import ModelRecord, ModelRegistry
 from boru.store import TaskStore
 from boru.types import TaskEnvelope
 
@@ -166,19 +167,10 @@ class DispatchTests(RecordingProvider):
             CoreConfig.from_dict({})
 
     def test_provider_without_a_model_holds_without_call(self):
+        from boru.registry import ModelRegistry
+
         engine = BoruCore(CoreConfig(providers=(ProviderConfig(kind="mock"),)))
-
-        class Empty:
-            provider = "mock"
-            local = True
-
-            def discover(self):
-                return ()
-
-            def chat(self, *args, **kwargs):  # pragma: no cover - must never run
-                raise AssertionError("no model means no dispatch")
-
-        engine._providers = {"mock": Empty()}
+        engine.router.registry = ModelRegistry()  # no permitted candidates
         engine.submit(TaskEnvelope(task_id="t1", goal="g"))
         summary = engine.dispatch_next()
         self.assertEqual("HOLD", summary["state"])
@@ -281,3 +273,110 @@ class StateStoreIntegrationTests(RecordingProvider):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FallbackIntegrationTests(unittest.TestCase):
+    """Bounded fallback changes the candidate, never the permission."""
+
+    def engine_with(self, models, script, *, policy=None, max_retries=None):
+        from boru.registry import ModelRecord
+
+        policy = policy or Policy(max_retries=max_retries if max_retries is not None else 2)
+        config = CoreConfig(providers=(ProviderConfig(kind="mock"),), policy=policy)
+        engine = BoruCore(config)
+        registry = ModelRegistry()
+        for model_id in models:
+            registry.register(ModelRecord(provider="mock", model_id=model_id, tags=("text",), health="healthy",
+                                          local=True, source="verified"))
+        engine.router.registry = registry
+        calls: list = []
+        engine._providers = {"mock": _ScriptedProvider(script, calls)}
+        return engine, calls
+
+    def test_retryable_failure_moves_to_next_local_candidate(self):
+        from boru.providers.base import ChatReply, ProviderFailure
+
+        def script(model_id):
+            if model_id == "first":
+                raise ProviderFailure("rate_limited", "provider rate limit reached")
+            return ChatReply(provider="mock", model_id=model_id, request_id="req-second", content="ok",
+                             evidence_class="simulated")
+
+        engine, calls = self.engine_with(["first", "second"], script, max_retries=1)
+        engine.submit(TaskEnvelope(task_id="t1", goal="g"))
+        summary = engine.dispatch_next()
+        self.assertEqual(["first", "second"], calls)
+        self.assertEqual("REVIEW", summary["state"])
+        self.assertEqual("second", summary["model_id"])
+        self.assertEqual("simulated", summary["evidence_class"])
+        engine.close()
+
+    def test_terminal_failure_does_not_retry(self):
+        from boru.providers.base import ProviderFailure
+
+        def script(model_id):
+            raise ProviderFailure("invalid_response", "provider returned malformed output")
+
+        engine, calls = self.engine_with(["first", "second", "third"], script, max_retries=3)
+        engine.submit(TaskEnvelope(task_id="t1", goal="g"))
+        summary = engine.dispatch_next()
+        self.assertEqual(["first"], calls)
+        self.assertEqual("FAILED", summary["state"])
+        self.assertEqual("invalid_reply", summary["reason"])
+        engine.close()
+
+    def test_fallback_stays_local_under_local_only(self):
+        from boru.providers.base import ProviderFailure
+
+        def script(model_id):
+            raise ProviderFailure("timeout", "provider timed out")
+
+        engine, calls = self.engine_with(["only-local"], script, max_retries=5)
+        engine.submit(TaskEnvelope(task_id="t1", goal="g"))
+        summary = engine.dispatch_next()
+        self.assertEqual(["only-local"], calls)
+        self.assertEqual("HOLD", summary["state"])
+        self.assertEqual("provider_unavailable", summary["reason"])
+        engine.close()
+
+    def test_fallback_keeps_policy_unchanged(self):
+        from boru.providers.base import ChatReply, ProviderFailure
+        from boru.registry import ModelRecord
+
+        def script(model_id):
+            if model_id == "beta":
+                raise ProviderFailure("server_error", "provider server error")
+            return ChatReply(provider="mock", model_id=model_id, request_id="req-alpha", content="ok",
+                             evidence_class="simulated")
+
+        config = CoreConfig(providers=(ProviderConfig(kind="mock"),), policy=Policy(optimization_mode="PERFORMANCE"))
+        engine = BoruCore(config)
+        registry = ModelRegistry()
+        registry.register(ModelRecord(provider="mock", model_id="beta", tags=("text",), health="healthy",
+                                      local=True, source="verified", quality_tier=9))
+        registry.register(ModelRecord(provider="mock", model_id="alpha", tags=("text",), health="healthy",
+                                      local=True, source="verified", quality_tier=1))
+        engine.router.registry = registry
+        engine._providers = {"mock": _ScriptedProvider(script, calls=[])}
+        before = engine.policy.as_dict()
+        engine.submit(TaskEnvelope(task_id="t1", goal="g", routing_mode="PERFORMANCE"))
+        engine.dispatch_next()
+        self.assertEqual(before, engine.policy.as_dict())
+        engine.close()
+
+
+def _ScriptedProvider(script, calls):
+    """Provider double that replays a script and records attempted models."""
+
+    class Scripted:
+        provider = "mock"
+        local = True
+
+        def discover(self):
+            return ("first", "second", "third", "beta", "alpha")
+
+        def chat(self, model_id, messages, *, max_tokens=128, timeout=30.0):
+            calls.append(model_id)
+            return script(model_id)
+
+    return Scripted()

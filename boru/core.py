@@ -25,6 +25,7 @@ from .config import CoreConfig
 from .errors import ContractError, PolicyViolation, StoreError, VerificationError
 from .policy import LOCAL_PROVIDERS
 from .providers.base import ChatMessage, ChatReply, ProviderFailure
+from .router import Router, RoutingDecision, fallback_order, should_retry
 from .state import TaskState, TaskRecord, can_transition, utc_now
 from .store import TaskStore
 from .types import SCHEMA_VERSION, AgentResult, TaskEnvelope
@@ -56,10 +57,28 @@ REASONS = {
 }
 
 
+def _registry_for(config: CoreConfig, providers: Dict[str, Any]):
+    """Build a registry from the configured providers and their allowlists."""
+    from .registry import ModelRecord, ModelRegistry
+
+    registry = ModelRegistry()
+    for entry in config.providers:
+        if entry.kind == "jan":
+            for model_id in entry.local_model_ids:
+                registry.register(ModelRecord(provider="jan", model_id=model_id, source="configured",
+                                              health="unknown", tags=("text",), local=True))
+        elif entry.kind == "mock":
+            from .providers.mock import MODEL_ID
+
+            registry.register(ModelRecord(provider="mock", model_id=MODEL_ID, source="verified",
+                                          health="healthy", tags=("text",), local=True))
+    return registry
+
+
 class BoruCore:
     """Local-first orchestrator with durable, reviewable task state."""
 
-    def __init__(self, config: CoreConfig, store: Optional[TaskStore] = None, clock=None) -> None:
+    def __init__(self, config: CoreConfig, store: Optional[TaskStore] = None, clock=None, registry=None) -> None:
         config.assert_valid()
         self.config = config
         self.policy = config.policy
@@ -67,6 +86,7 @@ class BoruCore:
         self._clock = clock or utc_now
         self._providers = self._build_providers(config)
         self._queue: Dict[str, TaskEnvelope] = {}
+        self.router = Router(registry) if registry is not None else Router(_registry_for(config, self._providers))
 
     # -- construction --------------------------------------------------------
     def _build_providers(self, config: CoreConfig) -> Dict[str, Any]:
@@ -165,36 +185,45 @@ class BoruCore:
         )
         if previous != TaskState.QUEUED.value:
             return self._summary(envelope)
-        provider_names = self._providers_for(envelope)
-        if self.policy.inference_scope != "LOCAL_ONLY" and not provider_names:
-            self._hold(envelope, REASONS["unsupported_inference"])
-            return self._summary(envelope)
-        if not provider_names:
+        decision = self._decide(envelope)
+        if decision is None:
             self._hold(envelope, REASONS["missing_provider"])
             return self._summary(envelope)
-        provider_name = provider_names[0]
-        provider = self._providers[provider_name]
-        model_id = envelope.selected_model or self._configured_model(provider_name)
-        if model_id is None:
-            self._hold(envelope, REASONS["missing_provider"])
+        if not decision.ordered:
+            reason = REASONS["unsupported_inference"] if self.policy.inference_scope != "LOCAL_ONLY" else REASONS["missing_provider"]
+            self._hold(envelope, reason)
             return self._summary(envelope)
         attempt_id = "att-" + uuid.uuid4().hex
-        try:
-            reply = provider.chat(
-                model_id,
-                self._messages(envelope),
-                max_tokens=self.config.max_output_tokens,
-                timeout=self.config.request_timeout,
-            )
-        except ProviderFailure as failure:
-            if failure.category in ("timeout", "unavailable", "rate_limited", "server_error", "unauthorized"):
-                self._hold(envelope, REASONS["provider_unavailable"])
-            else:
-                self.store.transition(
-                    envelope.task_id, TaskState.RUNNING.value, TaskState.FAILED.value,
-                    REASONS["invalid_reply"], self._clock(),
+        remaining = list(decision.ordered)
+        attempts = 0
+        while remaining and attempts <= self.policy.max_retries:
+            candidate = remaining.pop(0)
+            attempts += 1
+            provider = self._providers.get(candidate.provider)
+            if provider is None:
+                continue
+            self.router.registry.mark_health(candidate.provider, candidate.model_id, "degraded", "provider_missing")
+            try:
+                reply = provider.chat(
+                    candidate.model_id,
+                    self._messages(envelope),
+                    max_tokens=self.config.max_output_tokens,
+                    timeout=self.config.request_timeout,
                 )
-            return self._summary(envelope)
+            except ProviderFailure as failure:
+                self.router.registry.mark_health(candidate.provider, candidate.model_id, "degraded", failure.category)
+                if should_retry(failure.category) and remaining and attempts <= self.policy.max_retries:
+                    continue
+                if failure.category in ("timeout", "unavailable", "rate_limited", "server_error", "unauthorized"):
+                    self._hold(envelope, REASONS["provider_unavailable"])
+                else:
+                    self._fail(envelope, REASONS["invalid_reply"])
+                return self._summary(envelope)
+            if attempts > 1 or True:
+                self.router.registry.mark_tested(candidate.provider, candidate.model_id, self._clock())
+            return self._record(envelope, attempt_id, candidate.provider, candidate.model_id, reply)
+        self._hold(envelope, REASONS["provider_unavailable"])
+        return self._summary(envelope)
         result = self._result(envelope, attempt_id, provider_name, model_id, reply)
         problems = result.validate(self.policy.max_result_fields)
         if problems or not self._reply_matches(reply, provider_name, model_id):
@@ -222,6 +251,46 @@ class BoruCore:
             envelope.task_id, TaskState.VERIFYING.value, TaskState.REVIEW.value,
             REASONS["VERIFYING"], self._clock(),
         )
+        return self._summary(envelope)
+
+    def _decide(self, envelope: TaskEnvelope) -> Optional[RoutingDecision]:
+        """Choose candidates without ever widening the policy axes."""
+        try:
+            return self.router.decide(
+                mode=self.policy.optimization_mode,
+                inference_scope=self.policy.inference_scope,
+                complexity=envelope.complexity,
+                required_tags=envelope.capability_tags,
+                selected_provider=envelope.selected_provider,
+                selected_model=envelope.selected_model,
+                max_parallel=envelope.max_parallel,
+            )
+        except PolicyViolation:
+            return None
+
+    def _fail(self, envelope: TaskEnvelope, reason: str) -> None:
+        row = self.store.get(envelope.task_id)
+        if row is None:
+            return
+        state = TaskState(row["state"])
+        if can_transition(state, TaskState.FAILED):
+            self.store.transition(envelope.task_id, state.value, TaskState.FAILED.value, reason, self._clock())
+            self._queue.pop(envelope.task_id, None)
+
+    def _record(self, envelope, attempt_id, provider_name, model_id, reply) -> Dict[str, Any]:
+        """Verify and store a reply; only REVIEW is reachable from here."""
+        result = self._result(envelope, attempt_id, provider_name, model_id, reply)
+        problems = result.validate(self.policy.max_result_fields)
+        if problems or not self._reply_matches(reply, provider_name, model_id):
+            self.store.save_result(envelope.task_id, attempt_id, result)
+            self._fail(envelope, REASONS["verification_failed"])
+            return self._summary(envelope)
+        self.store.save_result(envelope.task_id, attempt_id, result)
+        self._queue.pop(envelope.task_id, None)
+        source = TaskState.RUNNING.value
+        for target in (TaskState.VERIFYING.value, TaskState.REVIEW.value):
+            self.store.transition(envelope.task_id, source, target, REASONS["VERIFYING"], self._clock())
+            source = target
         return self._summary(envelope)
 
     def _next_queued(self) -> Optional[Tuple[TaskEnvelope, str]]:
@@ -278,18 +347,6 @@ class BoruCore:
                 messages.append(ChatMessage(role=str(turn["role"]), content=str(turn["content"])))
             return messages
         return [ChatMessage(role="user", content=envelope.goal)]
-
-    def _configured_model(self, provider_name: str) -> Optional[str]:
-        """Return the operator-configured model for a provider.
-
-        P1 does not rank models; it uses the first configured entry and marks
-        mode-dependent selection as a later phase.
-        """
-        try:
-            models = list(self._providers[provider_name].discover())
-        except Exception:  # pragma: no cover - providers are defensive
-            return None
-        return models[0] if models else None
 
     def _reply_matches(self, reply: ChatReply, provider_name: str, model_id: str) -> bool:
         return (

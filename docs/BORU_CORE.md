@@ -86,9 +86,29 @@ usage is recorded only when the provider reports it.
 This is a **transport**, not an authorization: it does not authenticate the
 owner, grant Shell rights, or prove a security boundary.
 
+## Routing (P3 slice)
+
+`boru/router.py` ranks *permitted* candidates per optimization mode:
+
+| Mode | Behaviour |
+| --- | --- |
+| `ECONOMY` | local first, then lowest declared cost tier; unknown cost is a penalty, never assumed zero |
+| `BALANCED` | weighted quality/cost; unknown quality is a confidence penalty |
+| `PERFORMANCE` | strongest declared quality tier within the hard limits |
+| `AUTO` | complexity-driven: simple behaves like ECONOMY, medium BALANCED, difficult PERFORMANCE |
+| `MANUAL` | exactly the owner-selected provider/model, never a substitution |
+
+Fallback advances only to another already-permitted candidate, only for
+`timeout` / `unavailable` / `rate_limited` / `server_error`, bounded by
+`max_retries`, and it records health changes on the Boru-owned registry. A
+terminal failure (`policy_denied`, `invalid_response`, `request_too_large`)
+never retries. Under `LOCAL_ONLY` the candidate list contains **no remote
+entry**, so no failure path can produce a remote call. `credits` and other
+unobservable values stay `UNKNOWN`.
+
 ## Not implemented in this slice (HOLD)
 
-Weighted mode-dependent routing and fallback (P3), agent graphs and resource
-leases (P4), the trusted broker and Privacy Bridge (P5), cloud-shell sandbox
-(P6), provider OAuth/API connections (P7), GitHub/GitLab/Actions connectors
-(P8), the dashboard (P9), and Linux install/rollback acceptance (P10).
+Agent graphs and resource leases (P4), the trusted broker and Privacy Bridge
+(P5), cloud-shell sandbox (P6), provider OAuth/API connections (P7),
+GitHub/GitLab/Actions connectors (P8), the dashboard (P9), and Linux
+install/rollback acceptance (P10).

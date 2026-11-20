@@ -29,12 +29,27 @@ class ModelRecord:
     health: str = "unknown"
     max_context: Optional[int] = None
     tags: Tuple[str, ...] = ()
+    #: Owner-declared or measured ranking hints. ``None`` means UNKNOWN and is
+    #: never replaced with an assumed value (docs/ROUTING_AND_RESOURCES.md).
+    cost_tier: Optional[int] = None
+    quality_tier: Optional[int] = None
     last_test_at: Optional[str] = None
     #: Locality is an owner-supplied fact about the endpoint, never inferred
     #: from a provider name.  Default: not local.
     local: bool = False
     credits: str = UNKNOWN
     last_error_kind: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Reject malformed metadata at construction time."""
+        self.assert_valid()
+
+    def assert_valid(self) -> None:
+        errors = self.validate()
+        if errors:
+            from .errors import ContractError
+
+            raise ContractError("; ".join(errors))
 
     def validate(self) -> list:
         errors: list = []
@@ -44,6 +59,16 @@ class ModelRecord:
             errors.append("unknown model source")
         if self.health not in HEALTH_STATES:
             errors.append("unknown health state")
+        for name in ("cost_tier", "quality_tier"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 9):
+                errors.append(name + " must be an integer between 0 and 9")
+        if self.max_context is not None and (isinstance(self.max_context, bool) or not isinstance(self.max_context, int) or self.max_context < 1):
+            errors.append("max_context must be a positive integer")
+        for label in ("tags",):
+            items = getattr(self, label)
+            if not isinstance(items, tuple) or any(not isinstance(i, str) or not i.strip() or len(i) > 64 for i in items):
+                errors.append(label + " must be a tuple of bounded non-empty strings")
         return errors
 
 
@@ -89,6 +114,8 @@ class ModelRegistry:
                     health="healthy",
                     max_context=existing.max_context,
                     tags=existing.tags,
+                    cost_tier=existing.cost_tier,
+                    quality_tier=existing.quality_tier,
                     last_test_at=existing.last_test_at,
                     local=existing.local,
                     credits=existing.credits,
@@ -135,6 +162,8 @@ class ModelRegistry:
             health="healthy",
             max_context=record.max_context,
             tags=record.tags,
+            cost_tier=record.cost_tier,
+            quality_tier=record.quality_tier,
             last_test_at=at,
             local=record.local,
             credits=record.credits,

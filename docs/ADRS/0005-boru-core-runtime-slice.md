@@ -53,9 +53,9 @@ never relabelled as live.
 - The Python slice is a pilot, not a final platform decision; a Rust
   broker/Privacy Bridge (P5) is still a candidate and may reuse these
   contracts through the versioned schemas.
-- Type optimization modes are preserved as contract data; mode-dependent
-  *weighted* routing is **not** implemented in this slice and remains HOLD
-  for P3 rather than being simulated.
+- Mode-dependent ranking and bounded fallback are implemented in
+  `boru/router.py` (P3 selection); per-agent concurrency and resource leases
+  remain HOLD for P4 rather than being simulated.
 
 ## Explicit non-claims
 
