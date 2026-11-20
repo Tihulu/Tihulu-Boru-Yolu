@@ -148,6 +148,17 @@ class ConnectorScopeTests(unittest.TestCase):
                               body={"body": "test"})
             self.assertEqual([], requests)
 
+    def test_account_wide_listing_needs_distinct_account_scope(self):
+        for provider_type, repository in (
+            (GitHubProvider, "owner/repo"),
+            (GitLabProvider, "group/project"),
+        ):
+            provider, _grant, requests = self.exercise(provider_type, repository)
+            reader = scoped_grant(repository, ("list_repositories",))
+            with self.assertRaisesRegex(ConnectorDenied, "account_scope_required"):
+                provider.call(reader, "list_repositories")
+            self.assertEqual([], requests)
+
     def test_allowed_gitlab_subgroup_remains_typed(self):
         provider, grant, requests = self.exercise(GitLabProvider, "team/sub/project")
         self.assertEqual({}, provider.call(
