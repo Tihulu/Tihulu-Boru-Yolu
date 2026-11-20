@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
+from .scope import validate_request_scope
 
 API_BASE = "https://gitlab.com"
 MAX_PAGE = 100
@@ -68,10 +69,9 @@ class GitLabProvider(RepositoryProvider):
             self._audit.append({"at": int(time.time()), "grant": grant.grant_id, "operation": operation,
                                 "decision": "deny", "reason": reason})
             raise ConnectorDenied(reason)
-        if not path:
-            path = self._path_for(operation, payload or {})
-        if method is None:
-            method = self._MUTATING.get(operation, "GET")
+        scoped_payload = validate_request_scope(grant, operation, payload, body, method, path)
+        path = self._path_for(operation, scoped_payload)
+        method = self._MUTATING.get(operation, "GET")
         status, raw = self._exchange(method, path, body or {})
         self._calls[grant.grant_id] = self._calls.get(grant.grant_id, 0) + 1
         reason_event = "ok" if status < 300 else "http_" + str(status)
