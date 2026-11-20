@@ -236,3 +236,14 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `boru/connectors/gitlab.py` (official `/api/v4` connector, same grant boundary as GitHub), `GitLabProvider` tests.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **315 tests**. MOCK/STATIC only — no live GitLab call, no credential.
 - **Security implications:** denied operations make zero outbound requests; read-only profiles cannot write/merge/release; token only via an environment-variable name; audit events carry no token or response body.
+
+---
+
+### 2026-11-20 18:20 UTC — direct P8 request-scope security review and isolated successor
+
+- **Branch / PR:** `security/p8-connector-scope-20261120`, Draft PR #15, stacked on PR #14 head `ee23c9376244549a4edaf0558b77e3dc7c3ba862`; `main`, PR #14, local Jan/OpenCode, user settings and tokens unchanged. No local agents or subagents invoked for this change.
+- **Finding:** both official repository connectors checked the operation's `Grant` but allowed requests for a different repository and arbitrary `method`/`path` overrides. They could therefore send a request outside the grant's intended operation/target. The public API must not turn a read permission into an arbitrary request.
+- **Source changes:** new `boru/connectors/scope.py` shared fail-closed validation; both connectors enforce target repository, bound ref/branch, and a typed official operation path, refusing direct HTTP overrides, unsafe URL-slot text and default-branch file reads without an explicit bound reference. Existing GitLab fixtures now use grants bound to their stated repository; new `tests/test_connector_scope.py` has 10 adversarial/positive regression cases.
+- **Verified exact-head evidence:** GitHub Actions run [44791196645](https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/44791196645) on commit `660dda517a8c2492398fd58e7c0209069535b29a`: `validate` SUCCESS; `python3 -m unittest discover -s tests` → **329 tests, OK** (319 predecessor + 10 new); static manifest step SUCCESS. Evidence class **MOCK / STATIC**, not live authorization proof. This ledger-only follow-up requires its own exact-head CI verification.
+- **Residual HOLD:** account/token identity is not independently proven; account-wide listing, workflow-specific grants, HTTP redirect handling and all remote provider/live scopes require deeper review; tested typed payloads are not a fully general filename/branch URL encoder. No broker/OS isolation or external network pilot, no local Jan/OpenCode, no Shell capability, no clean machine installation, no license selection, no release.
+- **Next action:** independent review of PR #15 at its final SHA, with zero-outbound denial and query/redirect threat-model checks; then owner-approved live API/OS pilots. Keep draft until reviewed; do not merge as a release.
