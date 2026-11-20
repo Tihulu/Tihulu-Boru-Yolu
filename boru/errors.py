@@ -67,6 +67,12 @@ class ConfigurationError(BoruError):
     kind = "configuration_error"
 
 
+class ConnectorDenied(BoruError):
+    """A repository operation was refused by the grant boundary."""
+
+    kind = "connector_denied"
+
+
 class StoreError(BoruError):
     """The local task state store is missing, corrupt, contended or full."""
 

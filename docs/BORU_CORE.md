@@ -163,6 +163,24 @@ autostart. `tests/test_install_scripts.py` runs a real install, runs
 only the Boru-owned paths were removed. This is a script round-trip on this
 machine, **not** the Pop!_OS/Ubuntu clean-machine acceptance matrix.
 
+## Repository connectors (P8 source slice, no live calls)
+
+`boru/connectors/` implements the versioned contract from issue #8/#9:
+capability roles `REPO_READ`, `ISSUE_WRITE`, `CODE_PR_WRITE`, `ACTIONS_DISPATCH`,
+`ACTIONS_ADMIN`, `MERGE_RELEASE`; a `Grant` binding account, repository,
+reference, operation set, call ceiling, expiry and disclosure recipient; and
+`GitHubProvider`, an official REST connector whose every operation is checked
+against a grant **before** any request. A denied operation raises
+`ConnectorDenied` without leaving the host, records a sanitized audit event
+and never includes a token, a response body or a private payload. `github.com`
+API base URL is HTTPS-only unless the owner explicitly allows HTTP for a pinned
+host, tokens only enter via an environment-variable name, and a token is
+identity only — it authorizes nothing by itself.
+
+Tests prove a read-only profile creates no outbound request for any write
+operation, the call ceiling and expiry are enforced, workflow endpoints are the
+official ones, and HTTP 403/404/429/invalid JSON never leak a body.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard
