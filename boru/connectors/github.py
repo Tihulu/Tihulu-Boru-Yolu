@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
+from .scope import check_call
 
 API_BASE = "https://api.github.com"
 
@@ -85,8 +86,21 @@ class GitHubProvider(RepositoryProvider):
             if self._ledger is not None:
                 self._ledger.record("connector", grant.grant_id, reason, operation)
             raise ConnectorDenied(reason)
-        if not path:
-            path = self._path_for(operation, payload or {})
+        # The requested repository/reference must be the granted one, and no raw
+        # method/path override may reach the official endpoint (issue #15).
+        if path:
+            raise ConnectorDenied("path_override_refused")
+        try:
+            check_call(grant, operation, payload or {}, method=method, path=path,
+                       default_method=self._MUTATING.get(operation, "GET"))
+        except ConnectorDenied as exc:
+            self._audit.append({"at": int(time.time()), "grant": grant.grant_id,
+                                "operation": operation, "decision": "deny",
+                                "reason": str(exc)})
+            if self._ledger is not None:
+                self._ledger.record("connector", grant.grant_id, str(exc), operation)
+            raise
+        path = self._path_for(operation, payload or {})
         if method is None:
             method = self._MUTATING.get(operation, "GET")
         status, raw = self._exchange(operation, method, path, body or {})

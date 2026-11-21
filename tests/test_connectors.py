@@ -169,7 +169,7 @@ class GitLabProviderTests(unittest.TestCase):
 
     def setUp(self):
         self.provider = GitLabProvider()
-        self.grant = grant(nonce="gl-1")
+        self.grant = grant(nonce="gl-1", repository="owner/project")
 
     def test_https_required(self):
         with self.assertRaises(PolicyViolation):
@@ -201,16 +201,17 @@ class GitLabProviderTests(unittest.TestCase):
     def test_write_grant_and_official_endpoints(self):
         seen = []
         self.provider._transport = lambda method, path, body: seen.append((method, path, body)) or (201, b'{"iid":1}')
-        subject = grant(operations=("create_issue",), capabilities=(Capability.ISSUE_WRITE,), nonce="gl-2")
+        subject = grant(operations=("create_issue",), capabilities=(Capability.ISSUE_WRITE,),
+                          nonce="gl-2", repository="owner/project")
         self.provider.call(subject, "create_issue", {"repository": "owner/project"}, body={"title": "x"})
         self.assertEqual(("POST", "/api/v4/projects/owner%2Fproject/issues", {"title": "x"}), seen[0])
 
     def test_pipeline_endpoints_are_official(self):
         self.provider._transport = lambda method, path, body: (200, b'{}')
-        reader = grant(operations=("get_run",), nonce="gl-3")
+        reader = grant(operations=("get_run",), nonce="gl-3", repository="owner/project")
         self.provider.call(reader, "get_run", {"repository": "owner/project", "run_id": 42})
         dispatch = grant(operations=("dispatch_workflow",), capabilities=(Capability.ACTIONS_DISPATCH,),
-                         nonce="gl-4")
+                         nonce="gl-4", repository="owner/project")
         self.provider.call(dispatch, "dispatch_workflow", {"repository": "owner/project"}, body={"ref": "main"})
         paths = [event.get("path") for event in self.provider.audit()]
         self.assertIn("/api/v4/projects/owner%2Fproject/pipelines/42", paths)
@@ -222,7 +223,7 @@ class GitLabProviderTests(unittest.TestCase):
         os.environ["BORU_TEST_GITLAB_TOKEN"] = "not-a-real-token"
         provider = GitLabProvider(token_env="BORU_TEST_GITLAB_TOKEN",
                                   transport=lambda method, path, body: (200, b'{}'))
-        reader = grant(operations=("list_issues",), nonce="gl-5")
+        reader = grant(operations=("list_issues",), nonce="gl-5", repository="owner/project")
         provider.call(reader, "list_issues", {"repository": "owner/project"})
         del os.environ["BORU_TEST_GITLAB_TOKEN"]
         self.assertTrue(provider.audit())
@@ -237,11 +238,12 @@ class GitLabProviderTests(unittest.TestCase):
 
     def test_call_ceiling_and_expiry(self):
         self.provider._transport = lambda method, path, body: (200, b'{}')
-        ceiling = grant(max_calls=1, nonce="gl-6")
+        ceiling = grant(max_calls=1, nonce="gl-6", repository="owner/project")
         self.provider.call(ceiling, "list_issues", {"repository": "owner/project"})
         with self.assertRaises(ConnectorDenied):
             self.provider.call(ceiling, "list_issues", {"repository": "owner/project"})
-        expired = grant(issued_at=time.time() - 30, expires_at=time.time() - 1, nonce="gl-7")
+        expired = grant(issued_at=time.time() - 30, expires_at=time.time() - 1, nonce="gl-7",
+                       repository="owner/project")
         with self.assertRaises(ConnectorDenied):
             self.provider.call(expired, "list_issues", {"repository": "owner/project"})
 

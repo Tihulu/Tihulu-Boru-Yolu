@@ -439,6 +439,36 @@ Shell is deliberately absent. A decision here authorizes nothing: no process,
 container, mount or network is created, so P6 stays **blocked** until the P5
 broker passes live acceptance and the owner explicitly consents.
 
+## Connector request-scope hardening (issue #15)
+
+`boru/connectors/scope.py` binds every connector call to the grant *before* the
+official endpoint URL is built:
+
+* the repository in the request must match the grant's repository (compared
+  percent-encoded and decoded), and a branch/reference must match the grant's
+  reference — a file read must name its reference explicitly;
+* an explicit `path` override is refused, and a `method` override is refused
+  unless the operation defines it;
+* slots are checked for URL-escape and control-character risk (`..`, `%`, `?`,
+  `#`, backslash, userinfo, spaces, newlines), with empty and parent segments
+  rejected;
+* an account-wide `list_repositories` is **denied** with a repository-scoped
+  grant: account-wide scope needs a separate design.
+* A denial raises `ConnectorDenied` **before any transport is constructed**, is
+  recorded in the local audit trail, and reaches the caller verbatim.
+
+**Live verification (read-only, this repository, 2026-11-21):** the official
+endpoints the connector builds were exercised through the GitHub CLI against
+`Tihulu/Tihulu-Boru-Yolu` and returned HTTP 200 for
+`/repos/{owner}/{repo}/issues`, `.../pulls/{n}`,
+`.../pulls/{n}/reviews`, `.../branches`, `.../commits/{sha}`,
+`.../actions/workflows` and `/user`. No write, dispatch or secret was used.
+
+Still open (recorded, not implemented): response-level reference validation,
+workflow-specific authorization, redirect/header review, and a typed API for
+repository names that need special encoding. Token/account identity remains
+unverified, so the connector is not yet a security boundary.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard

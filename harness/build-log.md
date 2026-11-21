@@ -443,7 +443,7 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
   2. Remote Privacy Bridge half: a real cloud recipient and L2 excerpt release. Next action: only after item 1.
   3. Provider registration + live OAuth round trip (identity vs inference verification). Next action: register with one provider, pilot with `boru/auth/`.
   4. P6 sandbox runtime: `boru/sandbox.py` decides but executes nothing. Next action: only after items 1–2 and explicit owner consent.
-  5. Live GitHub/GitLab/Actions scoped pilots (needs owner-approved scopes in a disposable repository) and webhook ingress policy.
+  5. Live GitHub/GitLab/Actions scoped pilots (needs owner-approved scopes in a disposable repository) and webhook ingress policy. Read-only live endpoint verification for this repository passed 2026-11-21 (see `harness/build-log.md`); write/action pilots remain HOLD.
   6. Clean-machine Pop!_OS 24.04 and Ubuntu 24.04 LTS x86_64 acceptance (M01–M12 in `docs/OS_ACCEPTANCE.md`), including offline and partial-outage runs.
   7. Dashboard localization/accessibility polish beyond what is implemented and tested.
   8. Repository license choice, then owner release approval.
@@ -466,3 +466,13 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **478 tests**. MOCK/STATIC only.
 - **Security implications:** the flow stores only an opaque handle, never prints or logs a token, reports `authenticated` with `model_test_passed: false`, and requires a loopback redirect. Registration with a real provider is an owner action; no provider is connected by this repository.
 - **Defects fixed while testing:** (a) `TokenVault` wrote but never read its metadata, so revocation did not survive a new process; (b) `connect` raised during constructor-time validation instead of returning a configuration error; (c) the loopback delivery raced with listener bind in tests, now retried.
+
+---
+
+### 2026-11-21 08:00 UTC — connector request-scope hardening (issue #15) + live endpoint verification (commit on `p1/boru-core-vertical-slice`)
+
+- **Security finding fixed (issue #15):** the grant check considered only the operation, so a granted read could name another repository or reference, and the public `call()` surface accepted arbitrary `method`/`path` overrides. Both providers now call `boru/connectors/scope.py` before any transport is constructed: repository and reference binding, refusal of `path`/`method` overrides, per-slot charset and segment validation, an explicit reference for file reads, and an explicit denial of account-wide `list_repositories` with a repository-scoped grant.
+- **Live verification (read-only, owner-approved, this repository):** the official endpoints the connector builds were exercised through the GitHub CLI against `Tihulu/Tihulu-Boru-Yolu`: `/repos/{owner}/{repo}/issues`, `/repos/{owner}/{repo}/pulls/1`, `/repos/{owner}/{repo}/pulls/1/reviews`, `/repos/{owner}/{repo}/branches`, `/repos/{owner}/{repo}/commits/f90fd3ed…`, `/repos/{owner}/{repo}/actions/workflows` and `/user` all returned HTTP 200. No write, dispatch, secret or credential was used.
+- **Test fixtures corrected:** the GitLab synthetic grants named a different repository than their requests (the exact mismatch that made the bypass possible); they are now scoped to the repository they request.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **494 tests** (16 new scope tests). MOCK/STATIC only.
+- **Still open, recorded not implemented:** response-level reference validation, workflow-specific authorization, redirect/header review, special encoding for unusual repository names, and token/account identity verification. The connector is not yet a security boundary.
