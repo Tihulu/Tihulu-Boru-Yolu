@@ -327,3 +327,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** CLI `audit` subcommand (`--audit-dir`, `--limit`) and `AuditCommandTests`.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **404 tests**. MOCK/STATIC only.
 - **Security implications:** prints bounded rows only; `--audit-dir` must name an existing directory; no payload, path, content or token appears in output.
+
+---
+
+### 2026-11-21 01:30 UTC — `boru plan` and `boru queue` commands (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** CLI `plan` (submit a dependency-aware plan, dispatch what is ready, resumable) and `queue` (tasks awaiting explicit review); `submit_plan` now resumes existing tasks instead of failing on a re-run; `PlanAndQueueCommandTests`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **410 tests**. MOCK/STATIC only.
+- **Security implications:** a dependent task never runs before its dependency is explicitly reviewed and `DONE`; no goal, path, content or token is printed.

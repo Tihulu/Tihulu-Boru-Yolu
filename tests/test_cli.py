@@ -176,3 +176,87 @@ class AuditCommandTests(unittest.TestCase):
         result = run(["--help"])
         self.assertEqual(0, result.returncode)
         self.assertIn("audit", result.stdout)
+
+
+class PlanAndQueueCommandTests(unittest.TestCase):
+    """`boru plan` respects dependencies; `boru queue` lists explicit reviews."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="boru-plan-")
+        os.chmod(self.root, stat.S_IRWXU)
+        self.state = os.path.join(self.root, "state")
+        os.makedirs(self.state)
+        os.chmod(self.state, stat.S_IRWXU)
+        self.plan_file = os.path.join(self.root, "plan.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def plan_args(self):
+        return ["--config", os.path.join(REPO, "examples", "core.example.json"),
+                "--state-dir", self.state]
+
+    def write_plan(self, agents, goal="synthetic plan"):
+        with open(self.plan_file, "w", encoding="utf-8") as handle:
+            json.dump({"goal": goal, "agents": agents}, handle)
+
+    def test_plan_runs_only_the_ready_task(self):
+        self.write_plan([
+            {"agent_id": "w", "task_id": "p1", "capability_tags": ["text"]},
+            {"agent_id": "w", "task_id": "p2", "capability_tags": ["text"], "depends_on": ["p1"]},
+            {"agent_id": "w", "task_id": "p3", "capability_tags": ["text"], "depends_on": ["p2"]},
+        ])
+        result = run(self.plan_args() + ["plan", "--file", self.plan_file])
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(["p1"], [entry["task_id"] for entry in payload["plan"]])
+        self.assertEqual("REVIEW", payload["plan"][0]["state"])
+        self.assertEqual("HOLD", payload["live_acceptance"])
+        queue = run(self.plan_args() + ["queue"])
+        self.assertEqual(["p1"], [row["task_id"] for row in json.loads(queue.stdout)["awaiting_review"]])
+
+    def test_review_unblocks_the_next_task(self):
+        self.write_plan([
+            {"agent_id": "w", "task_id": "q1", "capability_tags": ["text"]},
+            {"agent_id": "w", "task_id": "q2", "capability_tags": ["text"], "depends_on": ["q1"]},
+        ])
+        run(self.plan_args() + ["plan", "--file", self.plan_file])
+        review = run(self.plan_args() + ["review", "--task-id", "q1", "--accept"])
+        self.assertEqual("DONE", json.loads(review.stdout)["state"])
+        result = run(self.plan_args() + ["plan", "--file", self.plan_file])
+        payload = json.loads(result.stdout)
+        self.assertEqual(["q2"], [entry["task_id"] for entry in payload["plan"]])
+        self.assertEqual("REVIEW", payload["plan"][0]["state"])
+
+    def test_bad_plans_are_refused(self):
+        self.write_plan([{"agent_id": "w", "task_id": "x", "capability_tags": ["text"]}], goal="")
+        result = run(self.plan_args() + ["plan", "--file", self.plan_file])
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("configuration_error", json.loads(result.stdout)["error"])
+        self.write_plan([{"agent_id": "w", "task_id": "x", "capability_tags": ["text"],
+                          "depends_on": ["missing"]}])
+        result = run(self.plan_args() + ["plan", "--file", self.plan_file])
+        self.assertEqual(1, result.returncode)
+        self.assertEqual("policy_violation", json.loads(result.stdout)["error"])
+        self.write_plan([{"agent_id": "w", "task_id": "x", "capability_tags": ["text"],
+                          "unknown_field": 1}])
+        result = run(self.plan_args() + ["plan", "--file", self.plan_file])
+        self.assertEqual(2, result.returncode)
+
+    def test_malformed_plan_file_is_refused(self):
+        with open(self.plan_file, "w", encoding="utf-8") as handle:
+            handle.write("not json")
+        result = run(self.plan_args() + ["plan", "--file", self.plan_file])
+        self.assertEqual(2, result.returncode)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_missing_plan_file_is_refused(self):
+        result = run(self.plan_args() + ["plan", "--file", os.path.join(self.root, "absent.json")])
+        self.assertEqual(2, result.returncode)
+
+    def test_queue_is_bounded_and_safe(self):
+        result = run(self.plan_args() + ["queue"])
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual([], payload["awaiting_review"])
+        self.assertEqual("HOLD", payload["live_acceptance"])

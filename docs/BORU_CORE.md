@@ -307,6 +307,13 @@ recorded, and `usage_if_observed` stays empty otherwise.
   `boru/adapters/opencode.py` is still source-tested only: driving it live needs
   the owner to authorize the auth material, so the adapter's live path is HOLD.
 
+Plan and queue commands: `boru plan --file plan.json` submits a
+dependency-aware plan of logical agents and dispatches every task whose
+dependencies are `DONE`; dependent tasks stay untouched until you accept the
+earlier result with `boru review --task-id <id> --accept`. `boru queue` lists the
+tasks awaiting that explicit review. Re-running a plan resumes existing tasks
+instead of failing.
+
 ## Ledger wiring
 
 `BoruCore` and `Broker` accept an optional `RejectionLedger` (an in-memory sink

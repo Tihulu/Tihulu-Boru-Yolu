@@ -219,8 +219,16 @@ class BoruCore:
         for spec, envelope in zip(specs, envelopes):
             self.scheduler.add(spec)
         submitted: List[str] = []
-        for envelope in envelopes:
-            self.submit(envelope)
+        for spec, envelope in zip(specs, envelopes):
+            try:
+                self.submit(envelope)
+            except StoreError:
+                # The task already exists: a re-run resumes instead of failing.
+                row = self.store.get(envelope.task_id)
+                if row is None:  # pragma: no cover - defensive
+                    raise
+                if TaskState(row["state"]) is TaskState.QUEUED:
+                    self._queue[envelope.task_id] = envelope
             submitted.append(envelope.task_id)
         return submitted
 

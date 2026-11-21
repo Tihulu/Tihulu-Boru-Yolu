@@ -15,9 +15,10 @@ from typing import Any, Dict, List, Optional, Sequence
 from .audit import RejectionLedger
 from .config import CoreConfig, ProviderConfig, default_config
 from .core import BoruCore
-from .errors import BoruError, ConfigurationError
+from .errors import BoruError, ConfigurationError, PolicyViolation
 from .store import TaskStore
 from .types import TaskEnvelope
+from .scheduler import AgentSpec, AgentScheduler, build_envelopes
 
 EXIT_OK = 0
 EXIT_REJECTED = 1
@@ -101,6 +102,12 @@ def build_parser() -> argparse.ArgumentParser:
     audit = sub.add_parser("audit", help="show recent rejection rows from the local ledger")
     _add_common_shorthands(audit)
     audit.add_argument("--limit", default="32", help="number of rows (1..1024)")
+    plan = sub.add_parser("plan",
+                           help="submit a dependency-aware plan of logical agents and run what is ready")
+    _add_common_shorthands(plan)
+    plan.add_argument("--file", required=True, help="path to a plan JSON file")
+    queue = sub.add_parser("queue", help="list tasks awaiting an explicit owner review")
+    _add_common_shorthands(queue)
     return parser
 
 
@@ -171,6 +178,80 @@ def _audit(args) -> int:
     return EXIT_OK
 
 
+def _plan(args) -> int:
+    """Submit a dependency-aware plan and dispatch every ready task.
+
+    Nothing runs before its dependencies reach DONE, and each completed reply
+    stays in REVIEW until you accept it explicitly.
+    """
+    config = _load_config(args.config)
+    try:
+        with open(args.file, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except json.JSONDecodeError:
+        _emit({"error": "configuration_error", "detail": "plan file is not valid JSON"}, args.show_text)
+        return EXIT_ERROR
+    except OSError:
+        _emit({"error": "configuration_error", "detail": "plan file cannot be read"}, args.show_text)
+        return EXIT_ERROR
+    if not isinstance(raw, dict):
+        _emit({"error": "configuration_error", "detail": "plan file must contain an object"}, args.show_text)
+        return EXIT_ERROR
+    goal = raw.get("goal")
+    agents = raw.get("agents")
+    if not isinstance(goal, str) or not goal.strip():
+        _emit({"error": "configuration_error", "detail": "plan needs a bounded goal"}, args.show_text)
+        return EXIT_ERROR
+    if not isinstance(agents, list) or not agents:
+        _emit({"error": "configuration_error", "detail": "plan needs a non-empty agents list"}, args.show_text)
+        return EXIT_ERROR
+    specs = []
+    for entry in agents:
+        if not isinstance(entry, dict):
+            _emit({"error": "configuration_error", "detail": "agents entries must be objects"}, args.show_text)
+            return EXIT_ERROR
+        unknown = sorted(set(entry) - {"agent_id", "task_id", "capability_tags", "depends_on",
+                                      "large_local_model"})
+        if unknown:
+            _emit({"error": "configuration_error", "detail": "unknown agent field"}, args.show_text)
+            return EXIT_ERROR
+        tags = entry.get("capability_tags", [])
+        depends = entry.get("depends_on", [])
+        if not isinstance(tags, list) or not isinstance(depends, list):
+            _emit({"error": "configuration_error", "detail": "capability_tags and depends_on must be lists"},
+                  args.show_text)
+            return EXIT_ERROR
+        specs.append(AgentSpec(agent_id=str(entry.get("agent_id", "")), task_id=str(entry.get("task_id", "")),
+                               capability_tags=tuple(str(t) for t in tags),
+                               depends_on=tuple(str(d) for d in depends),
+                               large_local_model=bool(entry.get("large_local_model", False))))
+    with _open_core(config, args.state_dir, args.audit_dir) as core:
+        try:
+            core.submit_plan(specs, goal)
+        except PolicyViolation as exc:
+            _emit({"error": exc.kind, "detail": str(exc)}, args.show_text)
+            return EXIT_REJECTED
+        dispatched = []
+        while True:
+            summary = core.dispatch_ready()
+            if summary is None:
+                break
+            dispatched.append({"task_id": summary["task_id"], "state": summary["state"],
+                               "reason": summary.get("reason")})
+
+        _emit({"plan": dispatched, "live_acceptance": "HOLD"}, args.show_text)
+        return EXIT_OK
+
+
+def _queue(args) -> int:
+    """List tasks awaiting the owner's explicit review."""
+    config = _load_config(args.config)
+    with _open_core(config, args.state_dir, args.audit_dir) as core:
+        rows = core.store.by_state(("REVIEW",))
+    _emit({"awaiting_review": rows, "live_acceptance": "HOLD"}, args.show_text)
+    return EXIT_OK
+
+
 def _providers(args) -> int:
     config = _load_config(args.config)
     core = _open_core(config, args.state_dir)
@@ -195,6 +276,8 @@ _HANDLERS = {
     "review": _review,
     "providers": _providers,
     "audit": _audit,
+    "plan": _plan,
+    "queue": _queue,
 }
 
 
