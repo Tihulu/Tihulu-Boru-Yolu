@@ -54,6 +54,11 @@
 
 Do not infer Linux compatibility solely from a product's marketing page. Test exact binaries on the supported target image.
 
+`python3 scripts/evidence.py` produces the sanitized evidence block for this
+machine (commit, Python version, platform, check statuses, `live_acceptance:
+HOLD`, MOCK/STATIC note). It is reproducibility tooling, not an acceptance
+substitute: live gates still require the owner's approved runs.
+
 ## Two critical demonstrations
 
 ### Default local-isolated

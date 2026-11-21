@@ -398,3 +398,10 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `boru/sandbox.py` (`SandboxGrant` bound to grant id/owner/recipient provider+model/task/sandbox id/operation types/resource aliases/field disclosures/expiry/call ceiling/nonce; `SandboxBroker` with the full denial set and a call-ceiling ordering) and `tests/test_sandbox.py`; `docs/SECURITY_MODES.md` records the split.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **455 tests**. MOCK/STATIC only.
 - **Security implications:** denied paths never execute anything and are recorded; host-level Shell is absent from the allowlist; non-traversing resource aliases; the sandbox runtime is not implemented, so P6 remains blocked pending P5 live acceptance and explicit owner consent.
+
+---
+
+### 2026-11-21 04:30 UTC — sanitized evidence report added (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `scripts/evidence.py` (static manifest + full unit suite + offline demo + install/run/uninstall round trip, sanitized output, exit 0 only when every mandatory check passes), docs updates, `tests/test_evidence.py`.
+- **Observed locally:** `python3 scripts/evidence.py` -> exit 0 with `unit_tests: ('PASS', 455)` and `install: {install, demo, uninstall} = PASS`; the report contains no private path, credential or device inventory. MOCK/STATIC only.
