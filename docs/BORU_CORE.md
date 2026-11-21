@@ -350,6 +350,19 @@ guard before dispatching a Jan or cloud provider: an undeclared direction
 becomes `HOLD/unclassified_boundary` with **no network call**, recorded in the
 rejection ledger. In-process providers need no crossing.
 
+## Worker identities (P5 slice)
+
+`boru/workers.py` keeps owner-created worker identities with bounded
+lifetimes: a worker id, its resource scopes, an expiry and a 256-bit secret
+stored owner-only (0600) inside the directory you name. `valid()` verifies the
+secret in constant time together with expiry and revocation, so a revoked or
+expired identity never authorizes anything; there is no API that returns or
+logs a secret, and at most eight workers exist at a time.
+
+Still **not** implemented and requiring independent security review: host-level
+authentication of the process presenting an identity, OS confinement, a
+persistent live socket, and revocation of already-running work.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard

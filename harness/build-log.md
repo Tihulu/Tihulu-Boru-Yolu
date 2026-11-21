@@ -366,3 +366,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 7. Repository license choice and owner release approval.
 
 **Resume instruction:** check out `p1/boru-core-vertical-slice`, read `docs/BORU_CORE.md` and this entry, run the two verification commands above, then attempt item 3 or the next source-only slice. Do not rewrite existing modules; extend them.
+
+---
+
+### 2026-11-21 02:15 UTC — worker identity registry added (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/workers.py` (`WorkerRegistry`, `WorkerRecord` — owner-created identities, bounded lifetimes, 0600 secret files, constant-time validation, revocation, persistence) and `tests/test_workers.py`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **422 tests**. MOCK/STATIC only.
+- **Security implications:** secrets never leave the owner-only file; revoked or expired identities never authorize; no API returns or logs a secret; the identity record is explicitly not a security boundary — host authentication, OS confinement and an independent security review remain HOLD.

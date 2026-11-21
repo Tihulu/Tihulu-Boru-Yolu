@@ -29,7 +29,7 @@
 | A14 | Privacy Bridge | Typed minimal disclosure; no raw stdout | STATIC PASS (MOCK): gate + broker + bounded worker refuse content/listings/raw fields; live disclosure path HOLD |
 | A15 | Protected extra data | Exact recipient/field approval before disclosure | HOLD |
 | A16 | Adversarial inputs | Prompt-injection, replay, schema overflow denied | STATIC PASS (MOCK): policy axes, grant replay/expiry/revocation, malformed contracts, private-field refusal, off-trajectory paths not introduced |
-| A17 | Resource lifecycle | Owned models only, cancel/unload no leaks | HOLD |
+| A17 | Resource lifecycle | Owned models only, cancel/unload no leaks | STATIC PASS (MOCK): leases are counted and only Boru-owned leases are released; live OS measurements HOLD |
 | A18 | Up to 6 logical agents | Resource limits, evidence per child | HOLD |
 | A19 | Rollback | Jan/OpenCode unchanged and launchable | HOLD |
 | A20 | Static repo consistency | `scripts/check_project.py` + unittest | STATIC PASS (225 tests on P1/P3/P4/P5/P7/P9/P10 slices, MOCK only) |
