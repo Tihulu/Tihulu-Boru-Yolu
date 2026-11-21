@@ -574,3 +574,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `docs/OWNER_GATE_GUIDE.md` (the five remaining gates in order, each with a PASS definition, the owner action, the agent action and what it is blocked on) and `docs/SECURITY_REVIEW_REQUEST.md` (the Gate 1 review package: scope table, out-of-scope, reproduction commands, findings template, PASS criteria). Manifest extended to require both.
 - **Tests observed:** `scripts/check_project.py` PASS (25 documents); `unittest discover -s tests` **556 tests PASS**. MOCK/STATIC only.
 - **Gate states:** 1 security review HOLD (reviewer needed), 2 provider OAuth HOLD (registration needed), 3 connector pilot HOLD (disposable repository needed), 4 clean-machine matrix HOLD (images needed), 5 license/release HOLD (owner decision).
+
+---
+
+### 2026-11-21 14:00 UTC — review package verified and published (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `docs/REVIEW_PACKAGE.md` — a self-contained review package for an external reviewer: repository/branch/PR/CI links, the exact reproduction commands with their observed results, 19 components with file links, a 57-item invariant checklist where every invariant points to the named test that asserts it, out-of-scope statements, the recorded live evidence (A21, A23), a findings template and PASS criteria. Manifest extended to require it.
+- **Verification performed:** every referenced test name exists in the suite (57/57), every referenced file path exists (39/39), and the five documented commands were re-run on this head — `check_project.py` PASS, `unittest` 556 tests OK, `evidence.py` exit 0, `boru doctor` overall ok, `boru demo` REVIEW/simulated.
+- **Gate 1 status:** still **HOLD** — the package is ready; the reviewer (GPT Astray, per the owner) is the missing party.
