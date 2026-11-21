@@ -506,6 +506,13 @@ any dispatch is attempted — unknown, mistyped, out-of-range, oversized, nested
 or missing-required inputs are refused, and a workflow whose inputs are not
 declared is refused rather than guessed.
 
+Localhost polling sync (issue #8): `boru/connectors/polling.py` implements the
+issue's recommended pilot path for localhost — an owner-invoked sync that reads
+through the official connector and never opens a listener. Only owner-declared
+event types are accepted (an empty allowlist accepts nothing), each event id is
+processed once with a bounded restart-safe seen-set, and unknown or malformed
+events are refused rather than silently skipped into work.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard
