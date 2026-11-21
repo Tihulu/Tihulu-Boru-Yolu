@@ -333,6 +333,11 @@ Durable usage: `python -m boru --audit-dir local-state/audit ...` writes the
 same ledger into `boru-audit.sqlite` inside the owner-only directory you name,
 shared by the core, broker, disclosure gate and repository connectors.
 
+The dashboard page is semantic and keyboard-only: `<html lang>` for the chosen
+language, `aria-labelledby` sections, a `<caption>` on the status table, a
+labelled review form with a submit button and no JavaScript (tests assert the
+landmarks, heading order and labels).
+
 Dashboard routes: `GET /` (bounded HTML status with a recent-rejections
 section), `GET /status`, `GET /task/<id>`, `GET /queue` (tasks awaiting the
 owner's explicit review), `GET /audit` (bounded recent ledger rows), and

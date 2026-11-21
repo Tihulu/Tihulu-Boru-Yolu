@@ -382,3 +382,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `boru/pipeline.py` (worker + broker + executor + gate + ledger in one local, fail-closed flow), L0/L1 field mapping aligned with `boru/executor.py`'s typed fields, and `tests/test_pipeline.py`.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **432 tests**. MOCK/STATIC only.
 - **Security implications:** every denial path (missing/expired/wrong-operation grant, revoked worker, L2 under MINIMUM_NECESSARY, field not produced) fails closed *before* data is released; successes return typed fields only; raw content, file names, paths and listings are never produced; each step is recorded in the ledger. No cloud call is made and no live boundary is claimed.
+
+---
+
+### 2026-11-21 03:15 UTC — dashboard accessibility (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** semantic dashboard markup (`<html lang>`, `aria-labelledby` sections, `<caption>`, labelled review form, no JS), an `accept` label for EN/TR/DE, and `DashboardAccessibilityTests`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **444 tests**. MOCK/STATIC only.
+- **Security implications:** none — presentation only; the review action still requires an explicit `accept: true`.

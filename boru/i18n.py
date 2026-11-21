@@ -26,6 +26,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "audit": {"en": "Recent rejections", "tr": "Son reddiyeler", "de": "Letzte Ablehnungen"},
     "hold": {"en": "HOLD", "tr": "BEKLEMEDE", "de": "ANGEHALTEN"},
     "review": {"en": "Review", "tr": "İnceleme", "de": "Überprüfung"},
+    "accept": {"en": "Accept", "tr": "Kabul et", "de": "Annehmen"},
 }
 
 

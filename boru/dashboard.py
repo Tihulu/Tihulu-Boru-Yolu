@@ -73,6 +73,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _render(self, status: HTTPStatus, title: str, payload: Dict[str, Any], language: str = "en") -> None:
         localized = summary_labels(language)
         localized = summary_labels(language)
+        payload_json = html.escape(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True))
         audit_rows = self.audit.recent(8) if self.audit is not None else []
         audit_line = "".join(
             "<li>{} / {}</li>".format(html.escape(str(row.get("category"))), html.escape(str(row.get("reason"))))
@@ -87,14 +88,33 @@ class _Handler(BaseHTTPRequestHandler):
         )
         body = (
             "<!doctype html><html lang=\"{lang}\"><head><meta charset=\"utf-8\">"
-            "<title>{title}</title></head><body><h1>{title}</h1>"
-            "<table>{rows}</table><h2>{tasks}</h2><pre>{payload}</pre>"
-            "<h2>{audit_title}</h2><ul>{audit}</ul></body></html>"
+            "<title>{title}</title></head><body>"
+            "<h1>{title}</h1>"
+            "<section aria-labelledby=\"policy-heading\">"
+            "<h2 id=\"policy-heading\">{policy}</h2>"
+            "<table><caption>{policy}</caption><tbody>{rows}</tbody></table>"
+            "</section>"
+            "<section aria-labelledby=\"tasks-heading\">"
+            "<h2 id=\"tasks-heading\">{tasks}</h2><pre>{payload}</pre>"
+            "</section>"
+            "<section aria-labelledby=\"audit-heading\">"
+            "<h2 id=\"audit-heading\">{audit_title}</h2><ul>{audit}</ul>"
+            "</section>"
+            "<form action=\"/review\" method=\"post\" aria-labelledby=\"review-heading\">"
+            "<h2 id=\"review-heading\">{review}</h2>"
+            "<label for=\"review-task\">{review_task}</label>"
+            "<input id=\"review-task\" name=\"task_id\" type=\"text\" required>"
+            "<button type=\"submit\" name=\"accept\" value=\"true\">{accept}</button>"
+            "</form>"
+            "</body></html>"
         ).format(lang=html.escape(language), title=html.escape(translate(title, language)),
-                 rows=rows, tasks=html.escape(localized["tasks"]),
+                 policy=html.escape(localized["policy"]), rows=rows,
+                 tasks=html.escape(localized["tasks"]), payload=payload_json,
                  audit_title=html.escape(localized["audit"]),
                  audit=audit_line or "<li>no rejections recorded</li>",
-                 payload=html.escape(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True)))
+                 review=html.escape(localized["review"]),
+                 review_task=html.escape(translate("review", language)),
+                 accept=html.escape(translate("accept", language)))
         raw = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
