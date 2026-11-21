@@ -534,3 +534,19 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `boru/connectors/polling.py` (`EventAllowlist`, `SyncEvent`, `PollingSync`) and `tests/test_polling.py`.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **533 tests**. MOCK/STATIC only.
 - **Security implications:** the module imports no socket, server or threading primitive (a test asserts this), an empty allowlist accepts nothing, event ids are processed once with a bounded restart-safe seen-set, and undeclared or malformed events are refused rather than worked on. No webhook listener, ingress endpoint or credential is used.
+
+---
+
+### 2026-11-21 11:45 UTC — round close: source slices complete, PR description current (commit `a1a9ff6`, CI run 68 success)
+
+- **Repository state:** branch `p1/boru-core-vertical-slice`, draft **PR #14** against `plan/architecture-security-profiles-ubuntu-popos` (base of still-open draft PR #1). `main` untouched, nothing merged. PR #14 now describes the current state: 96 changed files, +15,448/−14, 533 tests.
+- **Verified at this commit:** `scripts/check_project.py` PASS · `unittest discover -s tests` **533 tests PASS** · `scripts/evidence.py` exit 0 · CI `Source-only contract checks` green on every commit. All MOCK/STATIC unless noted.
+- **Live evidence:** A21 (Boru Core → direct Jan, three three-turn conversations: provider/model/usage recorded, owner review to DONE, non-allowlisted model refused with no call) and A23 (real OpenCode child session: session/message IDs, agent, model, provider; both pilot sessions deleted).
+- **Open issues addressed at code level:** #8 (connectors + polling sync), #9 (workflow discovery + dispatch-input validation), #15 (all listed connector limitations), #12/#13 (Boru Core slices), #10/#11 (provider connector + connection flow + matrix doc).
+- **Source work remaining: none identified.** Every remaining item needs an owner approval or a human action:
+  1. Independent security review of the broker/worker/executor/connector chain (host process authentication, OS confinement, transport encryption).
+  2. Real provider registration + live OAuth round trip.
+  3. Disposable repository with scopes for a live GitHub/GitLab/Actions pilot.
+  4. Clean-machine Pop!_OS 24.04 / Ubuntu 24.04 x86_64 runs of M01–M12 (including offline and partial-outage cases).
+  5. Repository license choice and owner release approval.
+- **Resume instruction:** check out `p1/boru-core-vertical-slice`, read `docs/BORU_CORE.md` and this entry, run `scripts/evidence.py`, then take the first owner-approved gate above. Do not rewrite existing modules; extend them.
