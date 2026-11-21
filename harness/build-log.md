@@ -430,3 +430,21 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `docs/OS_ACCEPTANCE.md` (M01–M12 on Pop!_OS 24.04 and Ubuntu 24.04 LTS x86_64, pre-flight, rollback checklist, out-of-scope list), manifest extended, cross references, ACCEPTANCE note.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **461 tests**. STATIC only.
 - **Status:** every row starts HOLD; no clean-machine run has been performed by this repository. The only live evidence remains A21 and A23 on the owner's development host.
+
+---
+
+### 2026-11-21 06:00 UTC — round close: source slices, documents and evidence complete (commit `3100b16`, CI run 58 success)
+
+- **Branch / PR:** `p1/boru-core-vertical-slice`, draft PR #14 against `plan/architecture-security-profiles-ubuntu-popos` (base of still-open draft PR #1). `main` untouched, nothing merged.
+- **Verified:** `scripts/check_project.py` PASS · `python3 -m unittest discover -s tests` **461 tests PASS** · `python3 scripts/evidence.py` exit 0 · `boru demo` -> `REVIEW` / `simulated` / `live_acceptance=HOLD`. All MOCK/STATIC unless a live entry says otherwise.
+- **Live evidence:** A21 (direct Jan 3-turn conversations: provider/model/usage recorded, owner review to DONE, non-allowlisted model refused with no call) and A23 (real OpenCode child session: session/message IDs, agent, model, provider; both pilot sessions deleted afterwards).
+- **Remaining HOLD, in order, with the exact next action:**
+  1. Broker hardening: host-level process authentication, OS confinement, live socket; then an **independent security review** (P5 live gate). Next action: schedule the review with the implemented `boru/workers.py` + `boru/broker.py` + `boru/executor.py` chain.
+  2. Remote Privacy Bridge half: a real cloud recipient and L2 excerpt release. Next action: only after item 1.
+  3. Provider registration + live OAuth round trip (identity vs inference verification). Next action: register with one provider, pilot with `boru/auth/`.
+  4. P6 sandbox runtime: `boru/sandbox.py` decides but executes nothing. Next action: only after items 1–2 and explicit owner consent.
+  5. Live GitHub/GitLab/Actions scoped pilots (needs owner-approved scopes in a disposable repository) and webhook ingress policy.
+  6. Clean-machine Pop!_OS 24.04 and Ubuntu 24.04 LTS x86_64 acceptance (M01–M12 in `docs/OS_ACCEPTANCE.md`), including offline and partial-outage runs.
+  7. Dashboard localization/accessibility polish beyond what is implemented and tested.
+  8. Repository license choice, then owner release approval.
+- **Resume instruction:** check out `p1/boru-core-vertical-slice`, read `docs/BORU_CORE.md` and this entry, run `scripts/evidence.py`, then attempt item 3 or the next source-only slice. Extend existing modules; do not rewrite them.
