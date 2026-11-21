@@ -407,3 +407,10 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Observed locally:** `python3 scripts/evidence.py` -> exit 0 with `unit_tests: ('PASS', 455)` and `install: {install, demo, uninstall} = PASS`; the report contains no private path, credential or device inventory. MOCK/STATIC only.
 
 - **Defect found and fixed during the evidence work:** the first version of `tests/test_evidence.py` invoked the report without a `--quick` flag, and the report runs the whole unit suite, so each test re-ran the suite that contained it — one run took 45 minutes. `scripts/evidence.py` gained `--quick` (static check + offline demo only, install/unit steps reported as SKIPPED) and the tests use it; the evidence tests now run in ~0.4s and the full suite is 459 tests. The full report still runs everything and exits 0 on this machine.
+
+---
+
+### 2026-11-21 04:45 UTC — README reflects the implemented state (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** README "Status" now states what is implemented and tested locally, which live gates have passed (A21, A23) and what stays HOLD; added a "What you can run today" command block; the Codex handoff section points at draft PR #14 and `p1/boru-core-vertical-slice`. Added `TranslationCompletenessTests` so a missing or empty label in any of en/tr/de fails the suite.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **461 tests**. MOCK/STATIC only.

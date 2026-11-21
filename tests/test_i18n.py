@@ -35,6 +35,28 @@ class I18nTests(unittest.TestCase):
                 self.assertNotIn("/home/", value)
 
 
+class TranslationCompletenessTests(unittest.TestCase):
+    """Every label is translated for every supported language."""
+
+    def test_every_key_has_every_language(self):
+        from boru.i18n import TRANSLATIONS
+
+        missing = []
+        for key, entry in TRANSLATIONS.items():
+            for language in LANGUAGES:
+                if language not in entry or not entry[language].strip():
+                    missing.append(key + "/" + language)
+        self.assertEqual([], missing, "untranslated labels: %s" % missing)
+
+    def test_bounded_labels(self):
+        from boru.i18n import TRANSLATIONS
+
+        for key, entry in TRANSLATIONS.items():
+            for language, value in entry.items():
+                self.assertLessEqual(len(value), 64, key + "/" + language)
+                self.assertNotIn("<", value, key)
+
+
 class DashboardLanguageTests(unittest.TestCase):
     def setUp(self):
         from boru.config import CoreConfig, ProviderConfig
