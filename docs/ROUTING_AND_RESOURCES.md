@@ -46,6 +46,25 @@ Track input/output usage and provider costs **only when observable**; mark estim
 
 Classify 429 rate limit, exhausted credits, auth error, timeout, 5xx, missing model, local OOM, malformed output, safety/provider denial, context overflow. Fallback only to a verified authorized compatible model while preserving confidentiality and operation permissions. Model policy blocks are not retryable permission hints. If all cloud providers fail, AUTO can fall back to local models **only if those models satisfy task requirements and permissions**. Fail closed if nothing can.
 
+## Jan model lifecycle: no documented unload API (verified 2026-11-21)
+
+Jan's documented local API surface is OpenAI-compatible only (`/v1/models`,
+`/v1/chat/completions`) with model loading managed from the Jan desktop UI. The
+official documentation exposes **no model unload / lifecycle endpoint**, so
+Boru Core does not implement one: calling an undocumented endpoint to unload a
+model would be both unsupported and a potential interruption of an unrelated
+Jan session.
+
+Consequence for Boru: resource management is **lease bookkeeping** — Boru counts
+its own logical-agent leases and its large-model lease, refuses work when a
+lease is exhausted, and releases only Boru-owned leases on completion,
+cancellation, timeout or failure. It never kills a process, unloads a model,
+or otherwise touches a Jan/OpenCode session it does not own.
+
+HOLD: model unload, memory measurement and VRAM reporting remain blocked until
+either Jan publishes a lifecycle API or the owner approves a manual, one-off
+action.
+
 ## Scheduling and resources
 
 Target up to **six agents**, not six heavy local models. Default physical large-model concurrency is one on a 16 GiB VRAM-class device until measured. Track CPU, RAM, VRAM, swap, active inference processes and reservations without polling private inventories into cloud contexts.

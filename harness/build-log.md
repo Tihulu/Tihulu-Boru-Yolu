@@ -550,3 +550,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
   4. Clean-machine Pop!_OS 24.04 / Ubuntu 24.04 x86_64 runs of M01–M12 (including offline and partial-outage cases).
   5. Repository license choice and owner release approval.
 - **Resume instruction:** check out `p1/boru-core-vertical-slice`, read `docs/BORU_CORE.md` and this entry, run `scripts/evidence.py`, then take the first owner-approved gate above. Do not rewrite existing modules; extend them.
+
+---
+
+### 2026-11-21 12:15 UTC — Jan lifecycle gap verified and recorded (commit on `p1/boru-core-vertical-slice`)
+
+- **Verified against official documentation:** Jan's local API server exposes only the OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints, with model loading managed from the Jan UI. There is **no documented model unload/lifecycle endpoint**.
+- **Decision recorded:** Boru Core therefore does **not** implement a Jan unload adapter (an undocumented endpoint would also risk interrupting an unrelated Jan session). Resource management stays lease bookkeeping: counted logical-agent and large-model leases, refusal when exhausted, release of only Boru-owned leases.
+- **Consequence:** issue #7's "unload only owned idle models" item is closed as *by design HOLD*, blocked on a documented Jan API or an explicit owner-approved manual action. Measured RAM/VRAM stays HOLD for the same reason.

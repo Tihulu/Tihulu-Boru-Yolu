@@ -524,6 +524,13 @@ state-directory permissions and the repository test suite, then prints
 public listener or contacts a network service. It is a readiness report, not a
 security check and not an acceptance substitute.
 
+Resource leases are **counted, not measured**: `boru/registry.py` records a
+`large_local_model` flag per grant of a lease and `boru/scheduler.py` refuses
+work when the configured concurrency (one large local model by default) is
+exhausted. Measured RAM/VRAM and model unload are HOLD because Jan's documented
+API surface exposes no model lifecycle endpoint (verified 2026-11-21); Boru
+never kills a process or unloads a model it does not own.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard
