@@ -422,3 +422,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `docs/AI_PROVIDER_CONNECTIONS.md` (capability/auth/billing matrix for OpenAI, Claude, Google/Gemini+Vertex, GLM, Kimi, DeepSeek, NVIDIA, Grok/xAI and Jan; what Boru never does; the secret-free example config), `scripts/check_project.py` manifest extended, README-style cross references, and acceptance row A31.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **461 tests**. STATIC only.
 - **Security implications:** the matrix states explicitly that consumer Google-login inference and third-party Claude subscription login are not offered, that credentials only appear as environment-variable names, and that no provider account is connected by this repository.
+
+---
+
+### 2026-11-21 05:45 UTC — clean-machine acceptance matrix and rollback checklist (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `docs/OS_ACCEPTANCE.md` (M01–M12 on Pop!_OS 24.04 and Ubuntu 24.04 LTS x86_64, pre-flight, rollback checklist, out-of-scope list), manifest extended, cross references, ACCEPTANCE note.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **461 tests**. STATIC only.
+- **Status:** every row starts HOLD; no clean-machine run has been performed by this repository. The only live evidence remains A21 and A23 on the owner's development host.

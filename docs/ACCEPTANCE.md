@@ -53,6 +53,8 @@
 | Ubuntu 24.04 LTS x86_64 | HOLD | HOLD | HOLD | HOLD | HOLD | HOLD |
 | New supported Ubuntu LTS (version pinned later) | HOLD | HOLD | HOLD | HOLD | HOLD | HOLD |
 
+Clean-machine matrix (M01–M12) and rollback checklist: `docs/OS_ACCEPTANCE.md`, all rows HOLD until an owner runs them.
+
 Do not infer Linux compatibility solely from a product's marketing page. Test exact binaries on the supported target image.
 
 `python3 scripts/evidence.py` produces the sanitized evidence block for this

@@ -269,6 +269,10 @@ identity is not inference authorization, that consumer Google-login inference an
 third-party Claude subscription login are not offered, and that no provider
 account is connected by this repository.
 
+Clean-machine acceptance matrix and rollback checklist: `docs/OS_ACCEPTANCE.md`
+(M01–M12 on Pop!_OS 24.04 and Ubuntu 24.04 LTS x86_64, all rows start as HOLD
+until an owner runs them and records the outcome).
+
 ## Budgets, cooldowns and context bounds (P3 slice)
 
 `boru/budgets.py` enforces ceilings honestly:
