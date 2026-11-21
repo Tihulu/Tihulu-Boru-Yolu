@@ -414,3 +414,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 
 - **Changes made:** README "Status" now states what is implemented and tested locally, which live gates have passed (A21, A23) and what stays HOLD; added a "What you can run today" command block; the Codex handoff section points at draft PR #14 and `p1/boru-core-vertical-slice`. Added `TranslationCompletenessTests` so a missing or empty label in any of en/tr/de fails the suite.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **461 tests**. MOCK/STATIC only.
+
+---
+
+### 2026-11-21 05:15 UTC — provider capability/auth matrix (issue #10/#11 phase 1) (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `docs/AI_PROVIDER_CONNECTIONS.md` (capability/auth/billing matrix for OpenAI, Claude, Google/Gemini+Vertex, GLM, Kimi, DeepSeek, NVIDIA, Grok/xAI and Jan; what Boru never does; the secret-free example config), `scripts/check_project.py` manifest extended, README-style cross references, and acceptance row A31.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **461 tests**. STATIC only.
+- **Security implications:** the matrix states explicitly that consumer Google-login inference and third-party Claude subscription login are not offered, that credentials only appear as environment-variable names, and that no provider account is connected by this repository.

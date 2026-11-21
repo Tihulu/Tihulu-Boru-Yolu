@@ -263,6 +263,12 @@ prints bounded recent rejection rows as JSON (category, subject, reason, detail
 kind, timestamp) — no payload, path, content or token. `--audit-dir` must name
 an existing directory.
 
+Provider capability/auth/billing matrix and the secret-free example are in
+`docs/AI_PROVIDER_CONNECTIONS.md` (issue #10/#11 phase 1). It records that sign-in
+identity is not inference authorization, that consumer Google-login inference and
+third-party Claude subscription login are not offered, and that no provider
+account is connected by this repository.
+
 ## Budgets, cooldowns and context bounds (P3 slice)
 
 `boru/budgets.py` enforces ceilings honestly:
