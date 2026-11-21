@@ -531,6 +531,15 @@ exhausted. Measured RAM/VRAM and model unload are HOLD because Jan's documented
 API surface exposes no model lifecycle endpoint (verified 2026-11-21); Boru
 never kills a process or unloads a model it does not own.
 
+End-to-end pipeline: `boru/pipeline.py` runs broker authorization, worker
+acquisition and the disclosure gate as one local flow. When an authenticated
+loopback `BrokerService` endpoint is configured, the authorization step happens
+over that surface (worker id + secret handshake), so the tested path includes
+the identity check; without it, the same flow runs in-process. Every path is
+covered by tests including a real loopback socket, and every denial — wrong
+secret, revoked worker, missing grant, L2 under MINIMUM_NECESSARY, field not
+produced — fails closed before any data is released.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard

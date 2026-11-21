@@ -7,6 +7,8 @@ import unittest
 
 from boru.audit import RejectionLedger
 from boru.consent import ConsentStore
+from boru.broker import Broker, ScopeAllowlist, WorkerIdentity
+from boru.broker_service import BrokerService
 from boru.pipeline import WORKER_ID, DisclosurePipeline
 from boru.workers import WorkerRegistry
 
@@ -128,3 +130,94 @@ class PipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PipelineOverServiceTests(unittest.TestCase):
+    """The same pipeline authorizing through the authenticated loopback surface."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="boru-pipe-svc-")
+        os.chmod(self.root, stat.S_IRWXU)
+        self.worker_dir = os.path.join(self.root, "workers")
+        self.alias = os.path.join(self.root, "demo")
+        os.makedirs(self.worker_dir)
+        os.makedirs(self.alias)
+        os.chmod(self.worker_dir, stat.S_IRWXU)
+        os.chmod(self.alias, stat.S_IRWXU)
+        self.workers = WorkerRegistry(self.worker_dir)
+        self.workers.create(WORKER_ID, (self.alias,))
+        self.secret = self.workers.secret_for(WORKER_ID)
+        self.consent = ConsentStore(thread_safe=True)
+        self.ledger = RejectionLedger()
+        self.broker = Broker(worker=WorkerIdentity(WORKER_ID, scopes=(self.alias,)),
+                             scopes=ScopeAllowlist({self.alias: self.alias}),
+                             consent=self.consent, consent_recipient=WORKER_ID,
+                             worker_registry=self.workers, worker_secret=self.secret,
+                             audit=self.ledger)
+        self.service = BrokerService(self.broker, self.workers, WORKER_ID, self.secret)
+        self.host, self.port = self.service.start()
+        self.pipeline = DisclosurePipeline(worker=self.workers, consent=self.consent,
+                                           ledger=self.ledger,
+                                           service_endpoint=(self.host, self.port, WORKER_ID,
+                                                             self.secret))
+
+    def tearDown(self):
+        self.service.stop()
+        self.ledger.close()
+        self.consent.close()
+        import shutil
+
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def grant(self, task_id):
+        self.consent.grant(grant_id="g-{}".format(task_id), recipient=WORKER_ID,
+                           task_id=task_id, field_name="probe_path_alias", level="L0",
+                           expires_at=time.time() + 60,
+                           nonce="n-{}-probe_path_alias".format(task_id))
+
+    def test_authenticated_request_releases_typed_fields(self):
+        self.grant("t1")
+        decision, payload, reason = self.pipeline.disclose(
+            task_id="t1", operation="probe_path_alias", alias=self.alias,
+            fields=("exists", "type"), recipient="owner")
+        self.assertEqual(("release", ""), (decision, reason))
+        self.assertEqual({"exists": True, "type": "dir"}, payload)
+
+    def test_wrong_secret_is_denied_over_the_socket(self):
+        self.grant("t2")
+        pipeline = DisclosurePipeline(worker=self.workers, consent=self.consent,
+                                      ledger=self.ledger,
+                                      service_endpoint=(self.host, self.port, WORKER_ID, "wrong"))
+        decision, payload, reason = pipeline.disclose(
+            task_id="t2", operation="probe_path_alias", alias=self.alias,
+            fields=("exists",), recipient="owner")
+        self.assertEqual(("deny", "worker_invalid"), (decision, reason))
+        self.assertEqual({}, payload)
+
+    def test_revoked_worker_is_denied_over_the_socket(self):
+        self.grant("t3")
+        self.workers.revoke(WORKER_ID)
+        decision, _, reason = self.pipeline.disclose(
+            task_id="t3", operation="probe_path_alias", alias=self.alias,
+            fields=("exists",), recipient="owner")
+        self.assertEqual(("deny", "worker_invalid"), (decision, reason))
+
+    def test_missing_grant_is_denied_over_the_socket(self):
+        decision, _, reason = self.pipeline.disclose(
+            task_id="t4", operation="probe_path_alias", alias=self.alias,
+            fields=("exists",), recipient="owner")
+        self.assertEqual("deny", decision)
+        self.assertIn(reason, ("grant_invalid", "worker_invalid"))
+
+    def test_l2_is_refused_even_over_the_socket(self):
+        self.grant("t5")
+        decision, _, reason = self.pipeline.disclose(
+            task_id="t5", operation="probe_path_alias", alias=self.alias,
+            fields=("excerpt",), recipient="owner", level="L2")
+        self.assertEqual(("deny", "policy_requires_scoped_approved"), (decision, reason))
+
+    def test_denials_are_recorded(self):
+        self.pipeline.disclose(task_id="t6", operation="host_shell", alias=self.alias,
+                               fields=("exists",), recipient="owner")
+        rows = [(row["category"], row["reason"]) for row in self.ledger.recent(8)]
+        self.assertTrue(any(r[0] == "broker" for r in rows), rows)

@@ -558,3 +558,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Verified against official documentation:** Jan's local API server exposes only the OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints, with model loading managed from the Jan UI. There is **no documented model unload/lifecycle endpoint**.
 - **Decision recorded:** Boru Core therefore does **not** implement a Jan unload adapter (an undocumented endpoint would also risk interrupting an unrelated Jan session). Resource management stays lease bookkeeping: counted logical-agent and large-model leases, refusal when exhausted, release of only Boru-owned leases.
 - **Consequence:** issue #7's "unload only owned idle models" item is closed as *by design HOLD*, blocked on a documented Jan API or an explicit owner-approved manual action. Measured RAM/VRAM stays HOLD for the same reason.
+
+---
+
+### 2026-11-21 12:45 UTC — disclosure pipeline runs over the authenticated surface (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/pipeline.py` now routes broker authorization through an authenticated loopback `BrokerService` when an endpoint is configured (identical flow, in-process otherwise), and `PipelineOverServiceTests` exercise the real socket end to end.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **556 tests**. MOCK/STATIC only.
+- **Security implications:** the identity handshake is part of the tested path; a wrong secret, a revoked worker, a missing grant, L2 under MINIMUM_NECESSARY and a field the operation does not produce all deny before data is released; every denial is recorded in the ledger. Still not a security boundary: host process authentication, OS confinement and independent review remain HOLD.
