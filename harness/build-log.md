@@ -390,3 +390,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** semantic dashboard markup (`<html lang>`, `aria-labelledby` sections, `<caption>`, labelled review form, no JS), an `accept` label for EN/TR/DE, and `DashboardAccessibilityTests`.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **444 tests**. MOCK/STATIC only.
 - **Security implications:** none — presentation only; the review action still requires an explicit `accept: true`.
+
+---
+
+### 2026-11-21 04:00 UTC — Cloud-Shell grant contract (decisions only) added (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/sandbox.py` (`SandboxGrant` bound to grant id/owner/recipient provider+model/task/sandbox id/operation types/resource aliases/field disclosures/expiry/call ceiling/nonce; `SandboxBroker` with the full denial set and a call-ceiling ordering) and `tests/test_sandbox.py`; `docs/SECURITY_MODES.md` records the split.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **455 tests**. MOCK/STATIC only.
+- **Security implications:** denied paths never execute anything and are recorded; host-level Shell is absent from the allowlist; non-traversing resource aliases; the sandbox runtime is not implemented, so P6 remains blocked pending P5 live acceptance and explicit owner consent.

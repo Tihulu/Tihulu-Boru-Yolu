@@ -382,6 +382,21 @@ returns metadata, and raw content never appears.
 The remote half (real recipient, L2 excerpt release, OS isolation) remains HOLD
 pending independent security review.
 
+## Cloud-Shell grant contract (P6 decisions only)
+
+`boru/sandbox.py` implements the authorization half of
+`docs/SECURITY_MODES.md`: `SandboxGrant` binds grant id, owner, recipient
+provider **and model**, task, sandbox id, allowlisted operation types,
+resource aliases, field disclosures, expiry, call ceiling and nonce;
+`SandboxBroker` denies on an invalid, revoked, expired, operation-not-granted,
+resource-not-granted, field-not-granted, wrong-worker-scope, replayed-nonce,
+exhausted or missing-sandbox request, and records each denial in the ledger.
+
+Only the four alias-confined read-only sandbox operations exist; host-level
+Shell is deliberately absent. A decision here authorizes nothing: no process,
+container, mount or network is created, so P6 stays **blocked** until the P5
+broker passes live acceptance and the owner explicitly consents.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard
