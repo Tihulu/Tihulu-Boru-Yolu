@@ -23,7 +23,8 @@ REQUIRED_DOCS = [
     "docs/ADRS/0004-preserve-modes-and-privacy.md", "examples/visual-flow.mmd",
     "docs/ADRS/0005-boru-core-runtime-slice.md", "docs/BORU_CORE.md",
     "docs/JAN_PILOT.md", "docs/AI_PROVIDER_CONNECTIONS.md",
-    "docs/OS_ACCEPTANCE.md",
+    "docs/OS_ACCEPTANCE.md", "docs/SECURITY_REVIEW_REQUEST.md",
+    "docs/OWNER_GATE_GUIDE.md",
 ]
 
 

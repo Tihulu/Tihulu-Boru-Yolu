@@ -566,3 +566,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `boru/pipeline.py` now routes broker authorization through an authenticated loopback `BrokerService` when an endpoint is configured (identical flow, in-process otherwise), and `PipelineOverServiceTests` exercise the real socket end to end.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **556 tests**. MOCK/STATIC only.
 - **Security implications:** the identity handshake is part of the tested path; a wrong secret, a revoked worker, a missing grant, L2 under MINIMUM_NECESSARY and a field the operation does not produce all deny before data is released; every denial is recorded in the ledger. Still not a security boundary: host process authentication, OS confinement and independent review remain HOLD.
+
+---
+
+### 2026-11-21 13:15 UTC — owner gate plan published (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `docs/OWNER_GATE_GUIDE.md` (the five remaining gates in order, each with a PASS definition, the owner action, the agent action and what it is blocked on) and `docs/SECURITY_REVIEW_REQUEST.md` (the Gate 1 review package: scope table, out-of-scope, reproduction commands, findings template, PASS criteria). Manifest extended to require both.
+- **Tests observed:** `scripts/check_project.py` PASS (25 documents); `unittest discover -s tests` **556 tests PASS**. MOCK/STATIC only.
+- **Gate states:** 1 security review HOLD (reviewer needed), 2 provider OAuth HOLD (registration needed), 3 connector pilot HOLD (disposable repository needed), 4 clean-machine matrix HOLD (images needed), 5 license/release HOLD (owner decision).
