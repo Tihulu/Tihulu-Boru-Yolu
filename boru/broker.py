@@ -1,57 +1,76 @@
-"""Boru Core operation authorization (P5 slice): fail-closed scoped decisions.
+"""Boru Core operation authorization (P5).
 
-This layer answers one question: *may this named operation touch this named
-resource for this task, right now?*  It never executes anything and never
-inspects the filesystem beyond the owner-declared scope aliases.
+The broker answers one question: may this authenticated worker, holding this
+consent grant, perform this operation on this declared resource alias for this
+task, now?  Every denial is fail-closed and recorded in the local ledger.
 
-Guarantees (all fail closed and covered by negative tests):
-
-* an operation must be on the owner's allowlist;
-* a resource must be a declared **alias**, never a caller-supplied path;
-* every request must carry a valid worker attestation and a matching consent
-  grant; a missing/expired/revoked/replayed grant denies;
-* a decision is recorded as an authorization receipt with expiry and nonce;
-* responses carry alias names and typed outcomes only — never raw paths, file
-  contents, listings or process data.
-
-An executor, OS isolation and a persistent worker identity store are separate
-P5/P6 work items and remain HOLD.
+Invariants enforced here (with tests in tests/test_broker.py):
+* the worker identity must be authenticated against an owner-created registry
+  when one is configured; an asserted identity (no registry) is an in-process
+  owner decision, never a remote caller's claim;
+* the consent grant must bind the recipient, task, operation, **resource
+  alias**, **field** and **level**, and must be unexpired, unrevoked and
+  unused;
+* the resource alias must be declared in the allowlist, and the alias is a
+  name, never a path;
+* every issued receipt is signed with an authorization key the worker also
+  holds, so a tampered or borrowed receipt cannot be executed;
+* a nonce is consumed once, and anti-replay state is bounded;
+* the audit subject is a bounded, path-free identifier.
 """
 from __future__ import annotations
 
 import math
+import os
+import secrets
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, List, Mapping, Optional, Set, Tuple
+from dataclasses import dataclass
+from typing import Any, List, Mapping, Optional, Sequence, Set, Tuple
 
+from .audit import RejectionLedger, safe_identifier
+from .authorization import AuthorizationReceipt, derive_key, sign
 from .errors import PolicyViolation
 
-#: Operation names Boru Core may authorize. Anything else is refused.
-ALLOWED_OPERATIONS: Tuple[str, ...] = (
+MAX_ALIAS = 64
+MAX_NONCES = 4096
+
+#: The typed local operations a worker may be asked to perform. Anything else
+#: (a shell, a network write, a mutation) is refused before any other check.
+ALLOWED_OPERATIONS: frozenset = frozenset({
+    "probe_path_alias",
     "read_file_alias",
     "list_dir_alias",
-    "probe_path_alias",
     "run_synthetic_command",
-)
-
-#: Bounds for request fields.
-MAX_ALIAS = 64
-MAX_REQUESTER = 128
-MAX_TASK_ID = 128
-MAX_FIELDS = 8
-MAX_NONCE = 64
+})
 
 
-def _bounded(value: Any, limit: int, label: str) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > limit:
-        raise PolicyViolation(label + " must be a bounded non-empty string")
-    return value
+def file_name(value: Any) -> str:
+    """A single-segment file name inside an alias: never a path."""
+    return safe_identifier(value, 64, "file name")
+
+
+def resource_alias(value: Any) -> str:
+    """A resource alias is an opaque owner-declared name, never a path."""
+    return safe_identifier(value, MAX_ALIAS, "resource alias")
+
+
+def valid_resource_path(path: Any) -> bool:
+    """An owner-declared resource path: absolute, normalized, not a symlink."""
+    if not isinstance(path, str) or not path.strip():
+        return False
+    if not os.path.isabs(path):
+        return False
+    if os.path.islink(path):
+        return False
+    normalized = os.path.normpath(path)
+    if normalized != path:
+        return False
+    return ".." not in normalized.split(os.sep)
 
 
 @dataclass(frozen=True)
 class WorkerIdentity:
-    """A local worker attestation. Presence of a token here is not consent."""
+    """A local worker attestation presented with a request."""
 
     worker_id: str
     scopes: Tuple[str, ...] = ()
@@ -59,9 +78,12 @@ class WorkerIdentity:
     def validate(self) -> List[str]:
         errors: List[str] = []
         try:
-            _bounded(self.worker_id, 128, "worker_id")
+            safe_identifier(self.worker_id, 64, "worker_id")
+        except PolicyViolation as exc:
+            errors.append(str(exc))
+        try:
             for scope in self.scopes:
-                _bounded(scope, MAX_ALIAS, "scope")
+                resource_alias(scope)
         except PolicyViolation as exc:
             errors.append(str(exc))
         if len(set(self.scopes)) != len(self.scopes):
@@ -71,7 +93,11 @@ class WorkerIdentity:
 
 @dataclass(frozen=True)
 class ScopeAllowlist:
-    """Owner-declared resource aliases. Aliases map to real paths locally only."""
+    """Owner-declared resource aliases mapped to real host paths.
+
+    The mapping is owner-provided configuration; no model, task payload or
+    adapter can extend it.  A receipt carries the alias, never the path.
+    """
 
     aliases: Mapping[str, str]
 
@@ -80,22 +106,28 @@ class ScopeAllowlist:
         if not isinstance(self.aliases, Mapping) or not self.aliases:
             return ["at least one resource alias is required"]
         for alias, path in self.aliases.items():
-            _bounded(alias, MAX_ALIAS, "alias")
-            if not isinstance(path, str) or not path.strip():
-                errors.append("alias must map to a non-empty path")
+            try:
+                resource_alias(alias)
+            except PolicyViolation as exc:
+                errors.append(str(exc))
                 continue
-            if any(part in ("..",) for part in Path(path).parts):
-                errors.append("alias must not traverse outside its root")
-            if Path(path).is_symlink():
-                errors.append("alias must not be a symlink")
-            if not Path(path).is_absolute():
-                errors.append("alias must be an absolute path")
+            if not valid_resource_path(path):
+                errors.append("alias must map to an absolute, normalized, non-symlinked path")
         return errors
 
-    def permits(self, alias: str) -> bool:
-        if not isinstance(alias, str) or alias not in self.aliases:
+    def permits(self, alias: Any) -> bool:
+        try:
+            return resource_alias(alias) in self.aliases
+        except PolicyViolation:
             return False
-        return _bounded(alias, MAX_ALIAS, "alias") in self.aliases
+
+    def path_for(self, alias: Any) -> str:
+        """Resolve an alias to its real path (never exposed to a caller)."""
+        name = resource_alias(alias)
+        path = self.aliases.get(name)
+        if not path:
+            raise PolicyViolation("resource alias is not declared")
+        return path
 
 
 @dataclass(frozen=True)
@@ -110,145 +142,196 @@ class OperationRequest:
     fields: Tuple[str, ...] = ()
     nonce: str = ""
     grant_id: str = ""
-
-
-@dataclass(frozen=True)
-class AuthorizationReceipt:
-    """A non-forgeable, request-bound decision record."""
-
-    receipt_id: str
-    operation: str
-    resource_alias: str
-    task_id: str
-    worker_id: str
-    grant_id: str
-    issued_at: float
-    expires_at: float
-    nonce: str
-    policy_revision: int
-    decision: str = "allow"
+    target: Optional[str] = None
 
     def validate(self) -> List[str]:
         errors: List[str] = []
-        _bounded(self.receipt_id, 96, "receipt_id")
-        _bounded(self.operation, 64, "operation")
-        if self.operation not in ALLOWED_OPERATIONS:
-            errors.append("unknown authorized operation")
-        _bounded(self.resource_alias, MAX_ALIAS, "resource_alias")
-        _bounded(self.task_id, MAX_TASK_ID, "task_id")
-        _bounded(self.worker_id, 128, "worker_id")
-        _bounded(self.grant_id, 128, "grant_id")
-        _bounded(self.nonce, MAX_NONCE, "nonce")
-        if self.policy_revision != 1:
-            errors.append("unsupported policy revision")
-        if isinstance(self.expires_at, bool) or not isinstance(self.expires_at, (int, float)) \
-                or not math.isfinite(self.expires_at) or self.expires_at <= self.issued_at:
-            errors.append("receipt expiry must follow its issue time")
+        if not isinstance(self.operation, str) or not self.operation.strip() or len(self.operation) > 64:
+            errors.append("operation must be a bounded non-empty string")
+        if not isinstance(self.fields, tuple) or len(self.fields) > 8:
+            errors.append("fields must be a bounded tuple")
+        for name in ("requester", "task_id", "nonce", "grant_id"):
+            try:
+                safe_identifier(getattr(self, name), 128, name)
+            except PolicyViolation as exc:
+                errors.append(str(exc))
+        try:
+            resource_alias(self.resource_alias)
+        except PolicyViolation as exc:
+            errors.append(str(exc))
+        if self.target is not None:
+            try:
+                file_name(self.target)
+            except PolicyViolation as exc:
+                errors.append(str(exc))
+        errors.extend(self.worker.validate())
         return errors
 
 
 class Broker:
-    """Fail-closed authorization decisions for local operations."""
+    """Fail-open never: fail-closed authorization decisions, with receipts."""
 
     POLICY_REVISION = 1
 
-    def __init__(self, *, worker: WorkerIdentity, scopes: ScopeAllowlist, consent,
+    def __init__(self, *, worker: Optional[WorkerIdentity], scopes: ScopeAllowlist, consent,
+                 consent_recipient: Optional[str] = None,
+                 worker_registry=None, worker_secret: Optional[str] = None,
                  receipt_ttl_seconds: float = 60.0, audit=None,
-                 consent_recipient: str = "local-worker", worker_registry=None,
-                 worker_secret: Optional[str] = None) -> None:
-        if receipt_ttl_seconds is None or isinstance(receipt_ttl_seconds, bool) \
-                or not isinstance(receipt_ttl_seconds, (int, float)) \
-                or not 1.0 <= float(receipt_ttl_seconds) <= 3600:
-            raise PolicyViolation("receipt_ttl_seconds must be 1..3600")
-        if worker.validate():
-            raise PolicyViolation("worker identity is invalid")
-        if not worker.scopes:
-            raise PolicyViolation("the broker worker must hold at least one resource scope")
+                 registry=None, authorization_key: Optional[bytes] = None) -> None:
+        if consent is None:
+            raise PolicyViolation("a consent store is required to authorize")
         if scopes.validate():
             raise PolicyViolation("resource allowlist is invalid")
-        if consent is None:
-            raise PolicyViolation("a consent store is required; failing closed without one")
-        self.worker = worker
-        self.scopes = scopes
-        self.consent = consent
+        if receipt_ttl_seconds is None or isinstance(receipt_ttl_seconds, bool) \
+                or not isinstance(receipt_ttl_seconds, (int, float)) \
+                or not math.isfinite(receipt_ttl_seconds) or not 1.0 <= receipt_ttl_seconds <= 3600:
+            raise PolicyViolation("receipt_ttl_seconds must be 1..3600")
+        if consent_recipient is not None:
+            safe_identifier(consent_recipient, 64, "consent recipient")
         self.receipt_ttl_seconds = float(receipt_ttl_seconds)
         self._nonces: Set[str] = set()
-        self.audit = audit
+        self._nonce_order: List[str] = []
+        self.audit = audit if audit is not None else RejectionLedger()
+        self.scopes = scopes
+        self.consent = consent
+        self.registry = registry if registry is not None else worker_registry
         self.consent_recipient = consent_recipient
-        # When a worker registry and secret are supplied, the request must also
-        # present a live (unexpired, unrevoked, constant-time-matched) identity.
-        self._registry = worker_registry
-        self._worker_secret = worker_secret
+        self.worker = worker
+        self.key = self._resolve_key(authorization_key, worker_secret)
+
+    def _resolve_key(self, authorization_key: Optional[bytes],
+                     worker_secret: Optional[str]) -> bytes:
+        """The receipt key: explicit, worker-secret derived, or process-local."""
+        if authorization_key is not None:
+            if not isinstance(authorization_key, (bytes, bytearray)) or len(authorization_key) != 32:
+                raise PolicyViolation("authorization key must be 256 bits")
+            return bytes(authorization_key)
+        if worker_secret is not None:
+            if not isinstance(worker_secret, str) or len(worker_secret) != 64:
+                raise PolicyViolation("a worker secret is required")
+            if self.registry is not None:
+                # The secret must match the registry before it can key receipts.
+                if not self.worker or not self.registry.valid(self.worker.worker_id, worker_secret):
+                    raise PolicyViolation("the worker secret does not match the registry")
+            return derive_key(worker_secret)
+        if self.registry is not None and self.worker is not None:
+            secret = self.registry.secret_for(self.worker.worker_id)
+            if secret:
+                return derive_key(secret)
+        # No registry: an in-process owner decision.  The key is random and
+        # never leaves this process, so receipts stay tamper-proof.
+        return secrets.token_bytes(32)
 
     # -- decisions -----------------------------------------------------------
-    def authorize(self, request: OperationRequest, *, now: Optional[float] = None) -> Tuple[str, Optional[AuthorizationReceipt], str]:
+    def authorize(self, request: OperationRequest, *, now: Optional[float] = None,
+                  level: str = "L0", requested_fields: Sequence[str] = ()) -> Tuple[str, Optional[AuthorizationReceipt], str]:
         """Return ``(decision, receipt_or_none, reason)``."""
-        reason = self._check(request, now=now)
+        reason = self._check(request, now=now, level=level, requested_fields=requested_fields)
         if reason:
-            if self.audit is not None:
-                self.audit.record("broker", request.task_id, reason, request.operation)
+            self.audit.record("broker", self._subject(request), reason, self._detail(request))
             return "deny", None, reason
-        stamp = time.time() if now is None else now
-        receipt = AuthorizationReceipt(
-            receipt_id="br-{}".format(request.nonce or _bounded(request.task_id, MAX_TASK_ID, "task_id")),
-            operation=request.operation,
-            resource_alias=request.resource_alias,
-            task_id=request.task_id,
-            worker_id=request.worker.worker_id,
-            grant_id=request.grant_id,
-            issued_at=stamp,
-            expires_at=stamp + self.receipt_ttl_seconds,
-            nonce=request.nonce,
-            policy_revision=self.POLICY_REVISION,
-        )
-        if receipt.validate():
-            return "deny", None, "receipt_invalid"
+        stamp = time.time() if now is None else float(now)
+        receipt = self._issue(request, stamp, fields=requested_fields)
+        if receipt is None:  # pragma: no cover - defensive
+            return "deny", None, "receipt_unavailable"
         return "allow", receipt, ""
 
-    def _check(self, request: OperationRequest, *, now: Optional[float] = None) -> str:
+    def _check(self, request: OperationRequest, *, now: Optional[float], level: str,
+               requested_fields: Sequence[str]) -> str:
+        alias = request.resource_alias
+        if not isinstance(alias, str) or not alias.strip() or len(alias) > MAX_ALIAS:
+            return "malformed_request"
         try:
-            _bounded(request.operation, 64, "operation")
-            _bounded(request.resource_alias, MAX_ALIAS, "resource_alias")
-            _bounded(request.requester, MAX_REQUESTER, "requester")
-            _bounded(request.task_id, MAX_TASK_ID, "task_id")
-            _bounded(request.nonce, MAX_NONCE, "nonce")
-            _bounded(request.grant_id, 128, "grant_id")
+            resource_alias(alias)
         except PolicyViolation:
+            return "resource_not_declared"
+        if not isinstance(request.operation, str) or not request.operation.strip() \
+                or len(request.operation) > 64:
             return "malformed_request"
         if request.operation not in ALLOWED_OPERATIONS:
             return "operation_not_allowed"
-        if not isinstance(request.fields, tuple) or len(request.fields) > MAX_FIELDS:
+        if not isinstance(request.fields, tuple) or len(request.fields) > 8 \
+                or any(not isinstance(f, str) or not f.strip() or len(f) > 64 for f in request.fields):
             return "fields_invalid"
-        for name in request.fields:
+        for name in ("requester", "task_id", "nonce", "grant_id"):
             try:
-                _bounded(name, 64, "field")
+                safe_identifier(getattr(request, name), 128, name)
             except PolicyViolation:
-                return "fields_invalid"
-        if not self.scopes.permits(request.resource_alias):
-            return "resource_not_declared"
-        # The request must carry a valid worker attestation that holds the
-        # resource scope it wants to touch.
+                return "malformed_request"
+        if request.target is not None:
+            try:
+                file_name(request.target)
+            except PolicyViolation:
+                return "malformed_request"
         if request.worker.validate():
             return "worker_invalid"
-        if request.resource_alias not in request.worker.scopes:
-            return "worker_scope"
-        if self._registry is not None:
-            if not self._registry.valid(request.worker.worker_id, self._worker_secret or ""):
-                self._registry.get(request.worker.worker_id)  # bounded lookup
+        # Identity must be authenticated, not merely asserted.
+        if self.registry is not None:
+            record = self.registry.get(request.worker.worker_id)
+            if record is None or record.revoked or record.validate():
                 return "worker_invalid"
-            record = self._registry.get(request.worker.worker_id)
-            if record is None or record.validate() or record.revoked:
+            secret = self.registry.secret_for(request.worker.worker_id)
+            if not secret or self.key != derive_key(secret):
                 return "worker_invalid"
-            if request.resource_alias not in record.scopes:
-                return "worker_scope"
+            if not self.registry.valid(request.worker.worker_id, secret, now=now):
+                return "worker_invalid"
         if request.nonce in self._nonces:
             return "nonce_replayed"
-        # A consent grant must match recipient-agnostic operation scope.
-        if not self.consent.check(grant_id=request.grant_id, recipient=self.consent_recipient,
-                                  task_id=request.task_id, field_name=request.operation,
-                                  nonce=request.nonce, now=now):
+        if request.resource_alias not in request.worker.scopes:
+            return "worker_scope"
+        if not self.scopes.permits(request.resource_alias):
+            return "resource_not_declared"
+        # Consent binds recipient, task, operation, alias, field and level.
+        # The recipient is the configured consent subject, never a value the
+        # request itself can choose.
+        recipient = self.consent_recipient or request.worker.worker_id
+        try:
+            allowed = self.consent.check(
+                grant_id=request.grant_id, recipient=recipient,
+                task_id=request.task_id, field_name=request.operation,
+                alias=request.resource_alias, level=level, nonce=request.nonce, now=now)
+        except PolicyViolation:
             return "grant_invalid"
-        self._nonces.add(request.nonce)
+        if not allowed:
+            return "grant_invalid"
+        self._remember(request.nonce)
         return ""
 
+    def _issue(self, request: OperationRequest, stamp: float,
+               fields: Sequence[str]) -> Optional[AuthorizationReceipt]:
+        expiry = stamp + self.receipt_ttl_seconds
+        allowed = tuple(fields)
+        tag = sign(self.key, task_id=request.task_id, operation=request.operation,
+                   alias=request.resource_alias, worker_id=request.worker.worker_id,
+                   grant_id=request.grant_id, nonce=request.nonce, expires_at=expiry,
+                   fields=allowed, target=request.target or "")
+        return AuthorizationReceipt(
+            receipt_id="br-{}-{}".format(request.task_id, request.operation),
+            operation=request.operation, resource_alias=request.resource_alias,
+            task_id=request.task_id, worker_id=request.worker.worker_id,
+            grant_id=request.grant_id, issued_at=stamp, expires_at=expiry,
+            nonce=request.nonce, policy_revision=self.POLICY_REVISION,
+            decision="allow", allowed_fields=allowed, target=request.target or "",
+            authentication_tag=tag)
 
+    def _remember(self, nonce: str) -> None:
+        self._nonces.add(nonce)
+        self._nonce_order.append(nonce)
+        if len(self._nonce_order) > MAX_NONCES:
+            drop = self._nonce_order.pop(0)
+            self._nonces.discard(drop)
+
+    @staticmethod
+    def _subject(request: OperationRequest) -> str:
+        try:
+            return safe_identifier(request.task_id, 128, "task_id")
+        except PolicyViolation:
+            return "unidentified_task"
+
+    @staticmethod
+    def _detail(request: OperationRequest) -> str:
+        """A ledger-safe detail kind; a malformed operation is still recorded."""
+        try:
+            return safe_identifier(request.operation, 64, "operation")
+        except PolicyViolation:
+            return "unspecified"

@@ -11,8 +11,8 @@ from boru.errors import PolicyViolation
 
 def store(grant="g1", task="t1", operation="read_file_alias", nonce="n1", ttl=60):
     consent = ConsentStore()
-    consent.grant(grant_id=grant, recipient="local-worker", task_id=task, field_name=operation,
-                  level="L0", expires_at=time.time() + ttl, nonce=nonce)
+    consent.grant(grant_id=grant, recipient="w1", task_id=task, field_name=operation,
+                  alias="demo", level="L0", expires_at=time.time() + ttl, nonce=nonce)
     return consent
 
 

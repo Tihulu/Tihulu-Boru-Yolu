@@ -23,13 +23,40 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from .errors import ConfigurationError
+from .errors import ConfigurationError, PolicyViolation
 
 SCHEMA_VERSION = 1
 DEFAULT_CAP = 4096
 MAX_SUBJECT = 128
 MAX_REASON = 64
 MAX_DETAIL = 64
+
+#: Characters that must never appear in an audit identifier: they would turn a
+#: path, a URL or a credential fragment into a stored string.
+_UNSAFE = ("/", "\\", "..", "\x00", "\n", "\r", "\t", " ", "@", "?", "#", "%", "&", "=")
+
+
+class UnsafeIdentifier(ConfigurationError, PolicyViolation):
+    """An identifier is malformed, oversized or carries unsafe characters.
+
+    It is both a configuration error (the caller supplied bad data) and a
+    policy violation (the value could smuggle a path or a token into a record).
+    """
+
+    kind = "configuration_error"
+
+
+def safe_identifier(value: Any, limit: int = 128, label: str = "identifier") -> str:
+    """A bounded, path-free identifier safe for a local audit record."""
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        raise UnsafeIdentifier(label + " must be a bounded non-empty string")
+    if value.strip() != value:
+        raise UnsafeIdentifier(label + " must be trimmed")
+    for token in _UNSAFE:
+        if token in value:
+            raise UnsafeIdentifier(label + " contains an unsafe character")
+    return value
+
 
 CATEGORIES: Tuple[str, ...] = (
     "policy", "contract", "broker", "disclosure", "connector", "provider",
@@ -104,14 +131,18 @@ class RejectionLedger:
         return candidate
 
     # -- write ---------------------------------------------------------------
-    def record(self, category: str, subject: str, reason: str, detail_kind: str = "none",
+    def record(self, category: str, subject: Any, reason: Any, detail_kind: Any = "none",
                at: Optional[float] = None) -> None:
-        """Append one sanitized rejection entry (append-only)."""
+        """Append one sanitized rejection entry (append-only).
+
+        Identifiers are validated and refused rather than stored as given: a
+        path, a URL, a token or a credential fragment cannot enter the ledger.
+        """
         if category not in CATEGORIES:
             raise ConfigurationError("unknown audit category")
-        _bounded(subject, MAX_SUBJECT, "subject")
-        _bounded(reason, MAX_REASON, "reason")
-        _bounded(detail_kind, MAX_DETAIL, "detail_kind")
+        subject = safe_identifier(subject, 128, "subject")
+        reason = safe_identifier(reason, 64, "reason")
+        detail_kind = safe_identifier(detail_kind, 64, "detail kind")
         if at is None:
             stamp = time.time()
         elif isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at) or at <= 0:

@@ -23,6 +23,8 @@ from .workers import WorkerRegistry
 
 MAX_REQUEST_BYTES = 8 * 1024
 IDLE_TIMEOUT_SECONDS = 30.0
+#: Bounded concurrency: one loopback surface never spawns unbounded threads.
+MAX_CONCURRENT_CONNECTIONS = 4
 
 
 class BrokerService:
@@ -38,6 +40,7 @@ class BrokerService:
         self.registry = registry
         self.worker_id = worker_id
         self._secret = secret
+        self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_CONNECTIONS)
         self._host = host
         self._socket = socket.socket(socket.AF_INET if ":" not in host else socket.AF_INET6,
                                      socket.SOCK_STREAM)
@@ -77,6 +80,19 @@ class BrokerService:
 
     # -- serving -------------------------------------------------------------
     def _handle(self, connection: socket.socket) -> None:
+        if not self._slots.acquire(blocking=False):
+            self._send(connection, {"decision": "deny", "reason": "service_busy"})
+            try:
+                connection.close()
+            except OSError:
+                pass
+            return
+        try:
+            self._serve(connection)
+        finally:
+            self._slots.release()
+
+    def _serve(self, connection: socket.socket) -> None:
         try:
             connection.settimeout(IDLE_TIMEOUT_SECONDS)
             raw = self._read(connection)
@@ -111,6 +127,10 @@ class BrokerService:
         if not isinstance(body, dict):
             return {"decision": "deny", "reason": "malformed_request"}
         try:
+            target = body.get("target")
+            level = body.get("level", "L0")
+            if level not in ("L0", "L1"):
+                return {"decision": "deny", "reason": "policy_requires_scoped_approved"}
             request = OperationRequest(
                 operation=str(body.get("operation", "")),
                 resource_alias=str(body.get("resource_alias", "")),
@@ -120,15 +140,20 @@ class BrokerService:
                 fields=tuple(str(f) for f in body.get("fields", ())),
                 nonce=str(body.get("nonce", "")),
                 grant_id=str(body.get("grant_id", "")),
+                target=str(target) if isinstance(target, str) and target else None,
             )
         except (TypeError, ValueError):
             return {"decision": "deny", "reason": "malformed_request"}
-        decision, receipt, reason = self.broker.authorize(request)
+        decision, receipt, reason = self.broker.authorize(
+            request, level=level, requested_fields=request.fields)
         reply = {"decision": "allow" if decision == "allow" else "deny", "reason": reason}
         if receipt is not None:
             reply["receipt_id"] = receipt.receipt_id
             reply["operation"] = receipt.operation
             reply["expires_at"] = receipt.expires_at
+            # The full signed receipt travels so the worker can verify it
+            # locally; it carries identifiers only, never a path.
+            reply["receipt"] = receipt.to_dict()
         return reply
 
     def _read(self, connection: socket.socket) -> Optional[bytes]:
