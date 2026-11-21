@@ -335,9 +335,16 @@ cannot recurse into it. Exit status is 0 only when every mandatory check passes.
 
 Ownable connection flow: `python3 -m boru connect --provider ...` runs the
 official authorization-code + PKCE flow (system browser, one loopback redirect,
-`state` verification, token exchange) and `python3 -m boru accounts` /
-`disconnect` list and revoke stored handles. Handles are opaque; no token is
-ever printed, logged or written outside the owner-only vault file.
+`state` verification, token exchange), `python3 -m boru accounts --vault-dir …`
+lists stored handles without secrets, and `python3 -m boru disconnect --vault-dir
+… --handle …` revokes one. Handles are opaque; no token is ever printed, logged
+or written outside the owner-only vault file.
+
+Task commands: `demo`, `run --task <file>`, `status --task-id <id>`, `cancel
+--task-id <id>` (a queued or held task is cancelled; a running task returns to
+HOLD because Boru cannot prove a started provider call stopped), `review
+--task-id <id> --accept`, `plan --file <plan.json>`, `queue`, `audit
+--audit-dir <dir> --limit <n>`.
 
 ## Ledger wiring
 

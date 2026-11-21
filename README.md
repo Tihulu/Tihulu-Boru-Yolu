@@ -58,6 +58,8 @@ python3 -m boru demo                          # fixed offline synthetic task -> 
 python3 -m boru --config examples/core.example.json --state-dir local-state run --task task.json
 python3 -m boru --state-dir local-state plan --file plan.json
 python3 -m boru queue                        # tasks awaiting an explicit review
+python3 -m boru review --task-id <id> --accept
+python3 -m boru cancel --task-id <id>        # cancel a queued/held task
 python3 -m boru audit --audit-dir local-state/audit --limit 32
 scripts/install_boru.sh --dry-run             # user-space install/rollback (no sudo, no service)
 python3 scripts/evidence.py                   # sanitized evidence block, exit 0 when mandatory checks pass

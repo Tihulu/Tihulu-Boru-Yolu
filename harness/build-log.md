@@ -492,3 +492,5 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 
 - **Changes made:** removed unused imports across the package (typing names, `tempfile` in the store, `stat`/private helpers in the executor, `field`/`LOCAL_PROVIDERS` in the registry, routing/state/scheduler/cli names, `MAX_MESSAGE_CHARS` in the Jan transport, `ConnectorDenied` in the connector base, `ipaddress` in the cloud transport, `bounded_text` in the auth flow); refreshed stale test counts in README and `docs/ACCEPTANCE.md` (459/225 → 498).
 - **Tests observed:** `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; `unittest discover -s tests` PASS **498 tests**. No behaviour change: import and documentation only.
+
+- **Review pass findings fixed:** README did not document `boru cancel`, and the connection/accounts/disconnect trio was not described in `docs/BORU_CORE.md`. Verified separately: every markdown link resolves, the 25-document manifest is complete, and no dead TODO/FIXME remains in the package (only documented interface stubs). CI run for `9a98ed6` re-verified green after this pass.
