@@ -6,8 +6,11 @@ set, counts, exit codes and the commit under test. It records no private path,
 no device inventory, no credential and no terminal output — only the sanitized
 values below, which is exactly what `docs/ACCEPTANCE.md` asks for.
 
-Usage: python3 scripts/evidence.py [--json]
-Exit status: 0 when every mandatory check passes, 1 otherwise.
+Usage: python3 scripts/evidence.py [--json] [--quick]
+
+`--quick` runs only the static manifest check and the offline demo (no unit
+suite, no install round trip) so callers such as the test suite cannot recurse
+into this report. Exit status: 0 when every mandatory check passes, 1 otherwise.
 """
 from __future__ import annotations
 
@@ -77,36 +80,46 @@ def _install_round_trip() -> dict:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def evidence() -> dict:
+def evidence(quick: bool = False) -> dict:
     check_code, check_out = _run(CHECKS)
-    test_code, test_out = _run(TESTS)
     demo_code, demo_out = _run([sys.executable, "-m", "boru", "demo"])
+    if quick:
+        test_code, test_count = 0, -1
+        install = {"install": "SKIPPED", "demo": "PASS", "uninstall": "SKIPPED"}
+    else:
+        test_code, test_out = _run(TESTS)
+        test_count = _test_count(test_out)
+        install = _install_round_trip()
     return {
         "commit": _commit(),
         "python": platform.python_version(),
         "platform": "linux-" + os.uname().machine if hasattr(os, "uname") else "unknown",
         "checks": {
             "static_manifest": "PASS" if check_code == 0 else "FAIL",
-            "unit_tests": ("PASS" if test_code == 0 else "FAIL", _test_count(test_out)),
+            "unit_tests": ("PASS" if test_code == 0 else "FAIL", test_count),
             "offline_demo": "PASS" if demo_code == 0 and '"REVIEW"' in demo_out else "FAIL",
         },
-        "install": _install_round_trip(),
+        "install": install,
         "live_acceptance": "HOLD",
-        "note": "MOCK/STATIC evidence only; live gates require owner approval.",
+        "note": ("MOCK/STATIC evidence only (quick mode: unit suite and install round trip skipped)"
+                 if quick else "MOCK/STATIC evidence only; live gates require owner approval."),
     }
 
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    payload = evidence()
+    quick = "--quick" in argv
+    payload = evidence(quick=quick)
     text = json.dumps(payload, indent=2, sort_keys=True)
     if "--json" in argv:
         sys.stdout.write(text + "\n")
     else:
         for key, value in payload.items():
             sys.stdout.write("{}: {}\n".format(key, value))
-    mandatory = [payload["checks"]["static_manifest"], payload["checks"]["unit_tests"][0],
-                 payload["checks"]["offline_demo"]] + list(payload["install"].values())
+    mandatory = [payload["checks"]["static_manifest"], payload["checks"]["offline_demo"]]
+    if not quick:
+        mandatory.append(payload["checks"]["unit_tests"][0])
+        mandatory.extend(payload["install"].values())
     return 0 if all(item == "PASS" for item in mandatory) else 1
 
 

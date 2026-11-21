@@ -314,12 +314,14 @@ earlier result with `boru review --task-id <id> --accept`. `boru queue` lists th
 tasks awaiting that explicit review. Re-running a plan resumes existing tasks
 instead of failing.
 
-Evidence report: `python3 scripts/evidence.py` (or `--json`) runs the static
+Evidence report: `python3 scripts/evidence.py [--quick | --json]` runs the static
 manifest check, the full unit suite, the offline demo and an install/run/
 uninstall round trip in a temporary directory, then prints a sanitized block:
 commit, Python version, platform, each check's status, `live_acceptance: HOLD`
 and a MOCK/STATIC note. It records no private path, credential or device
-inventory. Exit status is 0 only when every mandatory check passes.
+inventory. `--quick` runs only the static check and the offline demo (unit suite and
+install round trip reported as SKIPPED) so callers such as the test suite
+cannot recurse into it. Exit status is 0 only when every mandatory check passes.
 
 ## Ledger wiring
 

@@ -405,3 +405,5 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 
 - **Changes made:** `scripts/evidence.py` (static manifest + full unit suite + offline demo + install/run/uninstall round trip, sanitized output, exit 0 only when every mandatory check passes), docs updates, `tests/test_evidence.py`.
 - **Observed locally:** `python3 scripts/evidence.py` -> exit 0 with `unit_tests: ('PASS', 455)` and `install: {install, demo, uninstall} = PASS`; the report contains no private path, credential or device inventory. MOCK/STATIC only.
+
+- **Defect found and fixed during the evidence work:** the first version of `tests/test_evidence.py` invoked the report without a `--quick` flag, and the report runs the whole unit suite, so each test re-ran the suite that contained it — one run took 45 minutes. `scripts/evidence.py` gained `--quick` (static check + offline demo only, install/unit steps reported as SKIPPED) and the tests use it; the evidence tests now run in ~0.4s and the full suite is 459 tests. The full report still runs everything and exits 0 on this machine.

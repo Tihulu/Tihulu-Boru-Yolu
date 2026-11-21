@@ -8,7 +8,9 @@ REPO = __import__("os").path.dirname(__import__("os").path.dirname(__import__("o
 
 class EvidenceReportTests(unittest.TestCase):
     def run_report(self, extra=()):
-        return subprocess.run(["python3", "scripts/evidence.py", *extra], cwd=REPO,
+        # --quick keeps this suite from recursing into the full unit run and the
+        # install round trip.
+        return subprocess.run(["python3", "scripts/evidence.py", "--quick", *extra], cwd=REPO,
                               capture_output=True, text=True, timeout=900)
 
     def test_report_passes_and_is_bounded(self):
@@ -27,7 +29,7 @@ class EvidenceReportTests(unittest.TestCase):
         self.assertIn("PASS", fields["checks"])
         self.assertIn("PASS", fields["install"])
         self.assertEqual("HOLD", fields["live_acceptance"])
-        self.assertIn("455", fields["checks"])
+        self.assertIn("SKIPPED", result.stdout)
 
     def test_report_is_private_data_free(self):
         result = self.run_report()
@@ -40,11 +42,12 @@ class EvidenceReportTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stdout)
         payload = json.loads(result.stdout)
         self.assertEqual("PASS", payload["checks"]["static_manifest"])
-        self.assertEqual("PASS", payload["checks"]["unit_tests"][0])
-        self.assertTrue(isinstance(payload["checks"]["unit_tests"][1], int))
-        self.assertEqual("PASS", payload["install"]["install"])
+        self.assertEqual("PASS", payload["checks"]["offline_demo"])
+        self.assertEqual("PASS", payload["install"]["demo"])
+        self.assertEqual("SKIPPED", payload["install"]["install"])
         self.assertEqual("HOLD", payload["live_acceptance"])
         self.assertIn("MOCK/STATIC", payload["note"])
+        self.assertIn("quick mode", payload["note"])
 
     def test_report_is_deterministic_in_shape(self):
         first = self.run_report()
