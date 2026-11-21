@@ -476,3 +476,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Test fixtures corrected:** the GitLab synthetic grants named a different repository than their requests (the exact mismatch that made the bypass possible); they are now scoped to the repository they request.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **494 tests** (16 new scope tests). MOCK/STATIC only.
 - **Still open, recorded not implemented:** response-level reference validation, workflow-specific authorization, redirect/header review, special encoding for unusual repository names, and token/account identity verification. The connector is not yet a security boundary.
+
+---
+
+### 2026-11-21 08:30 UTC — same-machine HOME isolation test (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `tests/test_home_isolation.py` (install/run/uninstall under a scratch `HOME`, sentinel outside the named paths untouched, `state` 0700, launcher 0755, nothing written outside the named directories) and a note in `docs/OS_ACCEPTANCE.md` that this is not a clean-machine acceptance.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **498 tests**. MOCK/STATIC only.
+- **Honest scope:** this proves the installer touches only the named directories on *this* machine with *this* Python. It cannot prove a fresh-image install, offline behaviour, partial outages or rollback, so M01–M12 remain HOLD.
+- **Behaviour confirmed and documented:** uninstall removes the launcher and the named directories but leaves a possibly user-owned `--bin-dir` itself (empty) in place.

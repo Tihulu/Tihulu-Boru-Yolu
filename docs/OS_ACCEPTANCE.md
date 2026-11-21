@@ -56,8 +56,18 @@ date, OS release, Boru commit, tester and sanitized outcome.
 - Public listeners, reverse proxies, remote or self-hosted CI runners.
 - Automatic release, deployment or background autostart.
 
+## Same-machine isolation test (implemented, runs in the suite)
+
+`tests/test_home_isolation.py` installs, runs and uninstalls Boru Core with
+`HOME` pointed at a scratch directory and asserts that nothing outside the
+named target/state directories is created, modified or deleted (a sentinel
+outside them is untouched, and the scratch HOME contains only the named
+directories). This is **not** a clean-machine acceptance: it runs on this
+machine with this Python, so it cannot prove a fresh-image install, offline
+behaviour, partial outages or rollback on a real host.
+
 ## Status
 
 **HOLD — no clean-machine run has been performed by this repository.** The only
 live evidence so far is A21 and A23 on the owner's development host, recorded in
-`harness/build-log.md`.
+`harness/build-log.md`, plus the same-machine isolation test above.
