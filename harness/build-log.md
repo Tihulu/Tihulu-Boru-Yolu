@@ -457,3 +457,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **469 tests**. MOCK/STATIC only.
 - **Security implications:** denied identities deny before any other check; the service cannot bind a non-loopback address or start without a secret; nothing executes an operation. Host-level process authentication, transport encryption, OS confinement and independent security review remain HOLD, so this is explicitly **not** a security boundary.
 - **Defect fixed while wiring this:** `ConsentStore`'s `thread_safe` flag was passed to sqlite as `check_same_thread=thread_safe`, i.e. inverted — thread-safe mode *enforced* the same-thread rule and crashed under the service. Now `check_same_thread=not thread_safe`, with a guard around every read/write.
+
+---
+
+### 2026-11-21 07:15 UTC — owner-run OAuth connection flow (P7 item) (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/connect.py` (`boru connect` / `accounts` / `disconnect` commands), `OAuthClientConfig` gained an explicit `allow_http_endpoints` opt-in, `OAuthFlow` honours it, and `TokenVault` now **loads** its persisted handles (it previously only wrote them), with the same owner-only and bounded checks.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **478 tests**. MOCK/STATIC only.
+- **Security implications:** the flow stores only an opaque handle, never prints or logs a token, reports `authenticated` with `model_test_passed: false`, and requires a loopback redirect. Registration with a real provider is an owner action; no provider is connected by this repository.
+- **Defects fixed while testing:** (a) `TokenVault` wrote but never read its metadata, so revocation did not survive a new process; (b) `connect` raised during constructor-time validation instead of returning a configuration error; (c) the loopback delivery raced with listener bind in tests, now retried.

@@ -45,6 +45,8 @@ class TokenVault:
     def __init__(self, path: Optional[str] = None) -> None:
         self._handles: Dict[str, TokenHandle] = {}
         self._path = self._resolve(path)
+        if self._path is not None and os.path.exists(self._path):
+            self._load()
 
     def _resolve(self, path: Optional[str]) -> Optional[str]:
         if path is None:
@@ -67,6 +69,38 @@ class TokenVault:
             if file_mode & (stat.S_IRWXG | stat.S_IRWXO):
                 raise ConfigurationError("vault file must not be group or world accessible")
         return candidate
+
+    def _load(self) -> None:
+        """Load existing handles from the owner-only metadata file."""
+        assert self._path is not None
+        if os.path.islink(self._path) or not os.path.isfile(self._path):
+            raise ConfigurationError("vault path must be a regular, non-symlinked file")
+        file_mode = stat.S_IMODE(os.stat(self._path).st_mode)
+        if file_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            raise ConfigurationError("vault file must not be group or world accessible")
+        try:
+            with open(self._path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            raise ConfigurationError("vault file cannot be parsed")
+        if not isinstance(payload, list) or len(payload) > 256:
+            raise ConfigurationError("vault file must contain bounded handle metadata")
+        for entry in payload:
+            if not isinstance(entry, dict):
+                raise ConfigurationError("vault entries must be objects")
+            record = TokenHandle(
+                handle=str(entry.get("handle", "")),
+                provider=str(entry.get("provider", "")),
+                account=str(entry.get("account", "")),
+                scopes=tuple(str(s) for s in entry.get("scopes", ())),
+                expires_at=entry.get("expires_at"),
+                security_level=str(entry.get("security_level", "UNKNOWN")),
+            )
+            if not record.handle.strip() or len(record.handle) > 128:
+                raise ConfigurationError("vault entry handle is invalid")
+            if record.security_level not in ("UNKNOWN", "UNSUPPORTED", "REVOKED", "REFUSED"):
+                raise ConfigurationError("vault entry security level is invalid")
+            self._handles[record.handle] = record
 
     def register(self, handle: str, *, provider: str, account: str, scopes: tuple,
                  expires_at: Optional[float], security_level: str = "UNKNOWN") -> TokenHandle:

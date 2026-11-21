@@ -108,6 +108,28 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--file", required=True, help="path to a plan JSON file")
     queue = sub.add_parser("queue", help="list tasks awaiting an explicit owner review")
     _add_common_shorthands(queue)
+    connect = sub.add_parser("connect",
+                             help="run the owner-approved OAuth/PKCE connection flow for a provider")
+    _add_common_shorthands(connect)
+    connect.add_argument("--provider", required=True, help="provider name, e.g. openai")
+    connect.add_argument("--authorization-endpoint", required=True, help="https authorization endpoint")
+    connect.add_argument("--token-endpoint", required=True, help="https token endpoint")
+    connect.add_argument("--client-id", required=True, help="registered client id")
+    connect.add_argument("--client-secret-env", default=None)
+    connect.add_argument("--redirect-uri", default="http://127.0.0.1:8731/callback")
+    connect.add_argument("--scope", action="append", default=None)
+    connect.add_argument("--vault-dir", required=True,
+                         help="existing owner-only directory for the token vault")
+    connect.add_argument("--timeout", type=float, default=180.0)
+    connect.add_argument("--no-browser", action="store_true")
+    connect.add_argument("--json", action="store_true")
+    accounts = sub.add_parser("accounts", help="list stored token handles (no secrets)")
+    _add_common_shorthands(accounts)
+    accounts.add_argument("--vault-dir", required=True)
+    disconnect = sub.add_parser("disconnect", help="revoke a stored token handle")
+    _add_common_shorthands(disconnect)
+    disconnect.add_argument("--vault-dir", required=True)
+    disconnect.add_argument("--handle", required=True)
     return parser
 
 
@@ -252,6 +274,36 @@ def _queue(args) -> int:
     return EXIT_OK
 
 
+def _connect(args) -> int:
+    """Run the owner-approved OAuth/PKCE flow; state is never an entitlement."""
+    from .connect import connect as run_connect
+
+    return run_connect(args)
+
+
+def _accounts(args) -> int:
+    from .auth.tokens import TokenVault
+
+    vault = TokenVault(args.vault_dir)
+    _emit({"accounts": vault.list(), "identity_is_not_inference": True,
+           "model_test_passed": False, "live_acceptance": "HOLD"}, args.show_text)
+    return EXIT_OK
+
+
+def _disconnect(args) -> int:
+    from .auth.tokens import TokenVault
+
+    vault = TokenVault(args.vault_dir)
+    try:
+        entry = vault.revoke(args.handle)
+    except ConfigurationError as exc:
+        _emit({"error": exc.kind, "detail": str(exc)}, args.show_text)
+        return EXIT_REJECTED
+    _emit({"handle": entry.handle, "security_level": entry.security_level,
+           "live_acceptance": "HOLD"}, args.show_text)
+    return EXIT_OK
+
+
 def _providers(args) -> int:
     config = _load_config(args.config)
     core = _open_core(config, args.state_dir)
@@ -275,6 +327,9 @@ _HANDLERS = {
     "cancel": _cancel,
     "review": _review,
     "providers": _providers,
+    "connect": _connect,
+    "accounts": _accounts,
+    "disconnect": _disconnect,
     "audit": _audit,
     "plan": _plan,
     "queue": _queue,

@@ -75,8 +75,34 @@ assumed. Boru Core therefore records, per account: `SIGNED_IN_IDENTITY_ONLY`,
 `api_key_env` names an environment variable. Its value is read at request time
 by the process only and is never written here.
 
+## Running the connection (owner)
+
+~~~bash
+python3 -m boru connect --provider <name> \
+  --authorization-endpoint https://<provider>/authorize \
+  --token-endpoint https://<provider>/token \
+  --client-id <registered-client-id> \
+  [--client-secret-env <ENV_VAR>] \
+  --redirect-uri http://127.0.0.1:8731/callback \
+  --scope openid [--scope ...] \
+  --vault-dir local-state/vault --timeout 300 [--no-browser]
+python3 -m boru accounts --vault-dir local-state/vault
+python3 -m boru disconnect --vault-dir local-state/vault --handle <handle>
+~~~
+
+The command prints the authorization URL (and opens the system browser unless
+`--no-browser`), captures exactly one loopback redirect, verifies `state`,
+exchanges the code with PKCE and stores **only an opaque handle**. The output
+reports `connection_state: authenticated` with `model_test_passed: false` and
+`identity_is_not_inference: true`: an identity is never an entitlement.
+Registration with the provider is an owner action; this repository connects
+nobody by itself. `TokenVault` persists handle metadata (owner-only, no secret
+values) across restarts.
+
 ## Status
 
-**DESIGNED.** No provider account is connected, no OAuth round trip has been
-performed, and no live inference has occurred for any cloud provider. The local
-Jan pilot (A21) is the only live inference evidence in this repository.
+**DESIGNED / PILOTABLE.** No provider account is connected by this repository
+and no cloud inference has occurred; the local Jan pilot (A21) is the only live
+inference evidence. The connection flow above is implemented and tested against
+a test-owned provider; running it against a real provider is an owner action
+requiring a registered client.

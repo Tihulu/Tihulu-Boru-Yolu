@@ -49,6 +49,9 @@ class OAuthClientConfig:
     scopes: Tuple[str, ...]
     client_secret_env: Optional[str] = None
     allow_insecure_redirect: bool = False
+    #: Owner opt-in for http endpoints. Off by default; needed by tests and by
+    #: pinned local providers only.
+    allow_http_endpoints: bool = False
 
     def __post_init__(self) -> None:
         """Reject malformed client configurations at construction time."""
@@ -72,8 +75,9 @@ class OAuthClientConfig:
             errors.append(str(exc))
         for endpoint in ("authorization_endpoint", "token_endpoint"):
             value = getattr(self, endpoint)
-            if isinstance(value, str) and value and not value.lower().startswith("https://"):
-                errors.append(endpoint + " must be https")
+            if isinstance(value, str) and value and not value.lower().startswith("https://") \
+                    and not self.allow_http_endpoints:
+                errors.append(endpoint + " must be https unless http is explicitly allowed")
         redirect = self.redirect_uri
         if isinstance(redirect, str) and redirect and not self._redirect_is_loopback(redirect) and not self.allow_insecure_redirect:
             errors.append("redirect_uri must be a numeric loopback address")
@@ -123,6 +127,7 @@ class OAuthFlow:
     def __init__(self, config: OAuthClientConfig, vault: Optional[TokenVault] = None) -> None:
         config.assert_valid()
         self.config = config
+        self.allow_http_endpoints = config.allow_http_endpoints
         self.vault = vault or TokenVault()
         self._attempts: Dict[str, AuthorizationAttempt] = {}
 
@@ -243,10 +248,14 @@ class OAuthFlow:
         return handle
 
     def _exchange(self, parsed: urllib.parse.SplitResult, body: bytes) -> Tuple[int, bytes]:
-        if parsed.scheme != "https":
-            raise PolicyViolation("token endpoint must be https")
+        if parsed.scheme not in ("https", "http"):
+            raise PolicyViolation("token endpoint must be https or http")
+        if parsed.scheme == "http" and not self.allow_http_endpoints:
+            raise PolicyViolation("http endpoints are refused unless explicitly allowed")
         deadline = time.monotonic() + 30
-        conn = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=max(deadline - time.monotonic(), 0.05))
+        factory = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        conn = factory(parsed.hostname, port, timeout=max(deadline - time.monotonic(), 0.05))
         try:
             conn.request("POST", parsed.path or "/", body=body, headers={
                 "Content-Type": "application/x-www-form-urlencoded",

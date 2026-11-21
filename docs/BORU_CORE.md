@@ -333,6 +333,12 @@ inventory. `--quick` runs only the static check and the offline demo (unit suite
 install round trip reported as SKIPPED) so callers such as the test suite
 cannot recurse into it. Exit status is 0 only when every mandatory check passes.
 
+Ownable connection flow: `python3 -m boru connect --provider ...` runs the
+official authorization-code + PKCE flow (system browser, one loopback redirect,
+`state` verification, token exchange) and `python3 -m boru accounts` /
+`disconnect` list and revoke stored handles. Handles are opaque; no token is
+ever printed, logged or written outside the owner-only vault file.
+
 ## Ledger wiring
 
 `BoruCore` and `Broker` accept an optional `RejectionLedger` (an in-memory sink

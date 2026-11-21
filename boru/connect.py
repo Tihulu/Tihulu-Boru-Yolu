@@ -1,0 +1,130 @@
+"""Owner-run provider connection flow (P7 slice): browser sign-in, honest state.
+
+`boru connect` runs the official authorization-code + PKCE flow the owner
+configures: it builds the authorization URL, opens the owner's system browser,
+captures exactly one loopback redirect, exchanges the code and stores only an
+opaque token handle. Sign-in state is reported as:
+
+* `configured` — endpoint, models and scopes declared;
+* `authenticated` — an identity exists (token present), which is **not**
+  inference authorization;
+* `model_test_passed` — only after a real authorized model call.
+
+The command never prints a token, never writes one to a log and never claims an
+entitlement. Registration with a provider is an owner action; this repository
+connects nobody by itself.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import webbrowser
+from typing import Any, Dict, Optional, Sequence, Tuple
+
+from .auth import OAuthClientConfig, OAuthFlow
+from .auth.tokens import TokenVault
+from .errors import ConfigurationError, PolicyViolation
+
+CONNECTION_STATES = ("configured", "authenticated", "model_test_passed", "unavailable")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="boru-connect",
+                                     description="Owner-run provider connection (OAuth/PKCE)")
+    parser.add_argument("--provider", required=True, help="provider name, e.g. openai")
+    parser.add_argument("--authorization-endpoint", required=True, help="https authorization endpoint")
+    parser.add_argument("--token-endpoint", required=True, help="https token endpoint")
+    parser.add_argument("--client-id", required=True, help="registered client id")
+    parser.add_argument("--client-secret-env", default=None,
+                        help="environment variable holding the client secret (private clients)")
+    parser.add_argument("--redirect-uri", default="http://127.0.0.1:8731/callback",
+                        help="numeric loopback redirect uri")
+    parser.add_argument("--scope", action="append", default=None,
+                        help="scope(s) to request, e.g. --scope openid --scope email")
+    parser.add_argument("--vault-dir", required=True,
+                        help="existing owner-only directory for the token vault")
+    parser.add_argument("--timeout", type=float, default=180.0, help="authorization wait, seconds")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="print the authorization URL instead of opening a browser")
+    parser.add_argument("--allow-http", action="store_true",
+                        help="owner opt-in for http endpoints (tests or a pinned local provider only)")
+
+    parser.add_argument("--json", action="store_true", help="print a JSON summary")
+    return parser
+
+
+def connect(args: argparse.Namespace) -> int:
+    scopes = tuple(sorted(set(args.scope or ["openid"])))
+    try:
+        config = OAuthClientConfig(
+            provider=args.provider,
+            issuer=args.authorization_endpoint.rsplit("/", 1)[0],
+            authorization_endpoint=args.authorization_endpoint,
+            token_endpoint=args.token_endpoint,
+            client_id=args.client_id,
+            redirect_uri=args.redirect_uri,
+            scopes=scopes,
+            client_secret_env=args.client_secret_env,
+            allow_http_endpoints=getattr(args, "allow_http", False),
+        )
+        config.assert_valid()
+    except (PolicyViolation, ConfigurationError, ValueError) as exc:
+        return _fail(args, "configuration_error", str(exc))
+    vault = TokenVault(args.vault_dir)
+    flow = OAuthFlow(config, vault=vault)
+    url, attempt = flow.start()
+    if args.no_browser:
+        _out(args, {"authorization_url": url, "state_hint": "open this URL in your browser"})
+    else:
+        opened = webbrowser.open(url)
+        if not opened:
+            _out(args, {"authorization_url": url, "note": "browser did not open; open the URL manually"})
+    try:
+        code = flow.serve_redirect(attempt, timeout=args.timeout)
+    except PolicyViolation as exc:
+        return _fail(args, "authorization_failed", str(exc))
+    try:
+        handle = flow.exchange(attempt)
+    except PolicyViolation as exc:
+        return _fail(args, "token_exchange_failed", str(exc))
+    entry = vault.get(handle)
+    _out(args, {
+        "provider": config.provider,
+        "connection_state": vault_connection_state(vault, handle),
+        "handle": entry.handle if entry else handle,
+        "scopes": list(entry.scopes) if entry else list(scopes),
+        "expires_at": entry.expires_at if entry else None,
+        "model_test_passed": False,
+        "identity_is_not_inference": True,
+        "live_acceptance": "HOLD",
+    })
+    return 0
+
+
+def vault_connection_state(vault: TokenVault, handle: str) -> str:
+    entry = vault.get(handle)
+    if entry is None or entry.security_level == "REVOKED":
+        return "unavailable"
+    return "authenticated"
+
+
+def _out(args, payload: Dict[str, Any]) -> None:
+    if getattr(args, "json", False):
+        sys.stdout.write(json.dumps(payload, sort_keys=True, ensure_ascii=True) + "\n")
+    else:
+        for key, value in payload.items():
+            sys.stdout.write("{}: {}\n".format(key, value))
+
+
+def _fail(args, code: str, detail: str) -> int:
+    _out(args, {"error": code, "detail": detail, "live_acceptance": "HOLD"})
+    return 2
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    return connect(build_parser().parse_args(argv))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
