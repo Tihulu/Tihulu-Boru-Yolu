@@ -57,6 +57,17 @@ OPERATION_CAPABILITIES: Dict[str, Capability] = {
 WRITE_OPERATIONS = frozenset(name for name, cap in OPERATION_CAPABILITIES.items() if cap is not Capability.REPO_READ)
 
 
+def _workflow_id(value: Any) -> str:
+    """Bounded workflow identifier used by a grant's ``workflow_ids``."""
+    if not isinstance(value, str) or not value.strip() or len(value) > 256:
+        raise ValueError("workflow id must be a bounded non-empty string")
+    if any(character in value for character in ("?", "#", "\\", " ", "\t", "\n", "%", "@", ":", "&", "=")):
+        raise ValueError("workflow id contains an unsafe character")
+    if value.strip() != value or ".." in value.split("/"):
+        raise ValueError("workflow id must not traverse")
+    return value
+
+
 @dataclass(frozen=True)
 class Grant:
     """One owner-issued capability grant.
@@ -77,6 +88,8 @@ class Grant:
     expires_at: float
     disclosure_recipient: Optional[str] = None
     nonce: str = ""
+    #: Workflow identifiers this grant may dispatch, configure or re-run.
+    workflow_ids: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Reject malformed grants at construction time."""
@@ -113,6 +126,13 @@ class Grant:
         if isinstance(self.issued_at, (int, float)) and isinstance(self.expires_at, (int, float)) \
                 and self.expires_at <= self.issued_at:
             errors.append("expires_at must follow issued_at")
+        for workflow_id in self.workflow_ids:
+            try:
+                _workflow_id(workflow_id)
+            except ValueError:
+                errors.append("workflow_ids must be bounded non-empty names")
+        if len(set(self.workflow_ids)) != len(self.workflow_ids):
+            errors.append("duplicate workflow ids")
         if self.disclosure_recipient is not None and (
             not isinstance(self.disclosure_recipient, str) or len(self.disclosure_recipient) > 128
         ):

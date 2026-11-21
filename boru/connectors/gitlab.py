@@ -118,7 +118,7 @@ class GitLabProvider(RepositoryProvider):
     }
 
     def _path_for(self, operation: str, payload: Mapping[str, Any]) -> str:
-        project = str(payload.get("repository", "")).replace("/", "%2F")
+        project = self._project(payload)
         issue = str(payload.get("issue", ""))
         run_id = str(payload.get("run_id", ""))
         workflow = str(payload.get("workflow", ""))
@@ -149,6 +149,12 @@ class GitLabProvider(RepositoryProvider):
             "create_release": "/api/v4/projects/{}/releases".format(project),
         }
         return paths.get(operation, "")
+
+    @staticmethod
+    def _project(payload) -> str:
+        from .scope import RepositoryRef
+
+        return RepositoryRef.parse(str(payload.get("repository", ""))).percent_encoded()
 
     def _exchange(self, method: str, path: str, body: Mapping[str, Any]) -> Tuple[int, bytes]:
         if self._transport is not None:

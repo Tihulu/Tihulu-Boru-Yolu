@@ -478,9 +478,17 @@ endpoints the connector builds were exercised through the GitHub CLI against
 `.../pulls/{n}/reviews`, `.../branches`, `.../commits/{sha}`,
 `.../actions/workflows` and `/user`. No write, dispatch or secret was used.
 
-Still open (recorded, not implemented): workflow-specific authorization, and a
-typed API for repository names that need special encoding. Token/account identity remains
+Still open (recorded, not implemented): token/account identity verification —
+the connector can read the account endpoint but has not yet bound a call to a
+verified account identity. Token/account identity remains
 unverified, so the connector is not yet a security boundary.
+
+Workflow binding and typed repository encoding (the last two limitations issue
+#15 listed): a grant may declare ``workflow_ids``; dispatching, configuring or
+re-running a workflow outside that list is denied before any request.
+Repositories are parsed by a typed ``RepositoryRef`` (exactly two segments, no
+traversal) and percent-encoded per provider (GitHub's slash form, GitLab's
+``%2F`` form) instead of a naive string replace.
 
 ## Not implemented in this slice (HOLD)
 

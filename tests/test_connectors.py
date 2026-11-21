@@ -147,7 +147,7 @@ class GitHubProviderTests(unittest.TestCase):
         self.provider.call(grant(operations=("get_run",), nonce="n3"), "get_run",
                            {"repository": "owner/repo", "run_id": 42})
         dispatch = grant(operations=("dispatch_workflow",), capabilities=(Capability.ACTIONS_DISPATCH,),
-                         nonce="n4")
+                         nonce="n4", workflow_ids=("ci.yml",))
         self.provider.call(dispatch, "dispatch_workflow", {"repository": "owner/repo", "workflow": "ci.yml"},
                            body={"ref": "main"})
         paths = [event["path"] for event in self.provider.audit()]
@@ -211,8 +211,9 @@ class GitLabProviderTests(unittest.TestCase):
         reader = grant(operations=("get_run",), nonce="gl-3", repository="owner/project")
         self.provider.call(reader, "get_run", {"repository": "owner/project", "run_id": 42})
         dispatch = grant(operations=("dispatch_workflow",), capabilities=(Capability.ACTIONS_DISPATCH,),
-                         nonce="gl-4", repository="owner/project")
-        self.provider.call(dispatch, "dispatch_workflow", {"repository": "owner/project"}, body={"ref": "main"})
+                         nonce="gl-4", repository="owner/project", workflow_ids=("ci.yml",))
+        self.provider.call(dispatch, "dispatch_workflow",
+                           {"repository": "owner/project", "workflow": "ci.yml"}, body={"ref": "main"})
         paths = [event.get("path") for event in self.provider.audit()]
         self.assertIn("/api/v4/projects/owner%2Fproject/pipelines/42", paths)
         self.assertIn("/api/v4/projects/owner%2Fproject/pipeline", paths)

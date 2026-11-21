@@ -145,6 +145,62 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class WorkflowAndEncodingTests(unittest.TestCase):
+    """Workflow binding (issue #15) and typed repository encoding."""
+
+    def setUp(self):
+        self.provider = GitHubProvider()
+        self.requests = []
+        self.provider._transport = lambda method, path, body: self.requests.append(
+            (method, path)) or (200, b'{}')
+
+    def payload(self, **overrides):
+        base = {"repository": "owner/repo", "reference": "main"}
+        base.update(overrides)
+        return base
+
+    def test_undeclared_workflow_is_denied_without_a_request(self):
+        item = grant(operations=("dispatch_workflow",), capabilities=(
+            __import__("boru.connectors.base", fromlist=["Capability"]).Capability.ACTIONS_DISPATCH,),
+            nonce="wf-1")
+        with self.assertRaises(ConnectorDenied) as raised:
+            self.provider.call(item, "dispatch_workflow", self.payload(workflow="ci.yml"),
+                               body={"ref": "main"})
+        self.assertEqual("workflow_not_granted", str(raised.exception))
+        self.assertEqual([], self.requests)
+
+    def test_declared_workflow_is_allowed(self):
+        item = grant(operations=("dispatch_workflow",), capabilities=(
+            __import__("boru.connectors.base", fromlist=["Capability"]).Capability.ACTIONS_DISPATCH,),
+            nonce="wf-2", workflow_ids=("ci.yml",))
+        self.provider.call(item, "dispatch_workflow", self.payload(workflow="ci.yml"),
+                           body={"ref": "main"})
+        self.assertEqual([("POST", "/repos/owner/repo/actions/workflows/ci.yml/dispatches")],
+                         self.requests)
+
+    def test_bad_workflow_ids_in_a_grant_are_refused(self):
+        for bad in (("",), ("ci.yml", "ci.yml"), ("x" * 300,), ("../evil",)):
+            with self.assertRaises(ValueError):
+                grant(operations=("dispatch_workflow",), nonce="wf-3", workflow_ids=bad)
+
+    def test_repository_ref_encoding(self):
+        from boru.connectors.scope import RepositoryRef
+
+        ref = RepositoryRef.parse("owner/repo")
+        self.assertEqual("owner/repo", str(ref))
+        self.assertEqual("owner/repo", ref.encoded())
+        self.assertEqual("owner%2Frepo", ref.percent_encoded())
+        for bad in ("", "owner", "owner/repo/extra", "owner//repo", "../etc", "owner/repo%00",
+                    "owner/repo?x=1", "owner/repo#f"):
+            with self.assertRaises(ConnectorDenied):
+                RepositoryRef.parse(bad)
+
+    def test_typed_encoding_is_used_for_the_path(self):
+        item = grant(operations=("list_issues",), nonce="wf-4")
+        self.provider.call(item, "list_issues", self.payload())
+        self.assertEqual([("GET", "/repos/owner/repo/issues")], self.requests)
+
+
 class _Transport(BaseHTTPRequestHandler):
     """Test-owned endpoint that can answer with a redirect or bad content type."""
 

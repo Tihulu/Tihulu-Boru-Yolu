@@ -502,3 +502,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** both connectors now refuse redirects through a custom redirect handler (301/302/303/307/308 never followed), require a JSON or plain-text content type, bound the response body, and verify a `read_file` response's reference against the requested reference before returning it; `allow_http` is an explicit owner opt-in for pinned loopback test endpoints.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **502 tests** (4 new transport tests against a test-owned loopback endpoint). MOCK/STATIC only.
 - **Defect found while wiring this:** an earlier patch silently overwrote the GitHub provider's content-type check with the redirect fix; the regression test now covers it.
+
+---
+
+### 2026-11-21 10:15 UTC — workflow binding and typed repository encoding (issue #15 final gaps) (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** grants may declare ``workflow_ids``; `dispatch_workflow`, `configure_workflow` and `rerun_workflow` outside that list are denied before any request; a typed ``RepositoryRef`` parses exactly two non-traversing segments and percent-encodes them per provider (GitHub slash form, GitLab ``%2F``) replacing a naive string replace; connector tests updated to declare the workflows they use.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **507 tests** (5 new tests). MOCK/STATIC only.
+- **Defects found and fixed while wiring this:** a stray ``@dataclass`` decorator landed on a helper function and a later fix removed the real one from ``Grant`` (both caught by the suite immediately); the typed encoding was called as a bare name instead of a method in one provider.

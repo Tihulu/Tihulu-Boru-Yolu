@@ -145,7 +145,7 @@ class GitHubProvider(RepositoryProvider):
             raise ConnectorDenied("reference_mismatch")
 
     def _path_for(self, operation: str, payload: Mapping[str, Any]) -> str:
-        repository = str(payload.get("repository", ""))
+        repository = self._repository(payload)
         issue = str(payload.get("issue", ""))
         run_id = str(payload.get("run_id", ""))
         workflow = str(payload.get("workflow", ""))
@@ -180,6 +180,12 @@ class GitHubProvider(RepositoryProvider):
         return paths.get(operation, "")
 
     # -- bounded HTTP --------------------------------------------------------
+    @staticmethod
+    def _repository(payload) -> str:
+        from .scope import RepositoryRef
+
+        return RepositoryRef.parse(str(payload.get("repository", ""))).encoded()
+
     def _exchange(self, operation: str, method: str, path: str, body: Mapping[str, Any]) -> Tuple[int, bytes]:
         if self._transport is not None:
             return self._transport(method, path, body)

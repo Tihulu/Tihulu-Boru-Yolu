@@ -16,6 +16,7 @@ must be explicit.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
 from ..errors import ConnectorDenied
@@ -63,6 +64,39 @@ REPO_SCOPED = {
 
 #: Operations that are account-wide and need a separate account-scoped design.
 ACCOUNT_SCOPED = {"list_repositories"}
+
+
+@dataclass(frozen=True)
+class RepositoryRef:
+    """Typed repository name: exactly two encoded segments, no traversal."""
+
+    owner: str
+    name: str
+
+    @classmethod
+    def parse(cls, value: str) -> "RepositoryRef":
+        slot = _slot(value, "repository", 256, allow_slash=True)
+        if slot.count("/") != 1:
+            raise ConnectorDenied("unsafe_repository")
+        owner, name = slot.split("/", 1)
+        return cls(owner=owner, name=name)
+
+    def segments(self) -> Tuple[str, str]:
+        """Percent-encode each segment for the official path (issue #15 gap)."""
+        from urllib.parse import quote
+
+        return quote(self.owner, safe=""), quote(self.name, safe="")
+
+    def encoded(self) -> str:
+        """Slash-separated form, e.g. GitHub's ``/repos/{owner}/{repo}``."""
+        return "{}/{}".format(*self.segments())
+
+    def percent_encoded(self) -> str:
+        """``%2F``-separated form, e.g. GitLab's project path."""
+        return "%2F".join(self.segments())
+
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return "{}/{}".format(self.owner, self.name)
 
 
 def repository_matches(requested: str, granted: str) -> bool:
@@ -131,7 +165,12 @@ def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method
             raise ConnectorDenied("unsafe_run_id")
     workflow = payload.get("workflow")
     if workflow is not None:
-        _slot(workflow, "workflow", 256, allow_slash=True)
+        workflow = _slot(workflow, "workflow", 256, allow_slash=True)
+        allowed_workflows = getattr(grant, "workflow_ids", ()) or ()
+        if allowed_workflows and workflow not in allowed_workflows:
+            raise ConnectorDenied("workflow_not_granted")
+        if not allowed_workflows:
+            raise ConnectorDenied("workflow_not_granted")
     sha = payload.get("sha")
     if sha is not None:
         _slot(sha, "sha", 64)
