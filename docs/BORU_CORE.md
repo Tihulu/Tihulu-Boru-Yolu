@@ -363,6 +363,20 @@ Still **not** implemented and requiring independent security review: host-level
 authentication of the process presenting an identity, OS confinement, a
 persistent live socket, and revocation of already-running work.
 
+## End-to-end local pipeline (P5 slice)
+
+`boru/pipeline.py` runs the local half of the Privacy Bridge in one call:
+broker authorization (worker identity + consent grant), executor acquisition
+(typed fields only, alias-confined, read-only), disclosure decision, and a
+ledger row per step. Denials fail closed: a missing/expired/wrong-operation
+grant, a revoked worker, L2 under `MINIMUM_NECESSARY`, and any field the
+operation does not produce all deny before any data is released. A success
+returns typed fields only — a directory listing returns a count, a file read
+returns metadata, and raw content never appears.
+
+The remote half (real recipient, L2 excerpt release, OS isolation) remains HOLD
+pending independent security review.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard

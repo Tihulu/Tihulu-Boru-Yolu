@@ -374,3 +374,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `boru/workers.py` (`WorkerRegistry`, `WorkerRecord` — owner-created identities, bounded lifetimes, 0600 secret files, constant-time validation, revocation, persistence) and `tests/test_workers.py`.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **422 tests**. MOCK/STATIC only.
 - **Security implications:** secrets never leave the owner-only file; revoked or expired identities never authorize; no API returns or logs a secret; the identity record is explicitly not a security boundary — host authentication, OS confinement and an independent security review remain HOLD.
+
+---
+
+### 2026-11-21 02:45 UTC — end-to-end local disclosure pipeline (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/pipeline.py` (worker + broker + executor + gate + ledger in one local, fail-closed flow), L0/L1 field mapping aligned with `boru/executor.py`'s typed fields, and `tests/test_pipeline.py`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **432 tests**. MOCK/STATIC only.
+- **Security implications:** every denial path (missing/expired/wrong-operation grant, revoked worker, L2 under MINIMUM_NECESSARY, field not produced) fails closed *before* data is released; successes return typed fields only; raw content, file names, paths and listings are never produced; each step is recorded in the ledger. No cloud call is made and no live boundary is claimed.

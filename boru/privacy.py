@@ -27,9 +27,15 @@ from .policy import DISCLOSURE_LEVELS
 from .types import FORBIDDEN_RESULT_KEYS
 
 #: Level definitions: what each level may carry.
+#: Level allowlists, matching docs/PRIVACY_BRIDGE.md: L0 is boolean/status/count,
+#: L1 is narrowly required non-sensitive detail, L2 is a protected excerpt.
+#: The typed fields produced by boru.executor are mapped onto these levels:
+#: booleans and counts stay L0, bounded metadata (size, line count) is L1.
 LEVEL_FIELDS: Dict[str, Tuple[str, ...]] = {
-    "L0": ("status", "count", "passed", "failed", "state", "error_category"),
-    "L1": ("dependency_name", "package_name", "operation_alias", "model_alias", "provider_alias"),
+    "L0": ("status", "count", "passed", "failed", "state", "error_category",
+           "exists", "entry_count", "type"),
+    "L1": ("dependency_name", "package_name", "operation_alias", "model_alias", "provider_alias",
+           "size", "line_count"),
     "L2": ("excerpt",),
 }
 

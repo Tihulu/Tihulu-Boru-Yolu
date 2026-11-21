@@ -153,7 +153,8 @@ class Broker:
     POLICY_REVISION = 1
 
     def __init__(self, *, worker: WorkerIdentity, scopes: ScopeAllowlist, consent,
-                 receipt_ttl_seconds: float = 60.0, audit=None) -> None:
+                 receipt_ttl_seconds: float = 60.0, audit=None,
+                 consent_recipient: str = "local-worker") -> None:
         if receipt_ttl_seconds is None or isinstance(receipt_ttl_seconds, bool) \
                 or not isinstance(receipt_ttl_seconds, (int, float)) \
                 or not 1.0 <= float(receipt_ttl_seconds) <= 3600:
@@ -172,6 +173,7 @@ class Broker:
         self.receipt_ttl_seconds = float(receipt_ttl_seconds)
         self._nonces: Set[str] = set()
         self.audit = audit
+        self.consent_recipient = consent_recipient
 
     # -- decisions -----------------------------------------------------------
     def authorize(self, request: OperationRequest, *, now: Optional[float] = None) -> Tuple[str, Optional[AuthorizationReceipt], str]:
@@ -228,7 +230,7 @@ class Broker:
         if request.nonce in self._nonces:
             return "nonce_replayed"
         # A consent grant must match recipient-agnostic operation scope.
-        if not self.consent.check(grant_id=request.grant_id, recipient="local-worker",
+        if not self.consent.check(grant_id=request.grant_id, recipient=self.consent_recipient,
                                   task_id=request.task_id, field_name=request.operation,
                                   nonce=request.nonce, now=now):
             return "grant_invalid"

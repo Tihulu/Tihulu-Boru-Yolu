@@ -27,7 +27,7 @@
 | A12 | Cloud Shell opt-in | Sandbox + live scoped grant required | HOLD |
 | A13 | Cloud Shell revocation | Stops pending jobs and prohibits new ones | HOLD |
 | A14 | Privacy Bridge | Typed minimal disclosure; no raw stdout | STATIC PASS (MOCK): gate + broker + bounded worker refuse content/listings/raw fields; live disclosure path HOLD |
-| A15 | Protected extra data | Exact recipient/field approval before disclosure | HOLD |
+| A15 | Protected extra data | Exact recipient/field approval before disclosure | STATIC PASS (MOCK): L2 refused under MINIMUM_NECESSARY, field-level denial, recipient-bound consent; live HOLD |
 | A16 | Adversarial inputs | Prompt-injection, replay, schema overflow denied | STATIC PASS (MOCK): policy axes, grant replay/expiry/revocation, malformed contracts, private-field refusal, off-trajectory paths not introduced |
 | A17 | Resource lifecycle | Owned models only, cancel/unload no leaks | STATIC PASS (MOCK): leases are counted and only Boru-owned leases are released; live OS measurements HOLD |
 | A18 | Up to 6 logical agents | Resource limits, evidence per child | HOLD |
@@ -39,7 +39,7 @@
 | A23 | Optional OpenCode agent adapter | Real child invocation without any TIHULU-AUTO config or agent; disabling adapter is non-disruptive | LIVE PASS for the child-session evidence (official CLI, disposable directory, sessions deleted); adapter live integration HOLD pending owner-authorized auth material |
 | A24 | Optimization policy isolation | AUTO/ECONOMY/BALANCED/PERFORMANCE/MANUAL never change Shell, disclosure or inference rights | HOLD |
 | A25 | Local-only under provider failure | LOCAL_ONLY blocks remote inference and fallback on 429, timeout and missing model | HOLD |
-| A26 | Privacy Bridge failure | No raw stdout, private source or unfiltered output leaves local boundary on success/failure | HOLD |
+| A26 | Privacy Bridge failure | No raw stdout, private source or unfiltered output leaves local boundary on success/failure | STATIC PASS (MOCK): local pipeline denies on every failure path and returns typed fields only; live boundary HOLD |
 | A27 | Cloud Shell grant isolation | Explicit, scoped, revocable, sandbox-only grants cannot become host Shell | HOLD |
 | A28 | Data disclosure and model fallback | New provider recipient requires matching disclosure consent; no silent additional data | HOLD |
 | A29 | Economy/performance and six agents | Measured token budgets, bounded concurrency and memory leases without extra privilege | HOLD |
