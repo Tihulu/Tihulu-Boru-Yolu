@@ -26,6 +26,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "audit": {"en": "Recent rejections", "tr": "Son reddiyeler", "de": "Letzte Ablehnungen"},
     "hold": {"en": "HOLD", "tr": "BEKLEMEDE", "de": "ANGEHALTEN"},
     "review": {"en": "Review", "tr": "İnceleme", "de": "Überprüfung"},
+    "axis_routing": {"en": "Optimization (routing)", "tr": "Optimizasyon (yönlendirme)",
+                     "de": "Optimierung (Routing)"},
+    "axis_inference": {"en": "Inference scope", "tr": "Çıkarım kapsamı", "de": "Inferenz-Umfang"},
+    "axis_execution": {"en": "Execution profile", "tr": "Yürütme profili", "de": "Ausführungsprofil"},
+    "axis_disclosure": {"en": "Disclosure policy", "tr": "Açıklama politikası",
+                        "de": "Offenlegungsrichtlinie"},
     "accept": {"en": "Accept", "tr": "Kabul et", "de": "Annehmen"},
 }
 

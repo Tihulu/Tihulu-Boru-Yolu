@@ -99,6 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--accept", action="store_true", help="accept; omit to reject")
     providers = sub.add_parser("providers", help="list configured providers and models (no discovery calls)")
     _add_common_shorthands(providers)
+    doctor = sub.add_parser("doctor", help="local self-check readiness report (no network, no host state)")
+    _add_common_shorthands(doctor)
     audit = sub.add_parser("audit", help="show recent rejection rows from the local ledger")
     _add_common_shorthands(audit)
     audit.add_argument("--limit", default="32", help="number of rows (1..1024)")
@@ -170,6 +172,17 @@ def _review(args) -> int:
     with _open_core(_load_config(args.config), args.state_dir) as core:
         _emit({"task_id": args.task_id, "state": core.review(args.task_id, accept=args.accept)}, args.show_text)
         return EXIT_OK
+
+
+def _doctor(args) -> int:
+    """Print a sanitized readiness report for an acceptance run."""
+    from .doctor import render, run_checks
+
+    state_dir = args.state_dir if args.state_dir else "local-state"
+    payload = run_checks(state_dir, include_tests=True)
+    _emit({"doctor": payload}, args.show_text)
+    sys.stdout.write(render(payload) + "\n")
+    return EXIT_OK if payload["overall"] == "ok" else EXIT_REJECTED
 
 
 def _audit(args) -> int:
@@ -327,6 +340,7 @@ _HANDLERS = {
     "cancel": _cancel,
     "review": _review,
     "providers": _providers,
+    "doctor": _doctor,
     "connect": _connect,
     "accounts": _accounts,
     "disconnect": _disconnect,

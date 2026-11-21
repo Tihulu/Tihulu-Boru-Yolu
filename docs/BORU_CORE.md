@@ -344,7 +344,7 @@ Task commands: `demo`, `run --task <file>`, `status --task-id <id>`, `cancel
 --task-id <id>` (a queued or held task is cancelled; a running task returns to
 HOLD because Boru cannot prove a started provider call stopped), `review
 --task-id <id> --accept`, `plan --file <plan.json>`, `queue`, `audit
---audit-dir <dir> --limit <n>`.
+--audit-dir <dir> --limit <n>`, and `doctor --state-dir <dir>`.
 
 ## Ledger wiring
 
@@ -369,6 +369,10 @@ The dashboard page is semantic and keyboard-only: `<html lang>` for the chosen
 language, `aria-labelledby` sections, a `<caption>` on the status table, a
 labelled review form with a submit button and no JavaScript (tests assert the
 landmarks, heading order and labels).
+
+The dashboard renders the four policy axes as **separate labelled rows**
+(optimization / inference / execution / disclosure) in a description list, so a
+routing preset can never be mistaken for a permission.
 
 Dashboard routes: `GET /` (bounded HTML status with a recent-rejections
 section), `GET /status`, `GET /task/<id>`, `GET /queue` (tasks awaiting the
@@ -512,6 +516,13 @@ through the official connector and never opens a listener. Only owner-declared
 event types are accepted (an empty allowlist accepts nothing), each event id is
 processed once with a bounded restart-safe seen-set, and unknown or malformed
 events are refused rather than silently skipped into work.
+
+Readiness self-check: `python3 -m boru doctor [--state-dir <dir>]` reports the
+Python version (3.12+ required), sqlite usability, an ephemeral loopback bind,
+state-directory permissions and the repository test suite, then prints
+`live_acceptance: HOLD` — it never reads Jan/OpenCode configuration, opens a
+public listener or contacts a network service. It is a readiness report, not a
+security check and not an acceptance substitute.
 
 ## Not implemented in this slice (HOLD)
 

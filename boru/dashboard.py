@@ -21,6 +21,25 @@ from .errors import BoruError, StoreError
 from .i18n import translate, summary_labels
 
 
+AXIS_KEYS = (
+    ("optimization_mode", "axis_routing"),
+    ("inference_scope", "axis_inference"),
+    ("execution_profile", "axis_execution"),
+    ("disclosure_policy", "axis_disclosure"),
+)
+
+
+def _axis_rows(payload: Dict[str, Any], localized: Dict[str, str]) -> str:
+    """Render the four policy axes as separate, labelled rows."""
+    policy = payload.get("policy") or {}
+    rows = []
+    for key, label in AXIS_KEYS:
+        value = str(policy.get(key, "UNKNOWN"))
+        rows.append("<dt>{}</dt><dd>{}</dd>".format(html.escape(localized.get(label, label)),
+                                                   html.escape(value)))
+    return "".join(rows)
+
+
 def core_rows(core, state: str) -> List[Dict[str, Any]]:
     return [row for row in core.store.by_state((state,)) if row["state"] == state]
 
@@ -75,6 +94,7 @@ class _Handler(BaseHTTPRequestHandler):
         localized = summary_labels(language)
         payload_json = html.escape(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True))
         audit_rows = self.audit.recent(8) if self.audit is not None else []
+        axes = _axis_rows(payload, localized)
         audit_line = "".join(
             "<li>{} / {}</li>".format(html.escape(str(row.get("category"))), html.escape(str(row.get("reason"))))
             for row in audit_rows
@@ -94,6 +114,9 @@ class _Handler(BaseHTTPRequestHandler):
             "<h2 id=\"policy-heading\">{policy}</h2>"
             "<table><caption>{policy}</caption><tbody>{rows}</tbody></table>"
             "</section>"
+            "<section aria-labelledby=\"axes-heading\">"
+            "<h2 id=\"axes-heading\">{axes_title}</h2><dl>{axes}</dl>"
+            "</section>"
             "<section aria-labelledby=\"tasks-heading\">"
             "<h2 id=\"tasks-heading\">{tasks}</h2><pre>{payload}</pre>"
             "</section>"
@@ -108,8 +131,9 @@ class _Handler(BaseHTTPRequestHandler):
             "</form>"
             "</body></html>"
         ).format(lang=html.escape(language), title=html.escape(translate(title, language)),
-                 policy=html.escape(localized["policy"]), rows=rows,
+                 policy=html.escape(localized["policy"]), rows=rows, axes=axes,
                  tasks=html.escape(localized["tasks"]), payload=payload_json,
+                 axes_title=html.escape(localized["policy"]),
                  audit_title=html.escape(localized["audit"]),
                  audit=audit_line or "<li>no rejections recorded</li>",
                  review=html.escape(localized["review"]),

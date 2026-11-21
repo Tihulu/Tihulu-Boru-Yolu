@@ -12,6 +12,15 @@ date, OS release, Boru commit, tester and sanitized outcome.
 - Disposable machines or VMs only. **Never** run the first install on a machine
   that holds live Jan/OpenCode state.
 
+## First command on every image
+
+~~~bash
+python3 -m boru doctor --state-dir local-state
+~~~
+
+It must print `overall: ok` and `live_acceptance: HOLD` before the rest of the
+matrix is worth running; a `fail` row names exactly what to fix.
+
 ## Pre-flight (owner)
 
 1. Confirm Jan and OpenCode versions, loaded models and active sessions

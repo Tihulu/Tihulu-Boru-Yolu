@@ -302,3 +302,56 @@ class DashboardAccessibilityTests(DashboardTests):
         status, body = self.page()
         self.assertEqual(200, status)
         self.assertNotIn("<script", body)
+
+
+class PolicyPanelTests(DashboardTests):
+    """The four policy axes are shown separately and labelled (P9)."""
+
+    def setUp(self):
+        super().setUp()
+        self.dashboard = BoruDashboard(self.engine)
+        self.host, self.port = self.dashboard.start()
+
+    def tearDown(self):
+        self.dashboard.stop()
+        self.engine.close()
+
+    def page(self, path="/"):
+        import urllib.request
+
+        with urllib.request.urlopen("http://127.0.0.1:{}{}".format(self.port, path),
+                                    timeout=5) as response:
+            return response.status, response.read().decode("utf-8")
+
+    def test_four_axes_are_separate_and_labelled(self):
+        status, body = self.page()
+        self.assertEqual(200, status)
+        self.assertIn('aria-labelledby="axes-heading"', body)
+        for label in ("Optimization (routing)", "Inference scope", "Execution profile",
+                      "Disclosure policy"):
+            self.assertIn(label, body, label)
+        for value in ("AUTO", "LOCAL_ONLY", "LOCAL_ISOLATED", "MINIMUM_NECESSARY"):
+            self.assertIn(value, body, value)
+
+    def test_axes_are_localized(self):
+        status, body = self.page("/?lang=tr")
+        self.assertEqual(200, status)
+        self.assertIn("Optimizasyon (yönlendirme)", body)
+        self.assertIn("Çıkarım kapsamı", body)
+        self.assertIn("Yürütme profili", body)
+        self.assertIn("Açıklama politikası", body)
+
+    def test_axes_use_a_description_list(self):
+        status, body = self.page()
+        self.assertEqual(200, status)
+        self.assertIn("<dl>", body)
+        self.assertIn("<dt>", body)
+        self.assertIn("<dd>", body)
+
+    def test_unknown_policy_is_not_invented(self):
+        status, payload = self.get("/status")
+        self.assertEqual(200, status)
+        self.assertEqual(
+            {"optimization_mode": "AUTO", "inference_scope": "LOCAL_ONLY",
+             "execution_profile": "LOCAL_ISOLATED", "disclosure_policy": "MINIMUM_NECESSARY"},
+            payload["policy"])
