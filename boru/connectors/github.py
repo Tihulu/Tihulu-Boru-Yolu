@@ -22,6 +22,13 @@ from .scope import check_call
 API_BASE = "https://api.github.com"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse any redirect: a connector call must never be silently followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        raise ConnectorDenied("redirects_not_followed")
+
+
 class GitHubProvider(RepositoryProvider):
     """Official GitHub API connector with grant-bound typed operations."""
 
@@ -29,6 +36,8 @@ class GitHubProvider(RepositoryProvider):
 
     def __init__(self, *, token_env: Optional[str] = None, base_url: str = API_BASE,
                  transport=None, allow_http: bool = False, audit=None) -> None:
+        # allow_http is an owner opt-in for pinned loopback test endpoints only.
+        self.allow_http_endpoints = allow_http
         if token_env is not None and (not isinstance(token_env, str) or not token_env.strip() or len(token_env) > 64):
             raise PolicyViolation("token_env must be a bounded environment variable name")
         if not isinstance(base_url, str) or not base_url.strip() or len(base_url) > 512:
@@ -104,6 +113,7 @@ class GitHubProvider(RepositoryProvider):
         if method is None:
             method = self._MUTATING.get(operation, "GET")
         status, raw = self._exchange(operation, method, path, body or {})
+        self._verify_response(operation, payload or {}, raw)
         self._calls[grant.grant_id] = self._calls.get(grant.grant_id, 0) + 1
         event_reason = "ok" if status < 300 else "http_" + str(status)
         self._audit.append({"at": int(time.time()), "grant": grant.grant_id, "operation": operation,
@@ -116,6 +126,24 @@ class GitHubProvider(RepositoryProvider):
             raise ConnectorDenied("invalid_response")
 
     # -- request paths (official endpoints only) -----------------------------
+    @staticmethod
+    def _verify_response(operation: str, payload: Mapping[str, Any], raw: bytes) -> None:
+        """Verify response-level facts where the official API exposes them."""
+        if operation != "read_file":
+            return
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ConnectorDenied("invalid_response")
+        if not isinstance(data, dict):
+            raise ConnectorDenied("invalid_response")
+        reference = payload.get("reference")
+        if reference is None:
+            return
+        ref_found = data.get("ref") or data.get("sha")
+        if ref_found is not None and str(ref_found) != str(reference):
+            raise ConnectorDenied("reference_mismatch")
+
     def _path_for(self, operation: str, payload: Mapping[str, Any]) -> str:
         repository = str(payload.get("repository", ""))
         issue = str(payload.get("issue", ""))
@@ -155,7 +183,7 @@ class GitHubProvider(RepositoryProvider):
     def _exchange(self, operation: str, method: str, path: str, body: Mapping[str, Any]) -> Tuple[int, bytes]:
         if self._transport is not None:
             return self._transport(method, path, body)
-        if not self.base_url.lower().startswith("https://"):
+        if not self.base_url.lower().startswith("https://") and not self.allow_http_endpoints:
             raise ConnectorDenied("insecure_endpoint")
         headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
                    "User-Agent": "tihulu-boru-core"}
@@ -166,8 +194,12 @@ class GitHubProvider(RepositoryProvider):
                                          data=json.dumps(body).encode("utf-8") if body else None,
                                          headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.status, response.read()
+            opener = urllib.request.build_opener(_NoRedirect)
+            with opener.open(request, timeout=30) as response:
+                content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
+                if content_type and content_type not in ("application/json", "text/plain"):
+                    raise ConnectorDenied("unexpected_content_type")
+                return response.status, response.read(512 * 1024)
         except urllib.error.HTTPError as error:
             body_bytes = error.read() if hasattr(error, "read") else b""
             return error.code, body_bytes

@@ -21,6 +21,13 @@ API_BASE = "https://gitlab.com"
 MAX_PAGE = 100
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse any redirect: a connector call must never be silently followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        raise ConnectorDenied("redirects_not_followed")
+
+
 class GitLabProvider(RepositoryProvider):
     """Official GitLab API v4 connector with grant-bound typed operations."""
 
@@ -28,6 +35,8 @@ class GitLabProvider(RepositoryProvider):
 
     def __init__(self, *, base_url: str = API_BASE, token_env: Optional[str] = None,
                  transport=None, allow_http: bool = False, audit=None) -> None:
+        # allow_http is an owner opt-in for pinned loopback test endpoints only.
+        self.allow_http_endpoints = allow_http
         if token_env is not None and (not isinstance(token_env, str) or not token_env.strip()
                                       or len(token_env) > 64):
             raise PolicyViolation("token_env must be a bounded environment variable name")
@@ -144,7 +153,7 @@ class GitLabProvider(RepositoryProvider):
     def _exchange(self, method: str, path: str, body: Mapping[str, Any]) -> Tuple[int, bytes]:
         if self._transport is not None:
             return self._transport(method, path, body)
-        if not self.base_url.lower().startswith("https://"):
+        if not self.base_url.lower().startswith("https://") and not self.allow_http_endpoints:
             raise ConnectorDenied("insecure_endpoint")
         headers = {"Accept": "application/json", "Content-Type": "application/json",
                    "User-Agent": "tihulu-boru-core"}
@@ -155,8 +164,15 @@ class GitLabProvider(RepositoryProvider):
                                          data=json.dumps(body).encode("utf-8") if body else None,
                                          headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.status, response.read()
+            opener = urllib.request.build_opener(_NoRedirect)
+            with opener.open(request, timeout=30) as response:
+                content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
+                if content_type and content_type not in ("application/json", "text/plain"):
+                    raise ConnectorDenied("unexpected_content_type")
+                raw = response.read(512 * 1024)
+                return response.status, raw
+        except ConnectorDenied:
+            raise
         except urllib.error.HTTPError as error:
             try:
                 body_bytes = error.read()

@@ -494,3 +494,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Tests observed:** `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; `unittest discover -s tests` PASS **498 tests**. No behaviour change: import and documentation only.
 
 - **Review pass findings fixed:** README did not document `boru cancel`, and the connection/accounts/disconnect trio was not described in `docs/BORU_CORE.md`. Verified separately: every markdown link resolves, the 25-document manifest is complete, and no dead TODO/FIXME remains in the package (only documented interface stubs). CI run for `9a98ed6` re-verified green after this pass.
+
+---
+
+### 2026-11-21 09:30 UTC — connector transport hardening (issue #15 remaining gaps) (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** both connectors now refuse redirects through a custom redirect handler (301/302/303/307/308 never followed), require a JSON or plain-text content type, bound the response body, and verify a `read_file` response's reference against the requested reference before returning it; `allow_http` is an explicit owner opt-in for pinned loopback test endpoints.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **502 tests** (4 new transport tests against a test-owned loopback endpoint). MOCK/STATIC only.
+- **Defect found while wiring this:** an earlier patch silently overwrote the GitHub provider's content-type check with the redirect fix; the regression test now covers it.

@@ -1,6 +1,9 @@
 """Connector request-scope tests (issue #15): binding, overrides, zero requests."""
+import json
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from boru.connectors.base import Capability, Grant
 from boru.connectors.github import GitHubProvider
@@ -136,6 +139,79 @@ class ProviderScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             grant(operations=("not_an_operation",), nonce="scope-9")
         self.assertEqual([], self.requests)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class _Transport(BaseHTTPRequestHandler):
+    """Test-owned endpoint that can answer with a redirect or bad content type."""
+
+    mode = "redirect"
+    paths = []
+
+    def log_message(self, *args):
+        return
+
+    def do_GET(self):
+        type(self).paths.append(self.path)
+        if type(self).mode == "redirect":
+            self.send_response(302)
+            self.send_header("Location", "http://example.invalid/evil")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = b"<html>secret</html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class TransportHardeningTests(unittest.TestCase):
+    """Redirects, content types and response references (issue #15 gaps)."""
+
+    def setUp(self):
+        _Transport.mode = "redirect"
+        _Transport.paths = []
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _Transport)
+        self.server.daemon_threads = True
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.provider = GitHubProvider(
+            base_url="http://127.0.0.1:{}/".format(self.server.server_address[1]),
+            transport=None, allow_http=True)
+        self.grant = grant(operations=("read_file",), nonce="th-1")
+        self.payload = {"repository": "owner/repo", "reference": "main", "path": "docs/readme.md"}
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def test_redirect_is_refused_and_never_followed(self):
+        with self.assertRaises(ConnectorDenied) as raised:
+            self.provider.call(self.grant, "read_file", self.payload)
+        self.assertEqual("redirects_not_followed", str(raised.exception))
+        self.assertNotIn("evil", str(_Transport.paths))
+
+    def test_unexpected_content_type_is_refused(self):
+        _Transport.mode = "html"
+        with self.assertRaises(ConnectorDenied) as raised:
+            self.provider.call(self.grant, "read_file", self.payload)
+        self.assertEqual("unexpected_content_type", str(raised.exception))
+
+    def test_response_reference_mismatch_is_denied(self):
+        body = json.dumps({"path": "docs/readme.md", "ref": "develop"}).encode()
+        with self.assertRaises(ConnectorDenied) as raised:
+            GitHubProvider._verify_response("read_file", self.payload, body)
+        self.assertEqual("reference_mismatch", str(raised.exception))
+        GitHubProvider._verify_response("read_file", self.payload,
+                                       json.dumps({"ref": "main"}).encode())
+
+    def test_other_operations_are_not_reference_verified(self):
+        GitHubProvider._verify_response("list_issues", {"repository": "owner/repo"},
+                                       json.dumps({"ref": "whatever"}).encode())
 
 
 if __name__ == "__main__":

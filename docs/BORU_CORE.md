@@ -464,6 +464,13 @@ official endpoint URL is built:
 * A denial raises `ConnectorDenied` **before any transport is constructed**, is
   recorded in the local audit trail, and reaches the caller verbatim.
 
+Transport hardening (the remaining limitations issue #15 listed): a redirect is
+never followed (a custom redirect handler refuses 301/302/303/307/308), a
+response must declare JSON or plain text, the body is size-bounded, and a
+`read_file` response's reference must match the requested reference (a mismatch
+denies before the caller sees the object). ``allow_http`` is an explicit owner
+opt-in for pinned loopback test endpoints only.
+
 **Live verification (read-only, this repository, 2026-11-21):** the official
 endpoints the connector builds were exercised through the GitHub CLI against
 `Tihulu/Tihulu-Boru-Yolu` and returned HTTP 200 for
@@ -471,9 +478,8 @@ endpoints the connector builds were exercised through the GitHub CLI against
 `.../pulls/{n}/reviews`, `.../branches`, `.../commits/{sha}`,
 `.../actions/workflows` and `/user`. No write, dispatch or secret was used.
 
-Still open (recorded, not implemented): response-level reference validation,
-workflow-specific authorization, redirect/header review, and a typed API for
-repository names that need special encoding. Token/account identity remains
+Still open (recorded, not implemented): workflow-specific authorization, and a
+typed API for repository names that need special encoding. Token/account identity remains
 unverified, so the connector is not yet a security boundary.
 
 ## Not implemented in this slice (HOLD)
