@@ -258,6 +258,11 @@ provider text** — and there is no update or delete API, so an audit row cannot
 be rewritten. Retention is bounded by a documented cap that prunes only the
 oldest rows.
 
+Terminal access: `python3 -m boru audit --audit-dir local-state/audit --limit 32`
+prints bounded recent rejection rows as JSON (category, subject, reason, detail
+kind, timestamp) — no payload, path, content or token. `--audit-dir` must name
+an existing directory.
+
 ## Budgets, cooldowns and context bounds (P3 slice)
 
 `boru/budgets.py` enforces ceilings honestly:

@@ -127,3 +127,52 @@ class ConfigFileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AuditCommandTests(unittest.TestCase):
+    """`boru audit` prints bounded ledger rows and never leaks a path."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="boru-audit-cli-")
+        os.chmod(self.root, stat.S_IRWXU)
+        self.audit_dir = os.path.join(self.root, "audit")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_audit_requires_a_directory(self):
+        result = run(["audit"])
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("configuration_error", json.loads(result.stdout)["error"])
+
+    def test_audit_prints_rows(self):
+        from boru.audit import RejectionLedger
+
+        os.makedirs(self.audit_dir)
+        os.chmod(self.audit_dir, stat.S_IRWXU)
+        with RejectionLedger(self.audit_dir) as ledger:
+            ledger.record("policy", "task-1", "task_axes_refused", "policy")
+            ledger.record("broker", "task-1", "resource_not_declared", "read_file_alias")
+        result = run(["audit", "--audit-dir", self.audit_dir, "--limit", "1"])
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual("broker", payload["rejections"][0]["category"])
+        self.assertEqual("HOLD", payload["live_acceptance"])
+        self.assertNotIn(self.root, result.stdout)
+
+    def test_audit_rejects_a_missing_directory(self):
+        result = run(["audit", "--audit-dir", os.path.join(self.root, "absent")])
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("configuration_error", json.loads(result.stdout)["error"])
+
+    def test_audit_rejects_a_bad_limit(self):
+        os.makedirs(self.audit_dir)
+        os.chmod(self.audit_dir, stat.S_IRWXU)
+        result = run(["audit", "--audit-dir", self.audit_dir, "--limit", "not-a-number"])
+        self.assertEqual(2, result.returncode)
+        self.assertIn("limit", json.loads(result.stdout)["detail"])
+
+    def test_audit_is_listed_in_help(self):
+        result = run(["--help"])
+        self.assertEqual(0, result.returncode)
+        self.assertIn("audit", result.stdout)

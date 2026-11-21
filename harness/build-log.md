@@ -319,3 +319,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `boru/boundary.py` (`Classification`, `CrossBoundaryGuard`), config `classifications` + core enforcement before any Jan/cloud dispatch, `examples/core.example.json` declares its local direction, `tests/test_boundary.py`.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **399 tests**. MOCK/STATIC only.
 - **Security implications:** an outbound request without a declared classification is refused with no network call (`HOLD/unclassified_boundary`, recorded in the ledger); data class above the declared one, and a grant mismatch, are denied; in-process providers need no crossing.
+
+---
+
+### 2026-11-21 01:00 UTC — `boru audit` command (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** CLI `audit` subcommand (`--audit-dir`, `--limit`) and `AuditCommandTests`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **404 tests**. MOCK/STATIC only.
+- **Security implications:** prints bounded rows only; `--audit-dir` must name an existing directory; no payload, path, content or token appears in output.

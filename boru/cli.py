@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -97,6 +98,9 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--accept", action="store_true", help="accept; omit to reject")
     providers = sub.add_parser("providers", help="list configured providers and models (no discovery calls)")
     _add_common_shorthands(providers)
+    audit = sub.add_parser("audit", help="show recent rejection rows from the local ledger")
+    _add_common_shorthands(audit)
+    audit.add_argument("--limit", default="32", help="number of rows (1..1024)")
     return parser
 
 
@@ -139,6 +143,34 @@ def _review(args) -> int:
         return EXIT_OK
 
 
+def _audit(args) -> int:
+    """Print bounded rejection rows from the local ledger (no payloads, no paths)."""
+    from .audit import RejectionLedger
+
+    if not args.audit_dir:
+        _emit({"error": "configuration_error", "detail": "--audit-dir is required"}, args.show_text)
+        return EXIT_ERROR
+    if not os.path.isdir(args.audit_dir):
+        _emit({"error": "configuration_error", "detail": "--audit-dir must be an existing directory"},
+              args.show_text)
+        return EXIT_ERROR
+    limit = args.limit
+    if isinstance(limit, str):
+        try:
+            limit = int(limit)
+        except ValueError:
+            _emit({"error": "configuration_error", "detail": "limit must be an integer"}, args.show_text)
+            return EXIT_ERROR
+    with RejectionLedger(args.audit_dir) as ledger:
+        try:
+            rows = ledger.recent(limit)
+        except ConfigurationError as exc:
+            _emit({"error": exc.kind, "detail": str(exc)}, args.show_text)
+            return EXIT_ERROR
+    _emit({"rejections": rows, "live_acceptance": "HOLD"}, args.show_text)
+    return EXIT_OK
+
+
 def _providers(args) -> int:
     config = _load_config(args.config)
     core = _open_core(config, args.state_dir)
@@ -162,6 +194,7 @@ _HANDLERS = {
     "cancel": _cancel,
     "review": _review,
     "providers": _providers,
+    "audit": _audit,
 }
 
 
