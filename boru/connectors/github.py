@@ -63,6 +63,24 @@ class GitHubProvider(RepositoryProvider):
             return "configured"
         return "disconnected"
 
+    def list_workflows_typed(self, grant, payload=None, timeout: float = 10.0) -> List[Any]:
+        """Discover workflows through the official endpoint (issue #9)."""
+        allowed, reason = self.check(grant, "list_workflows")
+        if not allowed:
+            raise ConnectorDenied(reason)
+        check_call(grant, "list_workflows", payload or {}, method=None, path="",
+                   default_method="GET")
+        status, raw = self._exchange("list_workflows", "GET",
+                                     self._path_for("list_workflows", payload or {}), {})
+        if status >= 300:
+            raise ConnectorDenied("http_" + str(status))
+        from .workflows import parse_workflows
+
+        try:
+            return parse_workflows(json.loads(raw.decode("utf-8")) if raw else {})
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ConnectorDenied("invalid_response")
+
     def verify_identity(self, expected_account: str, timeout: float = 10.0) -> Tuple[bool, str]:
         """Verify the account behind the token against the grant's account.
 

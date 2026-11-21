@@ -498,6 +498,14 @@ account. A mismatch returns ``identity_mismatch`` instead of proceeding, and a
 missing token returns ``configured`` — a token is an identity, never write or
 Shell authorization.
 
+Workflow discovery and dispatch-input validation (issue #9):
+`boru/connectors/workflows.py` parses the official ``actions/workflows``
+response into typed ``WorkflowSummary`` records and validates a
+``workflow_dispatch`` request against the workflow's declared inputs **before**
+any dispatch is attempted — unknown, mistyped, out-of-range, oversized, nested
+or missing-required inputs are refused, and a workflow whose inputs are not
+declared is refused rather than guessed.
+
 ## Not implemented in this slice (HOLD)
 
 The trusted broker, authenticated worker and OS isolation; dashboard

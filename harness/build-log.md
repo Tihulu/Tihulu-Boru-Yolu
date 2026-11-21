@@ -518,3 +518,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** ``verify_identity(expected_account)`` on both connectors reads the official account endpoint through the same hardened transport and matches the returned login/username against the grant's account; ``IdentityVerificationTests`` cover match, mismatch, missing token, bad account and malformed response.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **513 tests**. MOCK/STATIC only.
 - **Security implications:** a token is reported as identity only; a mismatched account is ``identity_mismatch`` and never proceeds; a missing token is only ``configured``. No credential is printed or logged.
+
+---
+
+### 2026-11-21 11:15 UTC — workflow discovery and dispatch-input validation (issue #9) (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/connectors/workflows.py` (`WorkflowSummary`, `parse_workflows`, `validate_dispatch_inputs`), `GitHubProvider.list_workflows_typed` (grant-checked discovery through the official endpoint), and `tests/test_workflows.py`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **525 tests**. MOCK/STATIC only.
+- **Security implications:** discovery is grant- and repository-bound and refuses a non-granted repository before any request; dispatch inputs are validated before any dispatch is attempted, and an undeclared input schema is refused rather than guessed. No live workflow was dispatched, no secret or credential was used, and no listener was opened.
