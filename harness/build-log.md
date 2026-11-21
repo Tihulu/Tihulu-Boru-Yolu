@@ -335,3 +335,34 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** CLI `plan` (submit a dependency-aware plan, dispatch what is ready, resumable) and `queue` (tasks awaiting explicit review); `submit_plan` now resumes existing tasks instead of failing on a re-run; `PlanAndQueueCommandTests`.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **410 tests**. MOCK/STATIC only.
 - **Security implications:** a dependent task never runs before its dependency is explicitly reviewed and `DONE`; no goal, path, content or token is printed.
+
+---
+
+### 2026-11-21 01:45 UTC — Consolidated state (commit `e9149f3`, CI run 50 success)
+
+**Verified at this commit:** `python3 scripts/check_project.py` PASS · `python3 -m unittest discover -s tests` PASS **410 tests** (baseline 21 + 389 added) · `python3 -m boru demo --show-text` -> `REVIEW` / `simulated` / `live_acceptance=HOLD` · installer round trip on a temporary directory. All MOCK/STATIC unless a live entry says otherwise.
+
+**Implemented + unit/integration-tested (source):**
+- P1 `boru/` core: `types` (TaskEnvelope/AgentResult, schema 1, unknown- and private-field rejection), `policy` (four orthogonal axes, safe LOCAL_ONLY default), `state`, `queue` (bounded, replay-protected), `registry` (explicit locality, declared cost/quality tiers), `store` (SQLite, 0600, single writer, CAS), `config`, `core`, `cli` (`demo`, `run`, `status`, `cancel`, `review`, `providers`, `audit`, `plan`, `queue`).
+- Providers: `mock` (simulated), `jan` (loopback-only, explicit allowlist, tools disabled, `tool_choice:none`, bounded bytes, `model_response_is_path` option) and `cloud` (HTTPS-enforced, credential only via env-var name, honest `configured`/`authenticated` state).
+- P3 `router.py` (mode ranking + bounded policy-safe fallback) and `budgets.py` (labelled estimates, pre-dispatch reservation, observed-usage recheck, cost refusal, cooldowns, bounded compaction).
+- P4 `scheduler.py` (≤6 logical agents, DAG, counted leases, default one large local model).
+- P5 `privacy.py` + `consent.py` + `broker.py` + `executor.py` + `audit.py` (fail-closed gate, persistent consent, scoped authorization, bounded read-only worker, shared append-only ledger wired into every denial path).
+- P7 `auth/` (official authorization-code + PKCE, loopback redirect capture, opaque token handles).
+- P8 `connectors/` (GitHub REST + GitLab v4, grant-bound, zero-request denials).
+- P9 `dashboard.py` (loopback `/`, `/status`, `/task/<id>`, `/queue`, `/audit`, `POST /review`) + `i18n.py` (EN/TR/DE).
+- P10 `scripts/install_boru.sh` / `uninstall_boru.sh` (user-space, dry-run, owner-only state, rollback tested).
+- Cross-boundary tracer (`boundary.py`): outbound requests must be declared.
+
+**LIVE evidence:** A21 (Boru Core -> direct Jan, three three-turn conversations, provider/model/usage recorded, owner review to DONE, non-allowlisted model refused with no call) and A23 (real OpenCode child session with session/message ids, agent, model and provider identity; sessions deleted afterwards).
+
+**Remaining HOLD with exact next actions:**
+1. Broker hardening: authenticated persistent worker identity store, live socket, OS confinement; then independent security review (P5 live gate).
+2. P6 cloud Shell sandbox: strictly blocked by item 1 plus explicit owner consent.
+3. Provider registration + live OAuth round trip (identity vs inference verification).
+4. Live GitHub/GitLab/Actions scoped pilots (needs owner-approved scopes in a disposable repository) and webhook ingress policy.
+5. Dashboard accessibility review and localization polish.
+6. Clean-machine Pop!_OS 24.04 and Ubuntu LTS acceptance matrix, including offline and partial-outage runs.
+7. Repository license choice and owner release approval.
+
+**Resume instruction:** check out `p1/boru-core-vertical-slice`, read `docs/BORU_CORE.md` and this entry, run the two verification commands above, then attempt item 3 or the next source-only slice. Do not rewrite existing modules; extend them.
