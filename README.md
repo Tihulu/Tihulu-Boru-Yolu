@@ -2,7 +2,15 @@
 
 **Local-first, user-controlled orchestration for AI coding agents, visual workflows, and hybrid local/cloud models.**
 
-> Status: **Architecture and source-only bootstrap**. This repository does not yet install or run a broker, executor, or validated Privacy Bridge. Never interpret a workflow diagram or configuration example as an enforced security boundary.
+> Status: **Boru Core P1–P10 source slices are implemented and unit/integration tested locally**
+> (498 tests, CI green). What exists is a local, offline-first core with typed contracts,
+> durable task state, a bounded provider layer, mode-aware routing with budgets, a DAG planner,
+> a fail-closed authorization chain, grant-bound GitHub/GitLab connectors, a loopback dashboard
+> and user-space install/rollback scripts. Two live gates have passed on this machine:
+> direct Jan 3-turn chats (A21) and a real OpenCode child session (A23).
+> Nothing here is a release: live acceptance, independent security review, the sandbox runtime,
+> provider OAuth, the remote half of the Privacy Bridge and owner release approval remain **HOLD**.
+> Never interpret a workflow diagram or configuration example as an enforced security boundary.
 
 ## Purpose
 
@@ -41,12 +49,34 @@ Cloud *inference*, Shell *execution*, and private-data *disclosure* are **three 
 
 Routing presets `AUTO`, `ECONOMY`, `BALANCED`, `PERFORMANCE` and `MANUAL` are **orthogonal** to these security profiles. `LOCAL_ONLY` is a separate inference restriction.
 
+## What you can run today
+
+~~~bash
+python3 scripts/check_project.py              # static manifest + sample policy invariants
+python3 -m unittest discover -s tests         # 459 unit/integration tests (offline, hermetic)
+python3 -m boru demo                          # fixed offline synthetic task -> REVIEW
+python3 -m boru --config examples/core.example.json --state-dir local-state run --task task.json
+python3 -m boru --state-dir local-state plan --file plan.json
+python3 -m boru queue                        # tasks awaiting an explicit review
+python3 -m boru review --task-id <id> --accept
+python3 -m boru cancel --task-id <id>        # cancel a queued/held task
+python3 -m boru audit --audit-dir local-state/audit --limit 32
+scripts/install_boru.sh --dry-run             # user-space install/rollback (no sudo, no service)
+python3 scripts/evidence.py                   # sanitized evidence block, exit 0 when mandatory checks pass
+~~~
+
+`local-state` must be an existing owner-only directory. Every completed reply stays in `REVIEW`
+until you accept it with `boru review --task-id <id> --accept`; simulated results are never
+relabelled as live.
+
 ## Codex implementation handoff
 
 - **[Single Codex start/resume prompt](docs/CODEX_START_PROMPT.md)** — hand to Codex after opening this repository.
 - **[End-to-end execution playbook](docs/CODEX_EXECUTION_PLAYBOOK.md)** — P0–P10 development, dependencies, security gates and release definition.
 - **[Persistent Codex instructions](AGENTS.md)** and **[evidence-based build log](harness/build-log.md)** — ensure each new session resumes without restarting or declaring untested work done.
-- The current baseline is **draft PR #1**, not a finished application. This repo is safe for source-only coding tasks, not assumed to have live local Shell or provider credentials.
+- The planning baseline is **draft PR #1**; implementation continues in **draft PR #14** on branch
+  `p1/boru-core-vertical-slice`. Live local Shell, provider credentials, the sandbox runtime and
+  release approval are separate, owner-gated steps recorded in `harness/build-log.md`.
 
 ## Repository map
 

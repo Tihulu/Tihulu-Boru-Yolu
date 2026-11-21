@@ -21,6 +21,10 @@ REQUIRED_DOCS = [
     "docs/ADRS/0002-shell-execution-profiles.md",
     "docs/ADRS/0003-boru-core-independence.md",
     "docs/ADRS/0004-preserve-modes-and-privacy.md", "examples/visual-flow.mmd",
+    "docs/ADRS/0005-boru-core-runtime-slice.md", "docs/BORU_CORE.md",
+    "docs/JAN_PILOT.md", "docs/AI_PROVIDER_CONNECTIONS.md",
+    "docs/OS_ACCEPTANCE.md", "docs/SECURITY_REVIEW_REQUEST.md",
+    "docs/OWNER_GATE_GUIDE.md",
 ]
 
 
@@ -84,7 +88,10 @@ def main() -> int:
     problems = []
     for name in REQUIRED_DOCS:
         if not (ROOT / name).is_file():
-            problems.append("missing: " + name)
+            problems.append("missing required document: " + name)
+    for required in ("boru/types.py", "boru/core.py", "boru/cli.py", "boru/__main__.py"):
+        if not (ROOT / required).is_file():
+            problems.append("missing Boru Core source: " + required)
     config_path = ROOT / "examples/boru-yolu.example.json"
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))

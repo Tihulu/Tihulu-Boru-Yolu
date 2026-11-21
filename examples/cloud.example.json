@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "description": "P7 demonstration configuration: cloud provider declared, no credential and no inference authorized. A configured endpoint is not an authentication and must never be treated as inference entitlement.",
+  "policy": {
+    "optimization_mode": "AUTO",
+    "inference_scope": "CLOUD_ALLOWED",
+    "execution_profile": "LOCAL_ISOLATED",
+    "disclosure_policy": "MINIMUM_NECESSARY",
+    "max_agents": 6,
+    "cloud_fallback_enabled": true
+  },
+  "providers": [
+    {"kind": "mock", "tool_execution_disabled": true},
+    {
+      "kind": "cloud",
+      "endpoint": "https://api.example.invalid/v1",
+      "api_key_env": "BORU_EXAMPLE_PROVIDER_KEY",
+      "local_model_ids": ["example-model-id"],
+      "allow_http": false
+    }
+  ]
+}
