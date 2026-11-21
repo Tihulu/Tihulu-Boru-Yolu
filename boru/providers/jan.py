@@ -26,7 +26,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
 from .base import (
-    MAX_MESSAGE_CHARS,
     MAX_OUTPUT_TOKENS_LIMIT,
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,

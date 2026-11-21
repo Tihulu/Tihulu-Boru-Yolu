@@ -17,7 +17,7 @@ remains HOLD pending independent security review.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .audit import RejectionLedger
 from .broker import Broker, OperationRequest

@@ -8,11 +8,10 @@ source (issue #8, #9).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from ..errors import ConnectorDenied
 
 
 class Capability(str, Enum):

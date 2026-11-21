@@ -28,9 +28,9 @@ from .providers.base import ChatMessage, ChatReply, ProviderFailure
 from .audit import RejectionLedger
 from .boundary import CrossBoundaryGuard
 from .budgets import Budget, BudgetLedger, CooldownTracker, compact, estimate_message_tokens
-from .router import Router, RoutingDecision, fallback_order, should_retry
+from .router import Router, RoutingDecision, should_retry
 from .scheduler import AgentScheduler, AgentSpec, build_envelopes
-from .state import TaskState, TaskRecord, can_transition, utc_now
+from .state import TaskState, can_transition, utc_now
 from .store import TaskStore
 from .types import SCHEMA_VERSION, AgentResult, TaskEnvelope
 

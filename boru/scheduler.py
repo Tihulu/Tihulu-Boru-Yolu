@@ -9,7 +9,7 @@ stop, unload or reconfigure an external Jan or OpenCode session.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .errors import PolicyViolation
 from .policy import Policy

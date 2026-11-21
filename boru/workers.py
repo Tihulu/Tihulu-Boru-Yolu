@@ -18,7 +18,7 @@ import stat
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .errors import ConfigurationError
 

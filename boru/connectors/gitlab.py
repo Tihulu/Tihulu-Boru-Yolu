@@ -11,7 +11,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider

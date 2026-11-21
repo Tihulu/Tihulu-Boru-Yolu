@@ -9,7 +9,7 @@ a boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Sequence, Tuple
+from typing import Mapping, Sequence, Tuple
 
 #: Fixed failure categories.  Callers branch on these, never on provider text.
 FAILURE_CATEGORIES: Tuple[str, ...] = (

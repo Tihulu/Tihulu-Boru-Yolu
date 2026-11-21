@@ -18,7 +18,7 @@ import ipaddress
 import json
 import socket
 import time
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ..errors import ConnectorDenied

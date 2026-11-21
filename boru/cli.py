@@ -10,15 +10,15 @@ import argparse
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from .audit import RejectionLedger
-from .config import CoreConfig, ProviderConfig, default_config
+from .config import CoreConfig, default_config
 from .core import BoruCore
 from .errors import BoruError, ConfigurationError, PolicyViolation
 from .store import TaskStore
+from .scheduler import AgentSpec
 from .types import TaskEnvelope
-from .scheduler import AgentSpec, AgentScheduler, build_envelopes
 
 EXIT_OK = 0
 EXIT_REJECTED = 1

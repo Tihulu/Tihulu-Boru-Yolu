@@ -485,3 +485,10 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **498 tests**. MOCK/STATIC only.
 - **Honest scope:** this proves the installer touches only the named directories on *this* machine with *this* Python. It cannot prove a fresh-image install, offline behaviour, partial outages or rollback, so M01–M12 remain HOLD.
 - **Behaviour confirmed and documented:** uninstall removes the launcher and the named directories but leaves a possibly user-owned `--bin-dir` itself (empty) in place.
+
+---
+
+### 2026-11-21 09:00 UTC — review pass: import hygiene and stale counts (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** removed unused imports across the package (typing names, `tempfile` in the store, `stat`/private helpers in the executor, `field`/`LOCAL_PROVIDERS` in the registry, routing/state/scheduler/cli names, `MAX_MESSAGE_CHARS` in the Jan transport, `ConnectorDenied` in the connector base, `ipaddress` in the cloud transport, `bounded_text` in the auth flow); refreshed stale test counts in README and `docs/ACCEPTANCE.md` (459/225 → 498).
+- **Tests observed:** `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; `unittest discover -s tests` PASS **498 tests**. No behaviour change: import and documentation only.

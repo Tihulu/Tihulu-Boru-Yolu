@@ -20,7 +20,7 @@ import argparse
 import json
 import sys
 import webbrowser
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence
 
 from .auth import OAuthClientConfig, OAuthFlow
 from .auth.tokens import TokenVault

@@ -33,7 +33,7 @@
 | A18 | Up to 6 logical agents | Resource limits, evidence per child | HOLD |
 | A19 | Rollback | Jan/OpenCode unchanged and launchable | HOLD |
 | A31 | Provider capability/auth matrix and secret-free example | English matrix in docs/AI_PROVIDER_CONNECTIONS.md | STATIC PASS (documentation); no account connected |
-| A20 | Static repo consistency | `scripts/check_project.py` + unittest | STATIC PASS (225 tests on P1/P3/P4/P5/P7/P9/P10 slices, MOCK only) |
+| A20 | Static repo consistency | `scripts/check_project.py` + unittest | STATIC PASS (498 tests on the P1-P10 source slices, MOCK only) |
 | A30 | Install/rollback round trip | user-space install → demo → uninstall, only Boru-owned paths removed | STATIC PASS (script round trip, not a clean-machine matrix) |
 | A21 | Boru Core independence | Runs direct Jan text-only flow without TIHULU-AUTO installed | LIVE PASS (3 x 3-turn conversations, direct evidence, allowlist refusal verified) |
 | A22 | OpenCode and Jan standalone | Existing app/API and sessions function with Boru Yolu and TIHULU-AUTO stopped | HOLD |

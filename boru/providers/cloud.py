@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 from .base import ChatMessage, ChatProvider, ChatReply, ProviderFailure
 
@@ -57,8 +57,7 @@ class CloudProvider(ChatProvider):
             raise ValueError("malformed base_url")
         try:
             from urllib.parse import urlsplit
-            import ipaddress
-
+            
             parts = urlsplit(base_url)
         except ValueError:
             raise ValueError("malformed base_url")

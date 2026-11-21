@@ -14,7 +14,6 @@ import json
 import os
 import sqlite3
 import stat
-import tempfile
 import threading
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 

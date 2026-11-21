@@ -16,7 +16,7 @@ import sqlite3
 import stat
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from .errors import ConfigurationError, StoreError
 

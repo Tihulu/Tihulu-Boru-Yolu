@@ -11,7 +11,7 @@ import json
 import math
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from .boundary import BOUNDARIES, DATA_CLASSES, RECIPIENTS, Classification
 from .errors import ConfigurationError

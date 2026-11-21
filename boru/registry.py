@@ -8,11 +8,10 @@ invented (docs/ROUTING_AND_RESOURCES.md).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .errors import PolicyViolation
-from .policy import LOCAL_PROVIDERS
 
 UNKNOWN = "UNKNOWN"
 MODEL_SOURCES: Tuple[str, ...] = ("discovered", "configured", "verified")

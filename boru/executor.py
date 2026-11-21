@@ -16,11 +16,10 @@ directory is never traversed outside its alias.
 from __future__ import annotations
 
 import os
-import stat
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Tuple
 
-from .broker import AuthorizationReceipt, ScopeAllowlist, _bounded
+from .broker import AuthorizationReceipt, ScopeAllowlist
 from .errors import PolicyViolation
 
 MAX_ENTRY_SCAN = 4096
