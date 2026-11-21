@@ -401,6 +401,23 @@ returns metadata, and raw content never appears.
 The remote half (real recipient, L2 excerpt release, OS isolation) remains HOLD
 pending independent security review.
 
+## Authenticated local broker surface (P5 hardening slice)
+
+`boru/broker_service.py` is a loopback-only, bounded TCP surface where a local
+worker presents its identity (id + secret, verified in constant time against the
+owner-created registry) and sends one authorization request per connection. The
+service refuses to bind a non-loopback address, refuses to start without a
+secret, closes after the reply, enforces an idle timeout and caps request size,
+and a denial in the broker (unknown operation, resource not declared, worker
+scope, replay, consent) reaches the caller verbatim. `Broker` itself now also
+consults the worker registry, so a revoked, expired, unknown or
+secret-mismatched identity denies before anything else.
+
+This closes the "authenticated worker / live socket" gap in the P5 checklist at
+the code level. It remains **not a security boundary**: host-level process
+authentication, transport encryption, OS confinement and an independent security
+review are still HOLD, and nothing here executes an operation.
+
 ## Cloud-Shell grant contract (P6 decisions only)
 
 `boru/sandbox.py` implements the authorization half of

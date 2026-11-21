@@ -439,7 +439,7 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Verified:** `scripts/check_project.py` PASS · `python3 -m unittest discover -s tests` **461 tests PASS** · `python3 scripts/evidence.py` exit 0 · `boru demo` -> `REVIEW` / `simulated` / `live_acceptance=HOLD`. All MOCK/STATIC unless a live entry says otherwise.
 - **Live evidence:** A21 (direct Jan 3-turn conversations: provider/model/usage recorded, owner review to DONE, non-allowlisted model refused with no call) and A23 (real OpenCode child session: session/message IDs, agent, model, provider; both pilot sessions deleted afterwards).
 - **Remaining HOLD, in order, with the exact next action:**
-  1. Broker hardening: host-level process authentication, OS confinement, live socket; then an **independent security review** (P5 live gate). Next action: schedule the review with the implemented `boru/workers.py` + `boru/broker.py` + `boru/executor.py` chain.
+  1. Broker hardening: host-level process authentication, transport encryption and OS confinement; then an **independent security review** (P5 live gate). Code-level progress made: `boru/broker_service.py` (loopback, identity-authenticated, bounded) plus broker/registry identity checks. Next action: schedule the review with that chain.
   2. Remote Privacy Bridge half: a real cloud recipient and L2 excerpt release. Next action: only after item 1.
   3. Provider registration + live OAuth round trip (identity vs inference verification). Next action: register with one provider, pilot with `boru/auth/`.
   4. P6 sandbox runtime: `boru/sandbox.py` decides but executes nothing. Next action: only after items 1–2 and explicit owner consent.
@@ -448,3 +448,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
   7. Dashboard localization/accessibility polish beyond what is implemented and tested.
   8. Repository license choice, then owner release approval.
 - **Resume instruction:** check out `p1/boru-core-vertical-slice`, read `docs/BORU_CORE.md` and this entry, run `scripts/evidence.py`, then attempt item 3 or the next source-only slice. Extend existing modules; do not rewrite them.
+
+---
+
+### 2026-11-21 06:30 UTC — P5 hardening: authenticated broker surface (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** `boru/broker_service.py` (loopback-only, identity-authenticated, single-request-per-connection, bounded and idle-timed authorization service), broker now consults `WorkerRegistry` (revoked/expired/unknown/secret-mismatch identities deny), pipeline uses the registry, `ConsentStore(thread_safe=True)` so the service can share it, `tests/test_broker_service.py`.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **469 tests**. MOCK/STATIC only.
+- **Security implications:** denied identities deny before any other check; the service cannot bind a non-loopback address or start without a secret; nothing executes an operation. Host-level process authentication, transport encryption, OS confinement and independent security review remain HOLD, so this is explicitly **not** a security boundary.
+- **Defect fixed while wiring this:** `ConsentStore`'s `thread_safe` flag was passed to sqlite as `check_same_thread=thread_safe`, i.e. inverted — thread-safe mode *enforced* the same-thread rule and crashed under the service. Now `check_same_thread=not thread_safe`, with a guard around every read/write.

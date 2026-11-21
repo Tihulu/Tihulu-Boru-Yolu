@@ -154,7 +154,8 @@ class Broker:
 
     def __init__(self, *, worker: WorkerIdentity, scopes: ScopeAllowlist, consent,
                  receipt_ttl_seconds: float = 60.0, audit=None,
-                 consent_recipient: str = "local-worker") -> None:
+                 consent_recipient: str = "local-worker", worker_registry=None,
+                 worker_secret: Optional[str] = None) -> None:
         if receipt_ttl_seconds is None or isinstance(receipt_ttl_seconds, bool) \
                 or not isinstance(receipt_ttl_seconds, (int, float)) \
                 or not 1.0 <= float(receipt_ttl_seconds) <= 3600:
@@ -174,6 +175,10 @@ class Broker:
         self._nonces: Set[str] = set()
         self.audit = audit
         self.consent_recipient = consent_recipient
+        # When a worker registry and secret are supplied, the request must also
+        # present a live (unexpired, unrevoked, constant-time-matched) identity.
+        self._registry = worker_registry
+        self._worker_secret = worker_secret
 
     # -- decisions -----------------------------------------------------------
     def authorize(self, request: OperationRequest, *, now: Optional[float] = None) -> Tuple[str, Optional[AuthorizationReceipt], str]:
@@ -227,6 +232,15 @@ class Broker:
             return "worker_invalid"
         if request.resource_alias not in request.worker.scopes:
             return "worker_scope"
+        if self._registry is not None:
+            if not self._registry.valid(request.worker.worker_id, self._worker_secret or ""):
+                self._registry.get(request.worker.worker_id)  # bounded lookup
+                return "worker_invalid"
+            record = self._registry.get(request.worker.worker_id)
+            if record is None or record.validate() or record.revoked:
+                return "worker_invalid"
+            if request.resource_alias not in record.scopes:
+                return "worker_scope"
         if request.nonce in self._nonces:
             return "nonce_replayed"
         # A consent grant must match recipient-agnostic operation scope.

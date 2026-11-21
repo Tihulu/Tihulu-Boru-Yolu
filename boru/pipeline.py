@@ -51,6 +51,8 @@ class DisclosurePipeline:
             return "deny", {}, "worker_unavailable"
         if not self.workers.valid(WORKER_ID, self.workers.secret_for(WORKER_ID) or "", now=now):
             return "deny", {}, "worker_unavailable"
+        if not self.workers.valid(WORKER_ID, self.workers.secret_for(WORKER_ID) or "", now=now):
+            return "deny", {}, "worker_unavailable"
         from .broker import ScopeAllowlist
 
         aliases = self._aliases_for(record)

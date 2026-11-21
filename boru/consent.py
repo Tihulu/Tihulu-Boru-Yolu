@@ -14,6 +14,7 @@ import math
 import os
 import sqlite3
 import stat
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -44,12 +45,14 @@ CREATE TABLE IF NOT EXISTS used_nonces (
 class ConsentStore:
     """Owner consent records with replay protection and revocation."""
 
-    def __init__(self, path: Optional[str] = None) -> None:
+    def __init__(self, path: Optional[str] = None, *, thread_safe: bool = False) -> None:
         self._path = self._resolve(path)
         if self._path and not os.path.exists(self._path):
             descriptor = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
             os.close(descriptor)
-        self._db = sqlite3.connect(self._path or ":memory:", isolation_level=None)
+        self._guard = threading.RLock() if thread_safe else None
+        self._db = sqlite3.connect(self._path or ":memory:", isolation_level=None,
+                                   check_same_thread=not thread_safe)
         self._db.row_factory = sqlite3.Row
         version = self._db.execute("PRAGMA user_version").fetchone()[0]
         if version not in (0, SCHEMA_VERSION):
@@ -90,6 +93,14 @@ class ConsentStore:
     # -- writes --------------------------------------------------------------
     def grant(self, *, grant_id: str, recipient: str, task_id: str, field_name: str, level: str,
               expires_at: float, nonce: str, now: Optional[float] = None) -> None:
+        if self._guard is not None:
+            with self._guard:
+                return self._grant(grant_id, recipient, task_id, field_name, level, expires_at,
+                                   nonce, now)
+        return self._grant(grant_id, recipient, task_id, field_name, level, expires_at, nonce, now)
+
+    def _grant(self, grant_id: str, recipient: str, task_id: str, field_name: str, level: str,
+               expires_at: float, nonce: str, now: Optional[float] = None) -> None:
         if level not in ("L0", "L1", "L2"):
             raise ValueError("level must be L0, L1 or L2")
         for name, value, limit in (("grant_id", grant_id, 128), ("recipient", recipient, 128),
@@ -109,12 +120,25 @@ class ConsentStore:
         )
 
     def revoke(self, grant_id: str) -> None:
+        _bounded(grant_id, 128, "grant_id")
+        if self._guard is not None:
+            with self._guard:
+                self._db.execute("UPDATE grants SET revoked = 1, expires_at = 0 WHERE grant_id = ?",
+                                 (grant_id,))
+            return
         self._db.execute("UPDATE grants SET revoked = 1, expires_at = 0 WHERE grant_id = ?",
-                         (_bounded(grant_id, 128, "grant_id"),))
+                         (grant_id,))
 
     # -- reads ---------------------------------------------------------------
     def check(self, *, grant_id: str, recipient: str, task_id: str, field_name: str, nonce: str,
               now: Optional[float] = None) -> bool:
+        if self._guard is not None:
+            with self._guard:
+                return self._check(grant_id, recipient, task_id, field_name, nonce, now)
+        return self._check(grant_id, recipient, task_id, field_name, nonce, now)
+
+    def _check(self, grant_id: str, recipient: str, task_id: str, field_name: str, nonce: str,
+               now: Optional[float] = None) -> bool:
         stamp = time.time() if now is None else now
         row = self._db.execute(
             "SELECT level, expires_at, nonce, revoked FROM grants WHERE grant_id = ? AND recipient = ?"
@@ -134,6 +158,12 @@ class ConsentStore:
         return True
 
     def active(self, now: Optional[float] = None) -> List[Dict[str, Any]]:
+        if self._guard is not None:
+            with self._guard:
+                return self._active(now)
+        return self._active(now)
+
+    def _active(self, now: Optional[float] = None) -> List[Dict[str, Any]]:
         stamp = time.time() if now is None else now
         rows = self._db.execute(
             "SELECT grant_id, recipient, task_id, field_name, level, expires_at FROM grants"
