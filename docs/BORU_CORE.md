@@ -478,9 +478,9 @@ endpoints the connector builds were exercised through the GitHub CLI against
 `.../pulls/{n}/reviews`, `.../branches`, `.../commits/{sha}`,
 `.../actions/workflows` and `/user`. No write, dispatch or secret was used.
 
-Still open (recorded, not implemented): token/account identity verification —
-the connector can read the account endpoint but has not yet bound a call to a
-verified account identity. Token/account identity remains
+All limitations listed in issue #15 are now implemented. The connector is still
+not a security boundary: broker/worker hardening, OS isolation and independent
+security review remain HOLD. Token/account identity remains
 unverified, so the connector is not yet a security boundary.
 
 Workflow binding and typed repository encoding (the last two limitations issue
@@ -489,6 +489,14 @@ re-running a workflow outside that list is denied before any request.
 Repositories are parsed by a typed ``RepositoryRef`` (exactly two segments, no
 traversal) and percent-encoded per provider (GitHub's slash form, GitLab's
 ``%2F`` form) instead of a naive string replace.
+
+Token/account identity: ``verify_identity(expected_account)`` reads the official
+account endpoint (`/user` for GitHub, `/api/v4/user` for GitLab) through the same
+redirect-refusing, content-type-checked, bounded transport, and reports
+``authenticated`` only when the returned login/username matches the grant's
+account. A mismatch returns ``identity_mismatch`` instead of proceeding, and a
+missing token returns ``configured`` — a token is an identity, never write or
+Shell authorization.
 
 ## Not implemented in this slice (HOLD)
 

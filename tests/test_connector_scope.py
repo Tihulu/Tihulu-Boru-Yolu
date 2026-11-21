@@ -1,5 +1,6 @@
 """Connector request-scope tests (issue #15): binding, overrides, zero requests."""
 import json
+import os
 import threading
 import time
 import unittest
@@ -272,3 +273,51 @@ class TransportHardeningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdentityVerificationTests(unittest.TestCase):
+    """A token proves an identity, never write or Shell authorization."""
+
+    def setUp(self):
+        os.environ["BORU_TEST_GH_TOKEN"] = "not-a-real-token"
+        self.provider = GitHubProvider(token_env="BORU_TEST_GH_TOKEN")
+        self.grant = grant(operations=("list_issues",), account="owner", nonce="id-1")
+
+    def tearDown(self):
+        os.environ.pop("BORU_TEST_GH_TOKEN", None)
+
+    def test_matching_identity_is_authenticated(self):
+        self.provider._transport = lambda method, path, body: (200, b'{"login": "owner"}')
+        self.assertEqual((True, "authenticated"),
+                         self.provider.verify_identity(self.grant.account, timeout=5))
+
+    def test_mismatched_identity_is_refused(self):
+        self.provider._transport = lambda method, path, body: (200, b'{"login": "attacker"}')
+        self.assertEqual((False, "identity_mismatch"),
+                         self.provider.verify_identity(self.grant.account, timeout=5))
+
+    def test_missing_token_is_only_configured(self):
+        os.environ.pop("BORU_TEST_GH_TOKEN", None)
+        self.assertEqual((False, "configured"),
+                         self.provider.verify_identity(self.grant.account, timeout=5))
+
+    def test_bad_grant_account_is_refused(self):
+        self.provider._transport = lambda method, path, body: (200, b'{"login": "owner"}')
+        self.assertEqual((False, "grant_account_invalid"),
+                         self.provider.verify_identity("", timeout=5))
+
+    def test_invalid_identity_response_is_refused(self):
+        self.provider._transport = lambda method, path, body: (200, b'{"login": ""}')
+        self.assertEqual((False, "identity_endpoint_refused"),
+                         self.provider.verify_identity(self.grant.account, timeout=5))
+
+    def test_gitlab_identity_uses_username(self):
+        from boru.connectors.gitlab import GitLabProvider
+
+        os.environ["BORU_TEST_GL_TOKEN"] = "not-a-real-token"
+        provider = GitLabProvider(token_env="BORU_TEST_GL_TOKEN")
+        provider._transport = lambda method, path, body: (200, b'{"username": "owner"}')
+        self.assertEqual((True, "authenticated"), provider.verify_identity("owner", timeout=5))
+        provider._transport = lambda method, path, body: (200, b'{"username": "other"}')
+        self.assertEqual((False, "identity_mismatch"), provider.verify_identity("owner", timeout=5))
+        os.environ.pop("BORU_TEST_GL_TOKEN", None)

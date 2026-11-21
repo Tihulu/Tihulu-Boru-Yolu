@@ -11,7 +11,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
@@ -60,6 +60,31 @@ class GitLabProvider(RepositoryProvider):
         if self.token_env:
             return "configured"
         return "disconnected"
+
+    def verify_identity(self, expected_account: str, timeout: float = 10.0) -> Tuple[bool, str]:
+        """Verify the account behind the token against the grant's account."""
+        if not self.token_env or not os.environ.get(self.token_env):
+            return False, "configured"
+        if not expected_account or not isinstance(expected_account, str):
+            return False, "grant_account_invalid"
+        try:
+            status, raw = self._account_request(timeout)
+        except ConnectorDenied as exc:
+            return False, str(exc)
+        if status != 200:
+            return False, "identity_endpoint_refused"
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False, "invalid_response"
+        if not isinstance(data, dict):
+            return False, "invalid_response"
+        username = data.get("username")
+        if not isinstance(username, str) or not username.strip():
+            return False, "identity_endpoint_refused"
+        if username != expected_account:
+            return False, "identity_mismatch"
+        return True, "authenticated"
 
     def audit(self) -> List[Dict[str, Any]]:
         return list(self._audit)
@@ -149,6 +174,30 @@ class GitLabProvider(RepositoryProvider):
             "create_release": "/api/v4/projects/{}/releases".format(project),
         }
         return paths.get(operation, "")
+
+    def _account_request(self, timeout: float) -> Tuple[int, bytes]:
+        if self._transport is not None:
+            return self._transport("GET", "/api/v4/user", {})
+        opener = urllib.request.build_opener(_NoRedirect)
+        headers = {"Accept": "application/json", "User-Agent": "tihulu-boru-core"}
+        token = os.environ.get(self.token_env) if self.token_env else None
+        if token:
+            headers["PRIVATE-TOKEN"] = token.strip()
+        request = urllib.request.Request(self.base_url + "/api/v4/user", method="GET",
+                                          headers=headers)
+        try:
+            with opener.open(request, timeout=timeout) as response:
+                content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
+                if content_type and content_type not in ("application/json", "text/plain"):
+                    raise ConnectorDenied("unexpected_content_type")
+                return response.status, response.read(512 * 1024)
+        except ConnectorDenied:
+            raise
+        except urllib.error.HTTPError as error:
+            body_bytes = error.read() if hasattr(error, "read") else b""
+            return error.code, body_bytes
+        except urllib.error.URLError:
+            raise ConnectorDenied("endpoint_unavailable")
 
     @staticmethod
     def _project(payload) -> str:

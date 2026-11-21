@@ -63,6 +63,35 @@ class GitHubProvider(RepositoryProvider):
             return "configured"
         return "disconnected"
 
+    def verify_identity(self, expected_account: str, timeout: float = 10.0) -> Tuple[bool, str]:
+        """Verify the account behind the token against the grant's account.
+
+        A token proves an identity, never write or Shell authorization; a
+        mismatch is reported instead of silently accepted.
+        """
+        if not self.token_env or not os.environ.get(self.token_env):
+            return False, "configured"
+        if not expected_account or not isinstance(expected_account, str):
+            return False, "grant_account_invalid"
+        try:
+            status, raw = self._account_request(timeout)
+        except ConnectorDenied as exc:
+            return False, str(exc)
+        if status != 200:
+            return False, "identity_endpoint_refused"
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False, "invalid_response"
+        if not isinstance(data, dict):
+            return False, "invalid_response"
+        login = data.get("login")
+        if not isinstance(login, str) or not login.strip():
+            return False, "identity_endpoint_refused"
+        if login != expected_account:
+            return False, "identity_mismatch"
+        return True, "authenticated"
+
     # -- grants --------------------------------------------------------------
 
     def audit(self) -> List[Dict[str, Any]]:
@@ -180,6 +209,30 @@ class GitHubProvider(RepositoryProvider):
         return paths.get(operation, "")
 
     # -- bounded HTTP --------------------------------------------------------
+    def _account_request(self, timeout: float) -> Tuple[int, bytes]:
+        if self._transport is not None:
+            return self._transport("GET", "/user", {})
+        opener = urllib.request.build_opener(_NoRedirect)
+        headers = {"Accept": "application/vnd.github+json",
+                   "User-Agent": "tihulu-boru-core"}
+        token = os.environ.get(self.token_env) if self.token_env else None
+        if token:
+            headers["Authorization"] = "Bearer " + token.strip()
+        request = urllib.request.Request(self.base_url + "/user", method="GET", headers=headers)
+        try:
+            with opener.open(request, timeout=timeout) as response:
+                content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
+                if content_type and content_type not in ("application/json", "text/plain"):
+                    raise ConnectorDenied("unexpected_content_type")
+                return response.status, response.read(512 * 1024)
+        except ConnectorDenied:
+            raise
+        except urllib.error.HTTPError as error:
+            body_bytes = error.read() if hasattr(error, "read") else b""
+            return error.code, body_bytes
+        except urllib.error.URLError:
+            raise ConnectorDenied("endpoint_unavailable")
+
     @staticmethod
     def _repository(payload) -> str:
         from .scope import RepositoryRef

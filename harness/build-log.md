@@ -510,3 +510,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** grants may declare ``workflow_ids``; `dispatch_workflow`, `configure_workflow` and `rerun_workflow` outside that list are denied before any request; a typed ``RepositoryRef`` parses exactly two non-traversing segments and percent-encodes them per provider (GitHub slash form, GitLab ``%2F``) replacing a naive string replace; connector tests updated to declare the workflows they use.
 - **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **507 tests** (5 new tests). MOCK/STATIC only.
 - **Defects found and fixed while wiring this:** a stray ``@dataclass`` decorator landed on a helper function and a later fix removed the real one from ``Grant`` (both caught by the suite immediately); the typed encoding was called as a bare name instead of a method in one provider.
+
+---
+
+### 2026-11-21 10:45 UTC — token/account identity verification (commit on `p1/boru-core-vertical-slice`)
+
+- **Changes made:** ``verify_identity(expected_account)`` on both connectors reads the official account endpoint through the same hardened transport and matches the returned login/username against the grant's account; ``IdentityVerificationTests`` cover match, mismatch, missing token, bad account and malformed response.
+- **Tests observed:** `scripts/check_project.py` PASS; `unittest discover -s tests` PASS **513 tests**. MOCK/STATIC only.
+- **Security implications:** a token is reported as identity only; a mismatched account is ``identity_mismatch`` and never proceeds; a missing token is only ``configured``. No credential is printed or logged.
