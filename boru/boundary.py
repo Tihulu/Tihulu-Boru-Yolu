@@ -16,6 +16,9 @@ from typing import Any, Dict, Optional, Tuple
 
 from .errors import PolicyViolation
 
+#: The widest data class: used when a payload cannot be classified at all.
+WIDEST_DATA_CLASS = "L2"
+
 BOUNDARIES: Tuple[str, ...] = ("model_inference", "repository_api", "local_worker", "local_disk")
 DATA_CLASSES: Tuple[str, ...] = ("none", "L0", "L1", "L2")
 _RANK = {value: index for index, value in enumerate(DATA_CLASSES)}
@@ -97,6 +100,25 @@ class CrossBoundaryGuard:
     def uses(self, task_id: str) -> int:
         _bounded(task_id)
         return self._used.get(task_id, 0)
+
+
+def classify_payload(messages: Any) -> str:
+    """Derive the data class of the actual outbound payload.
+
+    A caller never states what crosses a boundary: the payload is classified
+    from its content.  An empty payload carries nothing; any real content is
+    at least ``L0``; a payload that is not bounded text cannot be classified
+    and is treated as the widest class, so it is refused unless declared.
+    """
+    if not isinstance(messages, (list, tuple)):
+        return "L2"
+    for message in messages:
+        content = getattr(message, "content", None)
+        if not isinstance(content, str):
+            return "L2"
+        if content.strip():
+            return "L0"
+    return "none"
 
 
 def _bounded(value: Any) -> str:

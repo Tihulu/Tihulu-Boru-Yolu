@@ -10,19 +10,34 @@ Two bypasses are closed here, before any transport is constructed:
    override is refused unless the operation defines it.
 
 Additionally, path slots are checked for characters that would escape the
-intended URL (control characters, spaces, `..`, `%`, `?`, `#`, backslashes and
-userinfo), and an implicit default-branch file read is refused so the reference
-must be explicit.
+intended URL (control characters including NUL, spaces, `..`, `%`, `?`, `#`,
+backslashes and userinfo), and an implicit default-branch file read is refused
+so the reference must be explicit.
+
+The check also returns the **validated slots** the caller must use to build the
+request, so the value that was checked is the value that reaches the endpoint:
+there is no second parse and no second interpretation.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 from ..errors import ConnectorDenied
 
 #: Characters that must not appear inside any slot (URL-escape or control risk).
 FORBIDDEN_CHARS = ("?", "#", "\\", " ", "\t", "\n", "\r", "%", "@", ":", "&", "=", "\"")
+
+#: Dispatch bodies are bounded: the granted reference and small typed inputs.
+MAX_BODY_KEYS = 10
+MAX_BODY_VALUE_CHARS = 512
+
+
+def _check_control(value: str, label: str) -> None:
+    """Reject every control character, including NUL, inside a slot."""
+    for character in value:
+        if ord(character) < 0x20 or ord(character) == 0x7F:
+            raise ConnectorDenied("unsafe_" + label)
 
 #: Characters that must not appear inside a reference/branch/slot-without-slash.
 FORBIDDEN_SLASH_CHARS = FORBIDDEN_CHARS + ("/",)
@@ -49,6 +64,7 @@ def _slot(value: Any, label: str, limit: int = 256, *, allow_slash: bool = False
         raise ConnectorDenied("unsafe_" + label)
     forbidden = FORBIDDEN_CHARS if allow_slash else FORBIDDEN_SLASH_CHARS
     _check_chars(value, forbidden, label)
+    _check_control(value, label)
     _check_segments(value, label)
     return value
 
@@ -116,7 +132,7 @@ def _decode(value: str) -> str:
 
 
 def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method: Optional[str],
-               path: Optional[str], default_method: Optional[str]) -> None:
+               path: Optional[str], default_method: Optional[str]) -> Dict[str, str]:
     """Raise ``ConnectorDenied`` if this call is not exactly the granted one.
 
     Called by every provider immediately before an official endpoint URL is
@@ -164,12 +180,15 @@ def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method
         if not str(run_id).isdigit():
             raise ConnectorDenied("unsafe_run_id")
     workflow = payload.get("workflow")
-    if workflow is not None:
+    if workflow is not None or operation in ("rerun_workflow", "configure_workflow",
+                                             "dispatch_workflow"):
+        # A run belongs to a workflow: without a granted workflow name the
+        # operation cannot be scoped, so it is refused rather than guessed.
+        if workflow is None:
+            raise ConnectorDenied("workflow_required")
         workflow = _slot(workflow, "workflow", 256, allow_slash=True)
         allowed_workflows = getattr(grant, "workflow_ids", ()) or ()
-        if allowed_workflows and workflow not in allowed_workflows:
-            raise ConnectorDenied("workflow_not_granted")
-        if not allowed_workflows:
+        if not allowed_workflows or workflow not in allowed_workflows:
             raise ConnectorDenied("workflow_not_granted")
     sha = payload.get("sha")
     if sha is not None:
@@ -183,3 +202,67 @@ def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method
             continue
         if not isinstance(value, str) or not value.strip() or len(value) > 256:
             raise ConnectorDenied("grant_" + name + "_invalid")
+    return validated_slots(payload)
+
+
+def validated_slots(payload: Mapping[str, Any]) -> Dict[str, str]:
+    """Return the checked slot values a caller must use to build the request.
+
+    Every provider builds its official path from this mapping, so a value that
+    passes the check is the value that reaches the transport.
+    """
+    payload = payload or {}
+    slots: Dict[str, str] = {}
+    repository = payload.get("repository")
+    if repository is not None:
+        slots["repository"] = _slot(repository, "repository", 256, allow_slash=True)
+    reference = payload.get("reference", payload.get("branch"))
+    if reference is not None:
+        slots["reference"] = _slot(str(reference), "reference", 256)
+    for name, limit, digits in (("issue", 32, True), ("run_id", 32, True),
+                                ("workflow", 256, False), ("sha", 64, False)):
+        value = payload.get(name)
+        if value is None:
+            continue
+        text = _slot(str(value), name, limit, allow_slash=name == "workflow")
+        if digits and not text.isdigit():
+            raise ConnectorDenied("unsafe_" + name)
+        slots[name] = text
+    file_path = payload.get("path")
+    if file_path is not None:
+        slots["path"] = _slot(file_path, "path", 512, allow_slash=True)
+    return slots
+
+
+def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]]) -> None:
+    """Validate a workflow dispatch body before any transport is built.
+
+    The body's ``ref`` must be exactly the granted reference (a payload can
+    never widen it) and its ``inputs`` must be a bounded object of bounded
+    values, so no unbounded or structured payload reaches the endpoint.
+    """
+    if body is None:
+        raise ConnectorDenied("body_required")
+    if not isinstance(body, Mapping):
+        raise ConnectorDenied("invalid_body")
+    if len(body) > MAX_BODY_KEYS:
+        raise ConnectorDenied("body_too_large")
+    reference = body.get("ref")
+    if reference is None:
+        raise ConnectorDenied("reference_required")
+    if str(reference) != str(getattr(grant, "reference", "") or ""):
+        raise ConnectorDenied("reference_not_granted")
+    inputs = body.get("inputs") or {}
+    if not isinstance(inputs, Mapping):
+        raise ConnectorDenied("invalid_body")
+    if len(inputs) > MAX_BODY_KEYS:
+        raise ConnectorDenied("body_too_large")
+    for key, value in inputs.items():
+        if not isinstance(key, str) or not key.strip() or len(key) > 64:
+            raise ConnectorDenied("unsafe_body_key")
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise ConnectorDenied("unsafe_body_value")
+        if isinstance(value, str):
+            _check_control(value, "body_value")
+            if len(value) > MAX_BODY_VALUE_CHARS:
+                raise ConnectorDenied("body_too_large")

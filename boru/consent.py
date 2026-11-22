@@ -23,6 +23,8 @@ from .errors import ConfigurationError
 
 SCHEMA_VERSION = 2
 DEFAULT_TTL_SECONDS = 900.0
+#: A declared resource alias may be a long owner-declared path.
+MAX_ALIAS_LENGTH = 1024
 MAX_NONCES = 8192
 LEVELS = ("L0", "L1", "L2")
 LEVEL_RANK = {"L0": 0, "L1": 1, "L2": 2}
@@ -62,6 +64,24 @@ def _identifier(value: Any, limit: int, label: str) -> str:
         return safe_identifier(value, limit, label)
     except Exception as exc:
         raise ConsentValidationError(str(exc))
+
+
+def _binding(value: Any, limit: int, label: str) -> str:
+    """A bounded binding token for one grant field.
+
+    The resource alias is bound here, not judged: an owner-declared alias may
+    be a short name or an absolute path, and whether a path is a *declared*
+    resource is the broker's decision.  This store only guarantees the value
+    is bounded, trimmed and free of control characters.
+    """
+    if not isinstance(value, str):
+        raise ConsentValidationError(label + " must be a string")
+    if not value.strip() or value.strip() != value or len(value) > limit:
+        raise ConsentValidationError(label + " must be a bounded, trimmed string")
+    for character in value:
+        if ord(character) < 0x20 or ord(character) == 0x7F or character.isspace():
+            raise ConsentValidationError(label + " contains an unsafe character")
+    return value
 
 
 class ConsentStore:
@@ -137,7 +157,7 @@ class ConsentStore:
                                    ("nonce", nonce, 64)):
             _identifier(value, limit, name)
         if alias is not None:
-            _identifier(alias, 64, "alias")
+            _binding(alias, MAX_ALIAS_LENGTH, "alias")
         if level not in LEVELS:
             raise ConsentValidationError("level must be L0, L1 or L2")
         stamp = time.time() if now is None else _stamp(now, "now")
@@ -189,7 +209,7 @@ class ConsentStore:
                 return False
         if alias is not None:
             try:
-                _identifier(alias, 64, "alias")
+                _binding(alias, MAX_ALIAS_LENGTH, "alias")
             except Exception:
                 return False
         stamp = _stamp(now, "now") if now is not None else time.time()

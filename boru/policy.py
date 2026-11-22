@@ -28,6 +28,11 @@ EXECUTION_PROFILES: Tuple[str, ...] = (
     "CLOUD_SHELL_TRUSTED",
 )
 DISCLOSURE_POLICIES: Tuple[str, ...] = ("MINIMUM_NECESSARY", "SCOPED_APPROVED")
+
+#: Every sizing limit carries an upper as well as a lower bound, so a policy
+#: can never widen a guard rail to an unbounded value.
+MAX_RESULT_FIELDS_LIMIT = 32
+MAX_RETRIES_LIMIT = 8
 CLOUD_SHELL_PROFILES = frozenset({"CLOUD_SHELL_APPROVAL", "CLOUD_SHELL_TRUSTED"})
 DISCLOSURE_LEVELS: Tuple[str, ...] = ("L0", "L1", "L2")
 
@@ -99,10 +104,12 @@ class Policy:
             errors.append("unknown disclosure policy")
         if isinstance(self.max_agents, bool) or not isinstance(self.max_agents, int) or not 1 <= self.max_agents <= 6:
             errors.append("max_agents must be 1..6")
-        if isinstance(self.max_result_fields, bool) or not isinstance(self.max_result_fields, int) or self.max_result_fields < 1:
-            errors.append("max_result_fields must be a positive integer")
-        if not isinstance(self.max_retries, int) or isinstance(self.max_retries, bool) or self.max_retries < 0:
-            errors.append("max_retries must be a non-negative integer")
+        if isinstance(self.max_result_fields, bool) or not isinstance(self.max_result_fields, int) \
+                or not 1 <= self.max_result_fields <= MAX_RESULT_FIELDS_LIMIT:
+            errors.append("max_result_fields must be 1..{}".format(MAX_RESULT_FIELDS_LIMIT))
+        if isinstance(self.max_retries, bool) or not isinstance(self.max_retries, int) \
+                or not 0 <= self.max_retries <= MAX_RETRIES_LIMIT:
+            errors.append("max_retries must be 0..{}".format(MAX_RETRIES_LIMIT))
         if self.inference_scope == "LOCAL_ONLY" and self.cloud_fallback_enabled:
             errors.append("LOCAL_ONLY forbids cloud fallback")
         if self.execution_profile in CLOUD_SHELL_PROFILES:

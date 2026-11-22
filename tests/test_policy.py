@@ -90,5 +90,16 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(4, len(EXECUTION_PROFILES))
 
 
+    def test_sizing_limits_are_bounded_at_both_ends(self):
+        # a policy refuses at construction when a guard rail is unbounded
+        for bad in (0, True, "4", -1, 33):
+            with self.assertRaises(ContractError):
+                Policy(max_result_fields=bad)
+        for bad in (-1, True, 9, 9999):
+            with self.assertRaises(ContractError):
+                Policy(max_retries=bad)
+        self.assertEqual([], Policy(max_result_fields=32, max_retries=8).validate())
+
+
 if __name__ == "__main__":
     unittest.main()

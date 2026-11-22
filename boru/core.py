@@ -26,7 +26,7 @@ from .errors import ContractError, PolicyViolation, StoreError, VerificationErro
 from .policy import LOCAL_PROVIDERS
 from .providers.base import ChatMessage, ChatReply, ProviderFailure
 from .audit import RejectionLedger
-from .boundary import CrossBoundaryGuard
+from .boundary import CrossBoundaryGuard, classify_payload
 from .budgets import Budget, BudgetLedger, CooldownTracker, compact, estimate_message_tokens
 from .router import Router, RoutingDecision, should_retry
 from .scheduler import AgentScheduler, AgentSpec, build_envelopes
@@ -337,9 +337,12 @@ class BoruCore:
             provider = self._providers.get(candidate.provider)
             kind = self._provider_kind(candidate.provider)
             if kind in ("jan", "cloud"):
-                # A real outbound transport must be declared before it is used.
+                # A real outbound transport must be declared before it is used,
+                # and the classification is derived from the payload that will
+                # actually be sent, never from a caller's claim.
                 recipient = "cloud" if kind == "cloud" else "local"
-                if not self._boundary_declared(envelope, recipient):
+                if not self._boundary_declared(envelope, recipient,
+                                               data_class=classify_payload(messages)):
                     self.audit.record("policy", envelope.task_id, "unclassified_boundary", "policy")
                     self._hold(envelope, REASONS["unclassified_boundary"])
                     return self._summary(envelope)
@@ -347,9 +350,10 @@ class BoruCore:
                 continue
             self.router.registry.mark_health(candidate.provider, candidate.model_id, "degraded", "provider_missing")
             try:
+                # The very messages that were classified are the ones sent.
                 reply = provider.chat(
                     candidate.model_id,
-                    self._messages(envelope),
+                    messages,
                     max_tokens=self.config.max_output_tokens,
                     timeout=self.config.request_timeout,
                 )
@@ -408,10 +412,15 @@ class BoruCore:
                 return "mock"
         return "unknown"
 
-    def _boundary_declared(self, envelope: TaskEnvelope, recipient: str) -> bool:
-        """An outbound direction must be declared before any call (issue #9)."""
+    def _boundary_declared(self, envelope: TaskEnvelope, recipient: str,
+                           data_class: str = "none") -> bool:
+        """An outbound direction must be declared before any call (issue #9).
+
+        ``data_class`` is the class derived from the actual payload, so a
+        payload that carries more than the owner declared is refused here.
+        """
         allowed, _ = self.guard.check(envelope.task_id, recipient=recipient, boundary="model_inference",
-                                      data_class="none")
+                                      data_class=data_class, grant_ref=envelope.consent_reference)
         if allowed:
             return True
         allowed, _ = self.guard.check("*", recipient=recipient, boundary="model_inference",
@@ -448,7 +457,7 @@ class BoruCore:
         result = self._result(envelope, attempt_id, provider_name, model_id, reply)
         problems = result.validate(self.policy.max_result_fields)
         if problems or not self._reply_matches(reply, provider_name, model_id):
-            self.store.save_result(envelope.task_id, attempt_id, result)
+            # A failed verification is never persisted as a result.
             self._fail(envelope, REASONS["verification_failed"])
             return self._summary(envelope)
         ceiling_ok, ceiling_reason = self.budgets.record(
@@ -521,13 +530,27 @@ class BoruCore:
         return [ChatMessage(role="user", content=envelope.goal)]
 
     def _reply_matches(self, reply: ChatReply, provider_name: str, model_id: str) -> bool:
+        """A reply must come from the provider and model it is recorded against.
+
+        The reply's own ``evidence_class`` claim is deliberately not trusted
+        here: the recorded class is derived from provider provenance.
+        """
         return (
             reply.provider == provider_name
             and reply.model_id == model_id
-            and reply.evidence_class in ("direct", "simulated")
             and isinstance(reply.request_id, str)
             and bool(reply.request_id.strip())
         )
+
+    #: Evidence class derived from provider provenance, never from a claim.
+    PROVENANCE_EVIDENCE = {
+        "mock": "simulated",   # a synthetic model never produced live evidence
+        "jan": "direct",       # a real local model call, identified by request id
+    }
+
+    def _evidence_class_for(self, provider_name: str) -> str:
+        """The recorded evidence class comes from provenance, not a reply."""
+        return self.PROVENANCE_EVIDENCE.get(self._provider_kind(provider_name), "unknown")
 
     def _result(self, envelope, attempt_id, provider_name, model_id, reply) -> AgentResult:
         return AgentResult(
@@ -536,7 +559,7 @@ class BoruCore:
             status="completed",
             model_provider=provider_name,
             model_id=model_id,
-            evidence_class=reply.evidence_class,
+            evidence_class=self._evidence_class_for(provider_name),
             typed_result={"text": reply.content},
             child_session_ref=None,
             evidence_refs=(reply.request_id,),

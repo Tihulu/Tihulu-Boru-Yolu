@@ -23,6 +23,12 @@ from .policy import (
 )
 
 SCHEMA_VERSION = 1
+#: Typed payloads are shallow and small: depth, keys and values are bounded so
+#: a nested structure cannot smuggle unbounded or private content through.
+MAX_RESULT_DEPTH = 2
+MAX_PAYLOAD_KEYS = 32
+MAX_PAYLOAD_STRING_CHARS = 512
+MAX_PAYLOAD_INT = 10 ** 12
 EVIDENCE_CLASSES: Tuple[str, ...] = ("direct", "user_reported", "simulated", "unknown")
 COMPLEXITY_LEVELS: Tuple[str, ...] = ("simple", "medium", "difficult")
 RESULT_STATUSES: Tuple[str, ...] = ("completed", "failed", "cancelled", "timeout")
@@ -56,6 +62,43 @@ FORBIDDEN_RESULT_KEYS = frozenset(
 
 def _names(cls) -> Tuple[str, ...]:
     return tuple(f.name for f in fields(cls))
+
+
+def _payload_error(value: Any, depth: int = 0) -> Optional[str]:
+    """Reject anything that is not bounded, typed and free of private keys.
+
+    The forbidden key check is recursive: nesting a private field inside an
+    innocent key does not launder it.
+    """
+    if depth > MAX_RESULT_DEPTH:
+        return "payload is nested too deeply"
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        if not math.isfinite(value) or not 0 <= value <= MAX_PAYLOAD_INT:
+            return "count is out of the bounded range"
+        return None
+    if isinstance(value, float):
+        return None if math.isfinite(value) else "float must be finite"
+    if isinstance(value, str):
+        if len(value) > MAX_PAYLOAD_STRING_CHARS:
+            return "string exceeds the bounded length"
+        if any(character in value for character in ("\n", "\r", "\x00")):
+            return "string contains control characters"
+        return None
+    if isinstance(value, Mapping):
+        if len(value) > MAX_PAYLOAD_KEYS:
+            return "object has too many keys"
+        for key, item in value.items():
+            if not isinstance(key, str) or not key.strip() or len(key) > 64:
+                return "object key is oversized"
+            if key in FORBIDDEN_RESULT_KEYS:
+                return "private field is not releasable at any depth: " + key
+            error = _payload_error(item, depth + 1)
+            if error:
+                return error
+        return None
+    return "unsupported payload type"
 
 
 def _string_tuple_errors(value: Any, label: str) -> list:
@@ -294,6 +337,12 @@ class AgentResult:
         leak = sorted(set(self.typed_result) & FORBIDDEN_RESULT_KEYS)
         if leak:
             errors.append("typed_result may not carry private fields: " + ", ".join(leak))
+        payload_error = _payload_error(dict(self.typed_result))
+        if payload_error:
+            errors.append("typed_result rejected: " + payload_error)
+        usage_error = _payload_error(dict(self.usage_if_observed))
+        if usage_error:
+            errors.append("usage_if_observed rejected: " + usage_error)
         if len(self.typed_result) > max_result_fields:
             errors.append("typed_result exceeds max_result_fields")
         if self.schema_version != SCHEMA_VERSION:

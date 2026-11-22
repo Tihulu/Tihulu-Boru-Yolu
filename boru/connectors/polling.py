@@ -7,7 +7,9 @@ opens a listener, never inverts the allowlist, and never re-processes an event.
 
 Guarantees:
 * only event types on the owner's allowlist are accepted;
-* each event id is processed once (bounded, restart-safe idempotency);
+* each event id is processed once (bounded, restart-safe idempotency): an
+  id that leaves the window is never replayed, and a full registry refuses
+  new work instead of forgetting old ids;
 * an unknown or malformed event is refused, not silently skipped into work;
 * the cursor is monotonic and reported, so a sync is observable.
 """
@@ -19,7 +21,9 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 from ..errors import ConnectorDenied
 
 MAX_EVENTS = 256
-MAX_SEEN = 4096
+#: The seen registry is bounded and never forgets: once it is full, further new
+#: ids are refused rather than silently replaying an evicted one.
+MAX_SEEN = 8192
 
 
 @dataclass(frozen=True)
@@ -69,7 +73,12 @@ class PollingSync:
 
     def __init__(self, allowlist: EventAllowlist, seen: Optional[Iterable[str]] = None) -> None:
         self.allowlist = allowlist
-        self._seen: List[str] = list(seen or [])
+        self._seen: List[str] = []
+        self._seen_set: Set[str] = set()
+        for event_id in (seen or ()):
+            if isinstance(event_id, str) and event_id and event_id not in self._seen_set:
+                self._seen.append(event_id)
+                self._seen_set.add(event_id)
 
     @property
     def seen(self) -> Tuple[str, ...]:
@@ -94,7 +103,7 @@ class PollingSync:
                 raise ConnectorDenied("events_malformed")
             if not self.allowlist.permits(event.event_type):
                 raise ConnectorDenied("event_type_not_allowed")
-            if event.event_id in self._seen:
+            if event.event_id in self._seen_set:
                 continue  # already processed: idempotent, never rework
             parsed.append(event)
         return parsed
@@ -103,13 +112,15 @@ class PollingSync:
         """Mark events as processed and return the newly accepted ones."""
         fresh: List[SyncEvent] = []
         for event in events:
-            if event.event_id in self._seen:
+            if event.event_id in self._seen_set:
                 continue
             self._remember(event.event_id)
             fresh.append(event)
         return fresh
 
     def _remember(self, event_id: str) -> None:
+        """Record one processed id; a full registry refuses, never forgets."""
+        if len(self._seen) >= MAX_SEEN:
+            raise ConnectorDenied("seen_registry_full")
         self._seen.append(event_id)
-        if len(self._seen) > MAX_SEEN:
-            del self._seen[: len(self._seen) - MAX_SEEN]
+        self._seen_set.add(event_id)

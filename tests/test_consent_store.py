@@ -149,13 +149,22 @@ class PersistentConsentTests(unittest.TestCase):
                 store.grant(grant_id="a2", recipient="cloud", task_id="t1", field_name="excerpt",
                             alias="demo", level="L2", expires_at=time.time() + 60, nonce="na5")
 
-    def test_a_path_can_never_be_a_grant_identifier(self):
+    def test_an_alias_is_a_bounded_binding_not_a_judged_path(self):
+        # path policy belongs to the broker/allowlist: this store only binds a
+        # bounded, trimmed token with no control characters
         with ConsentStore(self.path) as store:
-            for bad in ("../elsewhere", "/home/EXAMPLE/data", "a/b", " ", "x" * 200):
+            for bad in ("", " ", "with space", "x" * 1025):
                 with self.assertRaises(ConfigurationError):
                     store.grant(grant_id="p", recipient="cloud", task_id="t1",
                                 field_name="excerpt", alias=bad, level="L0",
                                 expires_at=time.time() + 60, nonce="np")
+            # a declared absolute path is a legal binding token here
+            store.grant(grant_id="p1", recipient="cloud", task_id="t1",
+                        field_name="excerpt", alias="/home/EXAMPLE/data", level="L0",
+                        expires_at=time.time() + 60, nonce="np1")
+            self.assertTrue(store.check(grant_id="p1", recipient="cloud", task_id="t1",
+                                        field_name="excerpt", alias="/home/EXAMPLE/data",
+                                        nonce="np1"))
 
     def test_used_nonces_stay_bounded(self):
         with ConsentStore(self.path) as store:

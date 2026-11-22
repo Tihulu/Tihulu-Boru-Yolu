@@ -17,9 +17,21 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
-from .scope import check_call
+from .scope import check_call, check_dispatch_body
 
 API_BASE = "https://api.github.com"
+#: An error body is diagnostic, never a payload: keep only a bounded prefix.
+MAX_ERROR_BODY_BYTES = 4 * 1024
+
+
+def _bounded_read(stream, limit: int) -> bytes:
+    """Read at most ``limit`` bytes from an HTTP error body."""
+    if not hasattr(stream, "read"):
+        return b""
+    try:
+        return stream.read(limit)
+    except Exception:  # pragma: no cover - defensive cleanup
+        return b""
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -50,6 +62,8 @@ class GitHubProvider(RepositoryProvider):
         self._audit: List[Dict[str, Any]] = []
         self._calls: Dict[str, int] = {}
         self._ledger = audit
+        # The verified account identity, cached per provider instance.
+        self._identity_account: Optional[str] = None
 
     # -- identity ------------------------------------------------------------
     def capabilities(self) -> Tuple[Capability, ...]:
@@ -68,10 +82,10 @@ class GitHubProvider(RepositoryProvider):
         allowed, reason = self.check(grant, "list_workflows")
         if not allowed:
             raise ConnectorDenied(reason)
-        check_call(grant, "list_workflows", payload or {}, method=None, path="",
-                   default_method="GET")
+        slots = check_call(grant, "list_workflows", payload or {}, method=None, path="",
+                           default_method="GET")
         status, raw = self._exchange("list_workflows", "GET",
-                                     self._path_for("list_workflows", payload or {}), {})
+                                     self._path_for("list_workflows", slots), {})
         if status >= 300:
             raise ConnectorDenied("http_" + str(status))
         from .workflows import parse_workflows
@@ -137,40 +151,68 @@ class GitHubProvider(RepositoryProvider):
             raise ConnectorDenied("unknown_operation")
         allowed, reason = self.check(grant, operation)
         if not allowed:
-            self._audit.append({"at": int(time.time()), "grant": grant.grant_id, "operation": operation,
-                                "decision": "deny", "reason": reason})
-            if self._ledger is not None:
-                self._ledger.record("connector", grant.grant_id, reason, operation)
+            self._deny(grant, operation, reason)
             raise ConnectorDenied(reason)
         # The requested repository/reference must be the granted one, and no raw
         # method/path override may reach the official endpoint (issue #15).
         if path:
             raise ConnectorDenied("path_override_refused")
         try:
-            check_call(grant, operation, payload or {}, method=method, path=path,
-                       default_method=self._MUTATING.get(operation, "GET"))
+            # The slots returned here are the only values used to build the
+            # request: what was checked is what is sent.
+            slots = check_call(grant, operation, payload or {}, method=method, path=path,
+                               default_method=self._MUTATING.get(operation, "GET"))
         except ConnectorDenied as exc:
-            self._audit.append({"at": int(time.time()), "grant": grant.grant_id,
-                                "operation": operation, "decision": "deny",
-                                "reason": str(exc)})
-            if self._ledger is not None:
-                self._ledger.record("connector", grant.grant_id, str(exc), operation)
+            self._deny(grant, operation, str(exc))
             raise
-        path = self._path_for(operation, payload or {})
+        # A dispatch body is validated before any transport is constructed.
+        if operation == "dispatch_workflow":
+            try:
+                check_dispatch_body(grant, body or {})
+            except ConnectorDenied as exc:
+                self._deny(grant, operation, str(exc))
+                raise
+        # A token proves an identity, never write or Shell authorization: the
+        # account behind it must match the grant's account before a request.
+        self._require_account_identity(grant)
+        path = self._path_for(operation, slots)
         if method is None:
             method = self._MUTATING.get(operation, "GET")
         status, raw = self._exchange(operation, method, path, body or {})
         self._verify_response(operation, payload or {}, raw)
         self._calls[grant.grant_id] = self._calls.get(grant.grant_id, 0) + 1
         event_reason = "ok" if status < 300 else "http_" + str(status)
+        # A URL path never enters the audit event: the operation and status
+        # describe the call without naming a repository route.
         self._audit.append({"at": int(time.time()), "grant": grant.grant_id, "operation": operation,
-                            "path": path, "status": status, "decision": "allow", "reason": event_reason})
+                            "path_kind": "official_endpoint", "status": status,
+                            "decision": "allow", "reason": event_reason})
         if status >= 300:
             raise ConnectorDenied("http_" + str(status))
         try:
             return json.loads(raw.decode("utf-8")) if raw else {}
         except json.JSONDecodeError:
             raise ConnectorDenied("invalid_response")
+
+    # -- identity -------------------------------------------------------------
+    def _deny(self, grant: Grant, operation: str, reason: str) -> None:
+        """Record a denial without any repository route."""
+        self._audit.append({"at": int(time.time()), "grant": grant.grant_id,
+                            "operation": operation, "decision": "deny", "reason": reason})
+        if self._ledger is not None:
+            self._ledger.record("connector", grant.grant_id, reason, operation)
+
+    def _require_account_identity(self, grant: Grant) -> None:
+        """Verify the account behind the token once per provider instance."""
+        account = getattr(grant, "account", None)
+        if not self.token_env or not isinstance(account, str) or not account.strip():
+            return
+        if self._identity_account == account:
+            return
+        verified, reason = self.verify_identity(account)
+        if not verified:
+            raise ConnectorDenied(reason)
+        self._identity_account = account
 
     # -- request paths (official endpoints only) -----------------------------
     @staticmethod
@@ -196,7 +238,9 @@ class GitHubProvider(RepositoryProvider):
         issue = str(payload.get("issue", ""))
         run_id = str(payload.get("run_id", ""))
         workflow = str(payload.get("workflow", ""))
-        branch = str(payload.get("branch", ""))
+        # The reference already passed the grant check: the query string uses
+        # exactly that validated value.
+        reference = str(payload.get("reference", payload.get("branch", "")))
         paths = {
             "list_repositories": "/user/repos",
             "read_file": "/repos/{}/contents/{}".format(repository, payload.get("path", "")),
@@ -222,8 +266,8 @@ class GitHubProvider(RepositoryProvider):
             "configure_workflow": "/repos/{}/actions/workflows/{}".format(repository, workflow),
             "create_release": "/repos/{}/releases".format(repository),
         }
-        if branch and operation in ("read_file", "list_branches"):
-            return paths[operation] + "?ref={}".format(branch)
+        if reference and operation in ("read_file", "list_branches"):
+            return paths[operation] + "?ref={}".format(reference)
         return paths.get(operation, "")
 
     # -- bounded HTTP --------------------------------------------------------
@@ -246,7 +290,7 @@ class GitHubProvider(RepositoryProvider):
         except ConnectorDenied:
             raise
         except urllib.error.HTTPError as error:
-            body_bytes = error.read() if hasattr(error, "read") else b""
+            body_bytes = _bounded_read(error, MAX_ERROR_BODY_BYTES)
             return error.code, body_bytes
         except urllib.error.URLError:
             raise ConnectorDenied("endpoint_unavailable")

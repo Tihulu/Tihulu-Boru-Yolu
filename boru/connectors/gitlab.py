@@ -15,10 +15,22 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
-from .scope import check_call
+from .scope import check_call, check_dispatch_body
 
 API_BASE = "https://gitlab.com"
 MAX_PAGE = 100
+#: An error body is diagnostic, never a payload: keep only a bounded prefix.
+MAX_ERROR_BODY_BYTES = 4 * 1024
+
+
+def _bounded_read(stream, limit: int) -> bytes:
+    """Read at most ``limit`` bytes from an HTTP error body."""
+    if not hasattr(stream, "read"):
+        return b""
+    try:
+        return stream.read(limit)
+    except Exception:  # pragma: no cover - defensive cleanup
+        return b""
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -50,6 +62,8 @@ class GitLabProvider(RepositoryProvider):
         self._audit: List[Dict[str, Any]] = []
         self._calls: Dict[str, int] = {}
         self._ledger = audit
+        # The verified account identity, cached per provider instance.
+        self._identity_account: Optional[str] = None
 
     def capabilities(self) -> Tuple[Capability, ...]:
         return tuple(OPERATION_CAPABILITIES.values())
@@ -109,23 +123,33 @@ class GitLabProvider(RepositoryProvider):
         if path:
             raise ConnectorDenied("path_override_refused")
         try:
-            check_call(grant, operation, payload or {}, method=method, path=path,
-                       default_method=self._MUTATING.get(operation, "GET"))
+            # The slots returned here are the only values used to build the
+            # request: what was checked is what is sent.
+            slots = check_call(grant, operation, payload or {}, method=method, path=path,
+                               default_method=self._MUTATING.get(operation, "GET"))
         except ConnectorDenied as exc:
-            self._audit.append({"at": int(time.time()), "grant": grant.grant_id,
-                                "operation": operation, "decision": "deny",
-                                "reason": str(exc)})
-            if self._ledger is not None:
-                self._ledger.record("connector", grant.grant_id, str(exc), operation)
+            self._deny(grant, operation, str(exc))
             raise
-        path = self._path_for(operation, payload or {})
+        # A dispatch body is validated before any transport is constructed.
+        if operation == "dispatch_workflow":
+            try:
+                check_dispatch_body(grant, body or {})
+            except ConnectorDenied as exc:
+                self._deny(grant, operation, str(exc))
+                raise
+        # A token proves an identity, never write or Shell authorization.
+        self._require_account_identity(grant)
+        path = self._path_for(operation, slots)
         if method is None:
             method = self._MUTATING.get(operation, "GET")
         status, raw = self._exchange(method, path, body or {})
         self._calls[grant.grant_id] = self._calls.get(grant.grant_id, 0) + 1
         reason_event = "ok" if status < 300 else "http_" + str(status)
+        # A URL path never enters the audit event: the operation and status
+        # describe the call without naming a repository route.
         self._audit.append({"at": int(time.time()), "grant": grant.grant_id, "operation": operation,
-                            "path": path, "status": status, "decision": "allow", "reason": reason_event})
+                            "path_kind": "official_endpoint", "status": status,
+                            "decision": "allow", "reason": reason_event})
         if status >= 300:
             raise ConnectorDenied("http_" + str(status))
         try:
@@ -142,15 +166,39 @@ class GitLabProvider(RepositoryProvider):
         "create_release": "POST",
     }
 
+    # -- identity -------------------------------------------------------------
+    def _deny(self, grant: Grant, operation: str, reason: str) -> None:
+        """Record a denial without any repository route."""
+        self._audit.append({"at": int(time.time()), "grant": grant.grant_id,
+                            "operation": operation, "decision": "deny", "reason": reason})
+        if self._ledger is not None:
+            self._ledger.record("connector", grant.grant_id, reason, operation)
+
+    def _require_account_identity(self, grant: Grant) -> None:
+        """Verify the account behind the token once per provider instance."""
+        account = getattr(grant, "account", None)
+        if not self.token_env or not isinstance(account, str) or not account.strip():
+            return
+        if self._identity_account == account:
+            return
+        verified, reason = self.verify_identity(account)
+        if not verified:
+            raise ConnectorDenied(reason)
+        self._identity_account = account
+
+    # -- official endpoint paths ---------------------------------------------
     def _path_for(self, operation: str, payload: Mapping[str, Any]) -> str:
         project = self._project(payload)
         issue = str(payload.get("issue", ""))
         run_id = str(payload.get("run_id", ""))
         workflow = str(payload.get("workflow", ""))
+        # The reference already passed the grant check: the query string uses
+        # exactly that validated value and never a default branch.
+        reference = str(payload.get("reference", payload.get("branch", "")))
         paths = {
             "list_repositories": "/api/v4/projects?per_page={}".format(MAX_PAGE),
             "read_file": "/api/v4/projects/{}/repository/files/{}?ref={}".format(
-                project, payload.get("path", ""), payload.get("branch", "main")),
+                project, payload.get("path", ""), reference),
             "list_branches": "/api/v4/projects/{}/repository/branches".format(project),
             "get_commit": "/api/v4/projects/{}/repository/commits/{}".format(project, payload.get("sha", "")),
             "list_issues": "/api/v4/projects/{}/issues?per_page={}".format(project, MAX_PAGE),
@@ -194,7 +242,7 @@ class GitLabProvider(RepositoryProvider):
         except ConnectorDenied:
             raise
         except urllib.error.HTTPError as error:
-            body_bytes = error.read() if hasattr(error, "read") else b""
+            body_bytes = _bounded_read(error, MAX_ERROR_BODY_BYTES)
             return error.code, body_bytes
         except urllib.error.URLError:
             raise ConnectorDenied("endpoint_unavailable")
@@ -230,7 +278,7 @@ class GitLabProvider(RepositoryProvider):
             raise
         except urllib.error.HTTPError as error:
             try:
-                body_bytes = error.read()
+                body_bytes = _bounded_read(error, MAX_ERROR_BODY_BYTES)
             except Exception:  # pragma: no cover - defensive cleanup
                 body_bytes = b""
             return error.code, body_bytes

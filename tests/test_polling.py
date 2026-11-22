@@ -56,11 +56,18 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(ConnectorDenied):
                 self.sync.normalize(bad)
 
-    def test_bounded_history_is_capped(self):
+    def test_history_never_forgets_an_evicted_id(self):
         events = [SyncEvent(event_id="e{}".format(i), event_type="push")
                   for i in range(5000)]
         self.sync.accept(events)
-        self.assertLessEqual(len(self.sync.seen), 4096)
+        self.assertEqual(5000, len(self.sync.seen))
+        # an evicted id is never replayed, and a full registry refuses new
+        # work instead of forgetting an old id
+        self.assertEqual([], self.sync.accept(self.sync.normalize(
+            raw([{"id": "e0", "type": "push", "payload": {}}]))))
+        with self.assertRaises(ConnectorDenied):
+            self.sync.accept([SyncEvent(event_id="e{}".format(i), event_type="push")
+                              for i in range(5000, 5000 + 4000)])
 
     def test_no_listener_is_created(self):
         # the module imports no socket, server or threading primitives

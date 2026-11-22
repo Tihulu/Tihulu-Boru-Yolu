@@ -141,7 +141,15 @@ class GitHubProviderTests(unittest.TestCase):
         self.assertEqual("invalid_response", str(raised.exception))
 
     def test_workflow_endpoints_are_official(self):
-        self.provider._transport = lambda method, path, body: (200, b'{}')
+        # official routes are verified where they are used: at the transport,
+        # never in the audit log, which carries no repository path at all
+        seen = []
+
+        def record(method, path, body):
+            seen.append(path)
+            return (200, b'{}')
+
+        self.provider._transport = record
         reader = grant(operations=("list_workflows",), nonce="w1")
         self.provider.call(reader, "list_workflows", {"repository": "owner/repo"})
         self.provider.call(grant(operations=("get_run",), nonce="n3"), "get_run",
@@ -150,10 +158,10 @@ class GitHubProviderTests(unittest.TestCase):
                          nonce="n4", workflow_ids=("ci.yml",))
         self.provider.call(dispatch, "dispatch_workflow", {"repository": "owner/repo", "workflow": "ci.yml"},
                            body={"ref": "main"})
-        paths = [event["path"] for event in self.provider.audit()]
-        self.assertIn("/repos/owner/repo/actions/workflows", paths)
-        self.assertIn("/repos/owner/repo/actions/runs/42", paths)
-        self.assertIn("/repos/owner/repo/actions/workflows/ci.yml/dispatches", paths)
+        self.assertIn("/repos/owner/repo/actions/workflows", seen)
+        self.assertIn("/repos/owner/repo/actions/runs/42", seen)
+        self.assertIn("/repos/owner/repo/actions/workflows/ci.yml/dispatches", seen)
+        self.assertNotIn("/repos/", repr(self.provider.audit()))
 
     def test_read_only_check_lists_writes(self):
         refused = self.provider.read_only_check(["create_issue", "list_issues"])
@@ -207,28 +215,58 @@ class GitLabProviderTests(unittest.TestCase):
         self.assertEqual(("POST", "/api/v4/projects/owner%2Fproject/issues", {"title": "x"}), seen[0])
 
     def test_pipeline_endpoints_are_official(self):
-        self.provider._transport = lambda method, path, body: (200, b'{}')
+        # official routes are verified where they are used: at the transport,
+        # never in the audit log, which carries no repository path at all
+        seen = []
+
+        def record(method, path, body):
+            seen.append(path)
+            return (200, b'{}')
+
+        self.provider._transport = record
         reader = grant(operations=("get_run",), nonce="gl-3", repository="owner/project")
         self.provider.call(reader, "get_run", {"repository": "owner/project", "run_id": 42})
         dispatch = grant(operations=("dispatch_workflow",), capabilities=(Capability.ACTIONS_DISPATCH,),
                          nonce="gl-4", repository="owner/project", workflow_ids=("ci.yml",))
         self.provider.call(dispatch, "dispatch_workflow",
                            {"repository": "owner/project", "workflow": "ci.yml"}, body={"ref": "main"})
-        paths = [event.get("path") for event in self.provider.audit()]
-        self.assertIn("/api/v4/projects/owner%2Fproject/pipelines/42", paths)
-        self.assertIn("/api/v4/projects/owner%2Fproject/pipeline", paths)
+        self.assertIn("/api/v4/projects/owner%2Fproject/pipelines/42", seen)
+        self.assertIn("/api/v4/projects/owner%2Fproject/pipeline", seen)
+        self.assertNotIn("/api/v4/projects", repr(self.provider.audit()))
 
     def test_token_only_from_environment_name(self):
         import os
 
         os.environ["BORU_TEST_GITLAB_TOKEN"] = "not-a-real-token"
-        provider = GitLabProvider(token_env="BORU_TEST_GITLAB_TOKEN",
-                                  transport=lambda method, path, body: (200, b'{}'))
+
+        def answer(method, path, body):
+            if path == "/api/v4/user":
+                return (200, b'{"username":"owner"}')
+            return (200, b'{}')
+
+        provider = GitLabProvider(token_env="BORU_TEST_GITLAB_TOKEN", transport=answer)
         reader = grant(operations=("list_issues",), nonce="gl-5", repository="owner/project")
         provider.call(reader, "list_issues", {"repository": "owner/project"})
         del os.environ["BORU_TEST_GITLAB_TOKEN"]
         self.assertTrue(provider.audit())
         self.assertNotIn("not-a-real-token", str(provider.audit()))
+
+    def test_identity_mismatch_denies_before_any_repository_call(self):
+        import os
+
+        os.environ["BORU_TEST_GITLAB_TOKEN"] = "not-a-real-token"
+        seen = []
+
+        def answer(method, path, body):
+            seen.append(path)
+            return (200, b'{"username":"intruder"}')
+
+        provider = GitLabProvider(token_env="BORU_TEST_GITLAB_TOKEN", transport=answer)
+        reader = grant(operations=("list_issues",), nonce="gl-6", repository="owner/project")
+        with self.assertRaises(ConnectorDenied):
+            provider.call(reader, "list_issues", {"repository": "owner/project"})
+        del os.environ["BORU_TEST_GITLAB_TOKEN"]
+        self.assertEqual(["/api/v4/user"], seen)
 
     def test_error_mapping_never_leaks_body(self):
         self.provider._transport = lambda method, path, body: (403, b'{"message":"SECRET-BODY"}')

@@ -147,11 +147,18 @@ class PipelineTests(unittest.TestCase):
 
     def test_relative_alias_is_never_a_resource(self):
         self.grant("t13")
-        for bad in ("../outside", "a/b", "..", ""):
+        for bad in ("../outside", "a/b", ".."):
             decision, _, reason = self.pipeline.disclose(
                 task_id="t13", operation="probe_path_alias", alias=bad,
                 fields=("exists",), recipient="owner")
             self.assertEqual(("deny", "resource_not_declared"), (decision, reason), bad)
+
+    def test_empty_alias_is_a_malformed_request(self):
+        self.grant("t15")
+        decision, _, reason = self.pipeline.disclose(
+            task_id="t15", operation="probe_path_alias", alias="",
+            fields=("exists",), recipient="owner")
+        self.assertEqual(("deny", "malformed_request"), (decision, reason))
 
     def test_undeclared_path_alias_is_not_a_worker_scope(self):
         self.grant("t14")
