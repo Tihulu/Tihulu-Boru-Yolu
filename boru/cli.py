@@ -342,15 +342,17 @@ def _resources(args) -> int:
     The profile is a performance knob, never an authorization axis; nothing
     here starts, stops or reconfigures a model or an external session.
     """
-    from .resources import detect_memory, memory_pressure
+    from .resources import detect_memory, detect_swap, memory_pressure
 
     config = _load_config(args.config)
     profile = config.resource_profile()
     total, available = detect_memory()
+    swap_total, swap_free = detect_swap()
     payload = {
         "profile": profile.as_dict(),
         "memory": {"total_mb": total, "available_mb": available,
                    "available_share": memory_pressure()},
+        "swap": {"total_mb": swap_total, "free_mb": swap_free},
         "not_an_authorization_axis": True,
         "model_release": "provider-hook; a provider without a lifecycle endpoint "
                          "refuses with unsupported_capability",

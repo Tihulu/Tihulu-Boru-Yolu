@@ -693,3 +693,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Audit performed:** every tracked file was scanned for non-English letters. The only hits are `boru/i18n.py` (12 lines — the TR/EN/DE dashboard label table) and `tests/test_dashboard.py` (4 lines asserting those labels render), i.e. the user-facing localization AGENTS.md explicitly keeps in product scope. Commit messages, source comments, docs, harness, tests, scripts and examples are English.
 - **Enforcement added:** the predicate lives in `boru.i18n` (`is_repository_english`, codepoint-based so the checking file itself stays English), `scripts/check_project.py` scans every tracked file against it, and `tests/test_repository_language.py` runs the same rule inside CI.
 - **Tests observed:** `unittest discover -s tests` full suite with the new test; `scripts/check_project.py` PASS.
+
+---
+
+### 2026-11-22 — swap reporting, and the English rule made git-optional (commit on `p1/boru-core-vertical-slice`)
+
+- **`boru resources` and `boru doctor` now report swap** (total/free from `/proc/meminfo`): the owner asked for an idle host free of RAM/VRAM/swap pressure, so swap belongs in the same report as RAM. Swap is reported, never tuned: swapping behaviour is the host's configuration and Boru only shrinks its own footprint by releasing leases.
+- **Two defects found by the doctor's own suite run and fixed:** (a) the English-text rule flagged its own test file, because the file carried literal Turkish sample strings — the samples are built from code points now, so the file itself stays English while still proving detection; (b) the rule and its test required `git ls-files`, so an unpacked source tree (the evidence script's copied run) reported a failure — the file iterator now walks the tree when git is unavailable, with the same exemptions.
+- **Tests observed:** `unittest discover -s tests` **639 tests OK**; `scripts/evidence.py` all checks PASS (static manifest, 639 unit tests, offline demo, install/uninstall round trip); `scripts/check_project.py` PASS. MOCK/STATIC only.

@@ -17,6 +17,7 @@ from boru.resources import (
     ResourceMode,
     ResourceProfile,
     detect_memory,
+    detect_swap,
     memory_pressure,
     profile_for,
 )
@@ -97,6 +98,16 @@ class IdleEvictionTests(unittest.TestCase):
 
 
 class HostMemoryTests(unittest.TestCase):
+    def test_swap_report_is_bounded_when_available(self):
+        # swap is reported, never tuned: swapping behaviour is the owner's host
+        # configuration, and Boru only makes its own footprint smaller
+        total, free = detect_swap()
+        if total is None:
+            self.skipTest("swap is not reported on this platform")
+        self.assertGreaterEqual(total, 0)
+        self.assertGreaterEqual(free, 0)
+        self.assertLessEqual(free, total)
+
     def test_detected_memory_is_bounded_when_available(self):
         total, available = detect_memory()
         if total is None:

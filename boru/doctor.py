@@ -72,15 +72,18 @@ def _check_repo_tests() -> Dict[str, Any]:
 
 def _check_resources() -> Dict[str, Any]:
     """Report the resource profile and the host memory the profile can see."""
-    from .resources import detect_memory, memory_pressure
+    from .resources import detect_memory, detect_swap, memory_pressure
 
     total, available = detect_memory()
     if total is None:
         return {"status": "hold", "detail": "host memory is not reported on this platform"}
     share = memory_pressure()
-    detail = "{} MB total, {} MB available".format(total, available)
+    swap_total, swap_free = detect_swap()
+    detail = "{} MB RAM total, {} MB available".format(total, available)
+    if swap_total is not None:
+        detail += "; swap {} MB total, {} MB free".format(swap_total, swap_free)
     if share is not None and share < 0.1:
-        detail += " (pressure: less than 10% available)"
+        detail += " (pressure: less than 10% RAM available)"
     return {"status": "ok", "detail": detail}
 
 

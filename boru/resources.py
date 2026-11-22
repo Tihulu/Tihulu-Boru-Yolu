@@ -209,6 +209,32 @@ def profile_for(mode, **overrides) -> ResourceProfile:
     return PRESETS[mode]
 
 
+def detect_swap() -> Tuple[Optional[int], Optional[int]]:
+    """Read swap total and free space from ``/proc/meminfo`` (Linux).
+
+    Swap is reported, never tuned: swapping behaviour is the owner's host
+    configuration, and Boru Core only makes its own footprint smaller by
+    releasing its leases.
+    """
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            fields = {}
+            for line in handle:
+                parts = line.split(":", 1)
+                if len(parts) != 2:
+                    continue
+                value = parts[1].strip().split(" ", 1)[0]
+                if value.isdigit():
+                    fields[parts[0]] = int(value)
+    except OSError:
+        return None, None
+    total = fields.get("SwapTotal")
+    free = fields.get("SwapFree")
+    if total is None or free is None:
+        return None, None
+    return int(total // 1024), int(free // 1024)  # kB -> MB
+
+
 def detect_memory() -> Tuple[Optional[int], Optional[int]]:
     """Read total and available RAM from ``/proc/meminfo`` (Linux).
 

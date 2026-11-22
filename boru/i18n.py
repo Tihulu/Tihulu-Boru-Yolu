@@ -15,6 +15,9 @@ LANGUAGES: Tuple[str, ...] = ("en", "tr", "de")
 #: the only permitted non-English text, together with the test that asserts it.
 REPOSITORY_TEXT_EXEMPT = ("boru/i18n.py", "tests/test_dashboard.py")
 
+#: Directories never scanned (version control metadata, caches, artifacts).
+_SKIPPED_DIRECTORIES = frozenset({".git", "__pycache__", ".pytest_cache", "build", "dist"})
+
 #: Turkish-specific code points, expressed as code points so that this file
 #: stays English while still detecting every Turkish letter.
 _NON_ENGLISH_CODEPOINTS: Tuple[int, ...] = (
@@ -26,6 +29,31 @@ _NON_ENGLISH_CODEPOINTS: Tuple[int, ...] = (
     0x00DF,                          # sharp s (German, never repository text)
 )
 NON_ENGLISH_CHARS = frozenset(chr(code) for code in _NON_ENGLISH_CODEPOINTS)
+
+
+def repository_files(root):
+    """Every repository text file, tracked first and by walk outside a checkout.
+
+    The English-text rule must hold in an unpacked source tree as well as in a
+    git clone, so a missing ``git`` is a fallback, not an exemption.
+    """
+    import os
+    import subprocess
+
+    try:
+        listed = subprocess.check_output(["git", "ls-files"], cwd=str(root), text=True).splitlines()
+    except (OSError, subprocess.CalledProcessError):
+        listed = []
+    if listed:
+        for name in listed:
+            if name.strip():
+                yield name
+        return
+    for current, directories, files in os.walk(str(root)):
+        directories[:] = sorted(d for d in directories if d not in _SKIPPED_DIRECTORIES)
+        for name in sorted(files):
+            path = os.path.join(current, name)
+            yield os.path.relpath(path, str(root)).replace(os.sep, "/")
 
 
 def is_repository_english(text: str) -> bool:
