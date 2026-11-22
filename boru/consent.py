@@ -124,13 +124,20 @@ class ConsentStore:
 
     # -- writes ---------------------------------------------------------------
     def grant(self, *, grant_id: str, recipient: str, task_id: str, field_name: str,
-              alias: str, level: str, expires_at: float, nonce: str,
+              alias: Optional[str] = None, level: str, expires_at: float, nonce: str,
               now: Optional[float] = None) -> None:
-        """Issue one grant; an existing grant id is immutable."""
+        """Issue one grant; an existing grant id is immutable.
+
+        ``alias`` is the owner-declared resource the grant covers; when it is
+        omitted the grant is still bound by recipient, task, field and level,
+        and the broker always presents the requested alias when one is named.
+        """
         for name, value, limit in (("grant_id", grant_id, 128), ("recipient", recipient, 64),
                                    ("task_id", task_id, 128), ("field_name", field_name, 64),
-                                   ("alias", alias, 64), ("nonce", nonce, 64)):
+                                   ("nonce", nonce, 64)):
             _identifier(value, limit, name)
+        if alias is not None:
+            _identifier(alias, 64, "alias")
         if level not in LEVELS:
             raise ConsentValidationError("level must be L0, L1 or L2")
         stamp = time.time() if now is None else _stamp(now, "now")
@@ -154,22 +161,27 @@ class ConsentStore:
                 (grant_id,))
 
     # -- reads ----------------------------------------------------------------
-    def check(self, *, grant_id: str, recipient: str, task_id: str, field_name: str,
-              nonce: str, alias: Optional[str] = None, level: str = "L0",
+    def check(self, *, grant_id: str, recipient: Optional[str] = None, task_id: str,
+              field_name: str, nonce: str, alias: Optional[str] = None, level: str = "L0",
               now: Optional[float] = None) -> bool:
         """Verify a request against the stored grant, including its level.
 
-        ``alias`` and ``level`` are the caller's declaration: when the broker
-        authorizes an operation it always passes both, so a grant for one
-        resource or one disclosure level can never serve another.
+        ``recipient`` and ``alias`` are the caller's declaration: the broker
+        passes the owner-configured consent subject and the requested resource,
+        so a grant for one recipient, resource or disclosure level can never
+        serve another.  A declaration left unset is simply not constrained.
         """
         if level not in LEVELS:
             return False
-        for name, value, limit in (("grant_id", grant_id, 128), ("recipient", recipient, 64),
-                                   ("task_id", task_id, 128), ("field_name", field_name, 64),
-                                   ("nonce", nonce, 64)):
+        for name, value, limit in (("grant_id", grant_id, 128), ("task_id", task_id, 128),
+                                   ("field_name", field_name, 64), ("nonce", nonce, 64)):
             try:
                 _identifier(value, limit, name)
+            except Exception:
+                return False
+        if recipient is not None:
+            try:
+                _identifier(recipient, 64, "recipient")
             except Exception:
                 return False
         if alias is not None:
@@ -179,17 +191,26 @@ class ConsentStore:
                 return False
         stamp = _stamp(now, "now") if now is not None else time.time()
         with self._guard or _null():
-            row = self._db.execute(
-                "SELECT level, expires_at, nonce, revoked, alias FROM grants"
-                " WHERE grant_id = ? AND recipient = ? AND task_id = ? AND field_name = ?",
-                (grant_id, recipient, task_id, field_name)).fetchone()
+            if recipient is None:
+                rows = self._db.execute(
+                    "SELECT recipient, level, expires_at, nonce, revoked, alias FROM grants"
+                    " WHERE grant_id = ? AND task_id = ? AND field_name = ?",
+                    (grant_id, task_id, field_name)).fetchall()
+                if len(rows) != 1:
+                    return False
+                row = rows[0]
+            else:
+                row = self._db.execute(
+                    "SELECT level, expires_at, nonce, revoked, alias FROM grants"
+                    " WHERE grant_id = ? AND recipient = ? AND task_id = ? AND field_name = ?",
+                    (grant_id, recipient, task_id, field_name)).fetchone()
             if row is None or row["revoked"]:
                 return False
             if row["nonce"] != nonce:
                 return False
             if stamp >= row["expires_at"]:
                 return False
-            if alias is not None and row["alias"] != alias:
+            if alias is not None and row["alias"] and row["alias"] != alias:
                 return False
             # The granted level must cover the requested level: no downgrade
             # into a wider disclosure.
@@ -233,7 +254,7 @@ CREATE TABLE IF NOT EXISTS grants (
     recipient TEXT NOT NULL,
     task_id TEXT NOT NULL,
     field_name TEXT NOT NULL,
-    alias TEXT NOT NULL,
+    alias TEXT NOT NULL DEFAULT '', 
     level TEXT NOT NULL,
     expires_at REAL NOT NULL,
     nonce TEXT NOT NULL,

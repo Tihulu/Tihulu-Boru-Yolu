@@ -20,19 +20,27 @@ Invariants enforced here (with tests in tests/test_broker.py):
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import math
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Sequence, Set, Tuple
 
+from .authorization import AuthorizationReceipt  # re-exported for callers
 from .audit import RejectionLedger, safe_identifier
 from .authorization import AuthorizationReceipt, derive_key, sign
 from .errors import PolicyViolation
 
 MAX_ALIAS = 64
 MAX_NONCES = 4096
+TOKEN_PREFIX = "r-"
+
+#: A receipt names a resource only by this opaque form.
+_TOKEN_RE = __import__("re").compile("^r-[0-9a-f]{16}$")
 
 #: The typed local operations a worker may be asked to perform. Anything else
 #: (a shell, a network write, a mutation) is refused before any other check.
@@ -49,23 +57,43 @@ def file_name(value: Any) -> str:
     return safe_identifier(value, 64, "file name")
 
 
-def resource_alias(value: Any) -> str:
-    """A resource alias is an opaque owner-declared name, never a path."""
-    return safe_identifier(value, MAX_ALIAS, "resource alias")
-
-
 def valid_resource_path(path: Any) -> bool:
-    """An owner-declared resource path: absolute, normalized, not a symlink."""
-    if not isinstance(path, str) or not path.strip():
+    """An owner-declared resource path: absolute, normalized, no symlink.
+
+    Every component of the path is checked, so an intermediate symlink (a
+    bridge directory pointing outside the resource) is refused as firmly as a
+    dangling final one.
+    """
+    if not isinstance(path, str) or not path.strip() or len(path) > 1024:
         return False
     if not os.path.isabs(path):
-        return False
-    if os.path.islink(path):
         return False
     normalized = os.path.normpath(path)
     if normalized != path:
         return False
-    return ".." not in normalized.split(os.sep)
+    if ".." in normalized.split(os.sep):
+        return False
+    prefix = normalized
+    while True:
+        if os.path.islink(prefix):
+            return False
+        parent = os.path.dirname(prefix)
+        if parent == prefix:
+            return True
+        prefix = parent
+
+
+def resource_alias(value: Any) -> str:
+    """A resource alias is an owner-declared name or an absolute path.
+
+    A name is a bounded, path-free token. A path is accepted only when the
+    owner declared it in the resource allowlist; either way the alias is never
+    extended by a payload, and a receipt carries an opaque token, never the
+    path itself.
+    """
+    if isinstance(value, str) and valid_resource_path(value):
+        return value
+    return safe_identifier(value, MAX_ALIAS, "resource alias")
 
 
 @dataclass(frozen=True)
@@ -112,7 +140,7 @@ class ScopeAllowlist:
                 errors.append(str(exc))
                 continue
             if not valid_resource_path(path):
-                errors.append("alias must map to an absolute, normalized, non-symlinked path")
+                errors.append("alias must map to an absolute, normalized, symlink-free path")
         return errors
 
     def permits(self, alias: Any) -> bool:
@@ -128,6 +156,26 @@ class ScopeAllowlist:
         if not path:
             raise PolicyViolation("resource alias is not declared")
         return path
+
+    def token_for(self, alias: Any) -> str:
+        """An opaque, stable token for a declared alias (never the path).
+
+        Both the broker and the worker derive the same token from the shared
+        owner-declared allowlist, so a receipt can name a resource without
+        disclosing where it lives.
+        """
+        path = self.path_for(alias)
+        digest = hashlib.sha256(path.encode("utf-8")).hexdigest()
+        return TOKEN_PREFIX + digest[:16]
+
+    def alias_for_token(self, token: Any) -> Optional[str]:
+        """Return the declared alias a token names, or ``None``."""
+        if not isinstance(token, str) or not _TOKEN_RE.match(token):
+            return None
+        for alias in self.aliases:
+            if hmac.compare_digest(self.token_for(alias), token):
+                return alias
+        return None
 
 
 @dataclass(frozen=True)
@@ -265,7 +313,16 @@ class Broker:
                 return "malformed_request"
         if request.worker.validate():
             return "worker_invalid"
-        # Identity must be authenticated, not merely asserted.
+        # Identity must be authenticated, not merely asserted.  Without a
+        # registry the broker was built for one in-process worker identity:
+        # a request may not widen that identity, only present it.
+        if self.registry is None:
+            if self.worker is None:
+                return "worker_invalid"
+            if request.worker.worker_id != self.worker.worker_id:
+                return "worker_invalid"
+            if not set(request.worker.scopes) <= set(self.worker.scopes):
+                return "worker_scope"
         if self.registry is not None:
             record = self.registry.get(request.worker.worker_id)
             if record is None or record.revoked or record.validate():
@@ -284,10 +341,12 @@ class Broker:
         # Consent binds recipient, task, operation, alias, field and level.
         # The recipient is the configured consent subject, never a value the
         # request itself can choose.
-        recipient = self.consent_recipient or request.worker.worker_id
+        # The recipient is the owner-declared consent subject; when none is
+        # configured the grant is bound by task, operation, alias, field and
+        # level instead.
         try:
             allowed = self.consent.check(
-                grant_id=request.grant_id, recipient=recipient,
+                grant_id=request.grant_id, recipient=self.consent_recipient,
                 task_id=request.task_id, field_name=request.operation,
                 alias=request.resource_alias, level=level, nonce=request.nonce, now=now)
         except PolicyViolation:
@@ -301,13 +360,16 @@ class Broker:
                fields: Sequence[str]) -> Optional[AuthorizationReceipt]:
         expiry = stamp + self.receipt_ttl_seconds
         allowed = tuple(fields)
+        # The signature covers exactly what the receipt carries: the opaque
+        # resource token, never the alias or its path.
+        token = self.scopes.token_for(request.resource_alias)
         tag = sign(self.key, task_id=request.task_id, operation=request.operation,
-                   alias=request.resource_alias, worker_id=request.worker.worker_id,
+                   alias=token, worker_id=request.worker.worker_id,
                    grant_id=request.grant_id, nonce=request.nonce, expires_at=expiry,
                    fields=allowed, target=request.target or "")
         return AuthorizationReceipt(
             receipt_id="br-{}-{}".format(request.task_id, request.operation),
-            operation=request.operation, resource_alias=request.resource_alias,
+            operation=request.operation, resource_alias=token,
             task_id=request.task_id, worker_id=request.worker.worker_id,
             grant_id=request.grant_id, issued_at=stamp, expires_at=expiry,
             nonce=request.nonce, policy_revision=self.POLICY_REVISION,

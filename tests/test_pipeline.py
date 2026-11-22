@@ -145,13 +145,20 @@ class PipelineTests(unittest.TestCase):
             fields=("exists",), recipient="owner")
         self.assertEqual(("deny", "worker_scope"), (decision, reason))
 
-    def test_path_like_alias_is_never_a_resource(self):
+    def test_relative_alias_is_never_a_resource(self):
         self.grant("t13")
-        for bad in ("../outside", self.alias_dir, "a/b"):
+        for bad in ("../outside", "a/b", "..", ""):
             decision, _, reason = self.pipeline.disclose(
                 task_id="t13", operation="probe_path_alias", alias=bad,
                 fields=("exists",), recipient="owner")
             self.assertEqual(("deny", "resource_not_declared"), (decision, reason), bad)
+
+    def test_undeclared_path_alias_is_not_a_worker_scope(self):
+        self.grant("t14")
+        decision, _, reason = self.pipeline.disclose(
+            task_id="t14", operation="probe_path_alias", alias=self.alias_dir,
+            fields=("exists",), recipient="owner")
+        self.assertEqual(("deny", "worker_scope"), (decision, reason))
 
 
 if __name__ == "__main__":

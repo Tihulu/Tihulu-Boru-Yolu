@@ -37,9 +37,12 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(("allow", ""), (decision, reason))
         self.assertEqual([], receipt.validate())
         self.assertEqual("read_file_alias", receipt.operation)
-        self.assertEqual("demo", receipt.resource_alias)
         self.assertEqual("w1", receipt.worker_id)
         self.assertEqual(1, receipt.policy_revision)
+        # the resource is an opaque token: neither the alias nor its path
+        # ever rides in a receipt
+        self.assertEqual("r-" + __import__("hashlib").sha256(
+            b"/tmp/boru-scope").hexdigest()[:16], receipt.resource_alias)
 
     def test_receipt_never_carries_a_real_path(self):
         broker = self.broker()

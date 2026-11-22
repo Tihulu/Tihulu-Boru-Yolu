@@ -17,12 +17,16 @@ import hashlib
 import hmac
 import json
 import math
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, Sequence, Tuple
 
 from .errors import PolicyViolation
 
 RECEIPT_REVISION = 1
+
+#: A receipt names a resource only by this opaque token form, never a path.
+TOKEN_RE = re.compile("^r-[0-9a-f]{16}$")
 
 
 def _canonical(*parts: Sequence[Any]) -> bytes:
@@ -129,6 +133,9 @@ class AuthorizationReceipt:
             errors.append("receipt authentication tag is missing")
         if not isinstance(self.target, str) or len(self.target) > 64:
             errors.append("target must be a bounded string")
+        # The resource is an opaque token: a path can never ride in a receipt.
+        if not isinstance(self.resource_alias, str) or not TOKEN_RE.match(self.resource_alias):
+            errors.append("resource must be named by an opaque token")
         for name in ("issued_at", "expires_at"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):

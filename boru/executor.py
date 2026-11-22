@@ -50,13 +50,17 @@ class Acquisition:
 class LocalExecutor:
     """Read-only, alias-confined executor that verifies every receipt."""
 
-    def __init__(self, aliases: ScopeAllowlist, *, authorization_key: bytes) -> None:
+    def __init__(self, aliases: ScopeAllowlist,
+                 *, authorization_key: Optional[bytes] = None) -> None:
         if aliases.validate():
             raise PolicyViolation("resource allowlist is invalid")
-        if not isinstance(authorization_key, (bytes, bytearray)) or len(authorization_key) != 32:
+        if authorization_key is not None and (
+                not isinstance(authorization_key, (bytes, bytearray)) or len(authorization_key) != 32):
             raise PolicyViolation("authorization key must be 256 bits")
         self.aliases = aliases
-        self.authorization_key = bytes(authorization_key)
+        # Without a key no receipt can be authenticated, so every acquisition
+        # is refused: an unsigned executor is fail-closed, never permissive.
+        self.authorization_key = bytes(authorization_key) if authorization_key else None
 
     # -- field maps ----------------------------------------------------------
     def fields_for(self, operation: str) -> Tuple[str, ...]:
@@ -76,11 +80,15 @@ class LocalExecutor:
     # -- acquisition ---------------------------------------------------------
     def acquire(self, receipt: AuthorizationReceipt, *, fields: Tuple[str, ...],
                 now: float) -> Acquisition:
+        if self.authorization_key is None:
+            raise PolicyViolation("this worker holds no authorization key")
         receipt.verify(self.authorization_key, now=now, requested_fields=fields)
         if not self.fields_for(receipt.operation):
             raise PolicyViolation("operation is not executable by this worker")
-        alias = receipt.resource_alias
-        if not self.aliases.permits(alias):
+        # The receipt names the resource by opaque token; only the allowlist
+        # can resolve it, and the resolved path never leaves this worker.
+        alias = self.aliases.alias_for_token(receipt.resource_alias)
+        if alias is None:
             raise PolicyViolation("resource alias is not declared")
         allowed = set(self.fields_for(receipt.operation))
         if not set(fields) <= allowed:
