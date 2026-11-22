@@ -21,6 +21,9 @@ from .resources import DEFAULT_MODE, ResourceMode, ResourceProfile, profile_for
 CONFIG_VERSION = 1
 QUEUE_LIMIT = 16
 MAX_RECORDS = 1024
+#: Boru Core never accepts unbounded work, including from its own configuration.
+MAX_PROVIDERS = 32
+MAX_CLASSIFICATIONS = 64
 REQUEST_TIMEOUT = 30.0
 MAX_OUTPUT_TOKENS = 256
 
@@ -191,6 +194,9 @@ class CoreConfig:
             errors.append("max_records must not be smaller than queue_limit")
         errors.extend(_float_errors(self.cooldown_seconds, "cooldown_seconds", 1.0, 3600.0))
         errors.extend(_int_errors(self.max_context_chars, "max_context_chars", 256, 1 << 20))
+        if len(self.classifications) > MAX_CLASSIFICATIONS:
+            errors.append("at most {} outbound directions may be declared".format(
+                MAX_CLASSIFICATIONS))
         for spec in self.classifications:
             errors.extend(spec.validate())
         try:
@@ -199,6 +205,8 @@ class CoreConfig:
             errors.append(str(exc))
         if not self.providers:
             errors.append("at least one provider must be configured")
+        if len(self.providers) > MAX_PROVIDERS:
+            errors.append("at most {} providers may be configured".format(MAX_PROVIDERS))
         for provider in self.providers:
             errors.extend(provider.validate())
         return errors

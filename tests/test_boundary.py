@@ -2,7 +2,13 @@
 import unittest
 
 from boru.boundary import BOUNDARIES, DATA_CLASSES, RECIPIENTS, Classification, CrossBoundaryGuard
-from boru.config import ClassificationSpec, CoreConfig, ProviderConfig
+from boru.config import (
+    MAX_CLASSIFICATIONS,
+    MAX_PROVIDERS,
+    ClassificationSpec,
+    CoreConfig,
+    ProviderConfig,
+)
 from boru.core import BoruCore
 from boru.errors import PolicyViolation
 from boru.types import TaskEnvelope
@@ -152,6 +158,25 @@ class ConfigAndCoreTests(unittest.TestCase):
         summary = engine.dispatch_next()
         self.assertEqual(("HOLD", "unclassified_boundary"), (summary["state"], summary["reason"]))
         engine.close()
+
+
+class ConfigurationBoundTests(unittest.TestCase):
+    """A configuration is bounded work like every other input."""
+
+    def jan_providers(self, count):
+        return tuple(ProviderConfig(kind="jan", endpoint="http://127.0.0.1:1337/v1",
+                                    local_model_ids=("m",))
+                     for _ in range(count))
+
+    def test_provider_count_is_bounded(self):
+        self.assertEqual([], CoreConfig(providers=self.jan_providers(MAX_PROVIDERS)).validate())
+        self.assertTrue(CoreConfig(providers=self.jan_providers(MAX_PROVIDERS + 1)).validate())
+
+    def test_classification_count_is_bounded(self):
+        specs = tuple(ClassificationSpec(boundary="model_inference", recipient="local")
+                      for _ in range(MAX_CLASSIFICATIONS + 1))
+        self.assertTrue(CoreConfig(providers=(ProviderConfig(kind="mock"),),
+                                   classifications=specs).validate())
 
 
 if __name__ == "__main__":

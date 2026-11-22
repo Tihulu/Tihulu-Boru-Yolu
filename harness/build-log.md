@@ -820,3 +820,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Fix, in the repository's established pattern:** the newest bounded window of one task's transitions is kept (the task's *state* is authoritative, not its history), and a read is bounded even for rows written by an older build.
 - **Second-pass findings so far:** a blocking special file could hang the worker (fixed with `O_NONBLOCK`), an envelope payload was unbounded (fixed with a bounded message contract), and now the event window. Reading alone did not surface any of the three; each was found by executing an input the author had not imagined.
 - **Tests observed:** `unittest discover -s tests` **671 tests OK (1 skipped)**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — second-pass self-review: a configuration is bounded work too (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed (confirmed by execution):** `CoreConfig.validate()` accepted an unbounded provider and classification list (5000 providers validated with zero errors). Boru Core never accepts unbounded work, including from its own configuration: at most 32 providers and 64 declared outbound directions are accepted.
+- **Second-pass findings, fourth in this pass:** a blocking special file could hang the worker; an envelope payload was unbounded; a task's event history was unbounded; and now the configuration itself. Reading alone did not surface any of them.
+- **Tests observed:** `unittest discover -s tests` **673 tests OK (1 skipped)**; `scripts/check_project.py` PASS. MOCK/STATIC only.
