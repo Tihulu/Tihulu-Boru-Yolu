@@ -1,22 +1,24 @@
 """Boru Core agent scheduler: logical agents, DAG dependencies, resource leases.
 
 Six *logical* agents are scheduling roles, not six concurrently loaded models.
-The default physical lease is one large local model at a time until real RAM
-and VRAM measurements exist; leases are counted, never guessed from a device
-inventory.  Cleanup only ever releases Boru-owned leases: nothing here can
-stop, unload or reconfigure an external Jan or OpenCode session.
+Leases are counted, never guessed from a device inventory, and the profile
+(`boru.resources`) sets how long a kept-warm model lease may sit idle before
+Boru releases it.  Cleanup only ever releases Boru-owned leases: nothing here
+can stop, unload or reconfigure an external Jan or OpenCode session — releasing
+the *model* is a provider decision (`ChatProvider.unload`).
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .errors import PolicyViolation
 from .policy import Policy
+from .resources import MAX_AGENTS, MAX_LARGE_LOCAL_MODELS, ResourceMode, ResourceProfile
 from .state import TaskState
 from .types import TaskEnvelope
 
-MAX_LOGICAL_AGENTS = 6
 MAX_PLAN_TASKS = 64
 
 
@@ -53,12 +55,17 @@ class AgentSpec:
 
 @dataclass
 class LeaseLedger:
-    """Counts Boru-owned resource leases.  It never inspects a host device."""
+    """Counts Boru-owned resource leases.  It never inspects a host device.
+
+    Each lease records when it was last used, so a kept-warm model lease can be
+    released after an idle period instead of being held forever.
+    """
 
     large_local_models: int = 0
     remote_calls: int = 0
     agents_active: int = 0
     _owners: Dict[str, Set[str]] = field(default_factory=dict)
+    _last_used: Dict[Tuple[str, str], float] = field(default_factory=dict)
 
     def _add(self, kind: str, owner: str, amount: int) -> None:
         current = set(self._owners.setdefault(kind, set()))
@@ -74,28 +81,57 @@ class LeaseLedger:
         elif kind == "agents_active":
             self.agents_active = len(current)
 
-    def acquire(self, kind: str, owner: str) -> None:
+    def acquire(self, kind: str, owner: str, now: Optional[float] = None) -> None:
         self._add(kind, owner, 1)
+        self._last_used[(kind, owner)] = time.time() if now is None else float(now)
 
     def release(self, kind: str, owner: str) -> None:
         self._add(kind, owner, -1)
+        self._last_used.pop((kind, owner), None)
+
+    def touch(self, kind: str, owner: str, now: Optional[float] = None) -> None:
+        """Record a use of a held lease (an in-flight task is never idle)."""
+        if owner in self._owners.get(kind, set()):
+            self._last_used[(kind, owner)] = time.time() if now is None else float(now)
+
+    def idle_seconds(self, kind: str, owner: str, now: Optional[float] = None) -> Optional[float]:
+        stamp = self._last_used.get((kind, owner))
+        if stamp is None:
+            return None
+        return (time.time() if now is None else float(now)) - stamp
 
     def holds(self, kind: str, owner: str) -> bool:
         return owner in self._owners.get(kind, set())
+
+    def owners(self, kind: str) -> Tuple[str, ...]:
+        return tuple(sorted(self._owners.get(kind, set())))
 
 
 class AgentScheduler:
     """Bounded DAG scheduler over Boru-owned logical agents."""
 
-    def __init__(self, policy: Policy, *, max_agents: Optional[int] = None, max_large_local_models: int = 1) -> None:
-        if isinstance(max_large_local_models, bool) or not isinstance(max_large_local_models, int) or not 0 <= max_large_local_models <= 2:
-            raise PolicyViolation("max_large_local_models must be 0..2 until measured")
-        limit = max_agents if max_agents is not None else policy.max_agents
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LOGICAL_AGENTS:
-            raise PolicyViolation("max_agents must be 1..6 logical agents")
+    def __init__(self, policy: Policy, *, max_agents: Optional[int] = None, max_large_local_models: Optional[int] = None,
+                 profile: Optional[ResourceProfile] = None) -> None:
+        if profile is not None:
+            profile.assert_valid()
+        self.profile = profile if profile is not None else ResourceProfile(mode=ResourceMode.BALANCED)
+        # An explicit caller value is a hard request: it must already fit the
+        # policy ceiling.  A profile-derived value is clamped to that ceiling,
+        # so a resource profile can widen performance but never policy.
+        requested = max_agents if max_agents is not None else self.profile.max_agents
+        if isinstance(requested, bool) or not isinstance(requested, int) or not 1 <= requested <= MAX_AGENTS:
+            raise PolicyViolation("max_agents must be 1..{} logical agents".format(MAX_AGENTS))
+        if requested > policy.max_agents:
+            if max_agents is not None:
+                raise PolicyViolation("max_agents exceeds the policy ceiling")
+            requested = policy.max_agents
+        models = max_large_local_models if max_large_local_models is not None \
+            else self.profile.max_large_local_models
+        if isinstance(models, bool) or not isinstance(models, int) or not 0 <= models <= MAX_LARGE_LOCAL_MODELS:
+            raise PolicyViolation("max_large_local_models must be 0..{}".format(MAX_LARGE_LOCAL_MODELS))
         self.policy = policy
-        self.max_agents = limit
-        self.max_large_local_models = max_large_local_models
+        self.max_agents = requested
+        self.max_large_local_models = models
         self.leases = LeaseLedger()
         self._specs: Dict[str, AgentSpec] = {}
         self._order: List[str] = []
@@ -163,15 +199,39 @@ class AgentScheduler:
         if spec.large_local_model:
             self.leases.acquire("large_local_models", spec.task_id)
 
-    def release(self, task_id: str) -> None:
-        """Release only Boru-owned leases for one task (idempotent)."""
+    def release(self, task_id: str, *, keep_model: bool = False) -> None:
+        """Release the agent lease for one task, and the model lease unless kept.
+
+        ``keep_model`` is how a resource profile keeps a large local model
+        open after the task that used it: the agent is finished, the model
+        stays leased until it goes idle past the profile's threshold.
+        """
         self.leases.release("agents_active", task_id)
-        self.leases.release("large_local_models", task_id)
+        if self.leases.holds("large_local_models", task_id) and not keep_model:
+            self.leases.release("large_local_models", task_id)
 
     def release_all(self) -> None:
         for task_id in self._order:
             self.release(task_id)
         self.leases.remote_calls = 0
+
+    def idle_model_leases(self, now: Optional[float] = None) -> List[str]:
+        """Owners whose held model lease sat idle past the profile threshold."""
+        if not self.profile.evicts_idle():
+            return []
+        evictable = []
+        for owner in self.leases.owners("large_local_models"):
+            idle = self.leases.idle_seconds("large_local_models", owner, now)
+            if idle is not None and idle >= self.profile.idle_eviction_seconds:
+                evictable.append(owner)
+        return evictable
+
+    def evict_idle(self, now: Optional[float] = None) -> List[str]:
+        """Release Boru-owned model leases that went idle past the threshold."""
+        evicted = self.idle_model_leases(now)
+        for owner in evicted:
+            self.leases.release("large_local_models", owner)
+        return evicted
 
 
 def build_envelopes(specs: Sequence[AgentSpec], goal: str, parent: Optional[str] = None) -> List[TaskEnvelope]:

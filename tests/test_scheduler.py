@@ -5,6 +5,7 @@ from boru.errors import PolicyViolation
 from boru.config import CoreConfig, ProviderConfig
 from boru.core import BoruCore
 from boru.policy import Policy
+from boru.resources import ResourceMode, ResourceProfile
 from boru.scheduler import AgentScheduler, AgentSpec, build_envelopes
 from boru.state import TaskState
 
@@ -36,7 +37,9 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual([], scheduler.blocked(current))
 
     def test_six_logical_agent_ceiling(self):
-        scheduler = AgentScheduler(Policy(max_agents=6))
+        # the hard ceiling stays six even under a wider resource profile
+        scheduler = AgentScheduler(Policy(max_agents=6),
+                                 profile=ResourceProfile.for_mode(ResourceMode.PERFORMANCE))
         for index in range(6):
             scheduler.add(AgentSpec("a{}".format(index), "t{}".format(index)))
         for task_id in scheduler.tasks():
@@ -54,6 +57,21 @@ class SchedulerTests(unittest.TestCase):
         for bad in (0, 7, True, "6"):
             with self.assertRaises(PolicyViolation):
                 AgentScheduler(Policy(), max_agents=bad)
+
+    def test_resource_profile_cannot_widen_the_policy_ceiling(self):
+        from boru.errors import PolicyViolation
+        from boru.resources import ResourceMode, ResourceProfile
+
+        # an explicit request beyond the policy ceiling refuses rather than
+        # silently clamping
+        with self.assertRaises(PolicyViolation):
+            AgentScheduler(Policy(max_agents=2), max_agents=6)
+        # a profile widening past the policy ceiling is clamped to it
+        scheduler = AgentScheduler(Policy(max_agents=2),
+                                 profile=ResourceProfile.for_mode(ResourceMode.PERFORMANCE))
+        self.assertEqual(2, scheduler.max_agents)
+        # the model-lease bound stays inside its own hard limit (0..2)
+        self.assertEqual(2, scheduler.max_large_local_models)
 
     def test_large_local_model_lease_is_one_by_default(self):
         scheduler = self.build([
@@ -119,6 +137,66 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual("a", envelope.task_id)
 
 
+class ResourceProfileTests(unittest.TestCase):
+    """Lease bounds, keep-warm and idle eviction follow the resource profile."""
+
+    def engine(self, **config):
+        return BoruCore(CoreConfig(providers=(ProviderConfig(kind="mock"),), **config))
+
+    def test_default_profile_is_balanced(self):
+        engine = self.engine()
+        self.assertEqual("BALANCED", engine.profile.mode.value)
+        self.assertEqual(4, engine.scheduler.max_agents)
+        engine.close()
+
+    def test_performance_profile_widens_leases_and_keeps_models_warm(self):
+        engine = self.engine(resource_mode="PERFORMANCE")
+        self.assertEqual(6, engine.scheduler.max_agents)
+        self.assertEqual(2, engine.scheduler.max_large_local_models)
+        self.assertTrue(engine.profile.keep_warm)
+        self.assertFalse(engine.profile.evicts_idle())
+        engine.close()
+
+    def test_resource_optimized_evicts_idle_leases(self):
+        engine = self.engine(resource_mode="RESOURCE_OPTIMIZED")
+        self.assertTrue(engine.profile.evicts_idle())
+        self.assertEqual(60, engine.profile.idle_eviction_seconds)
+        engine.close()
+
+    def test_custom_profile_requires_bounds(self):
+        from boru.errors import ConfigurationError
+
+        with self.assertRaises(ConfigurationError):
+            self.engine(resource_mode="CUSTOM").close()
+
+    def test_idle_model_lease_is_evicted_and_released(self):
+        engine = self.engine(resource_mode="BALANCED")
+        spec = AgentSpec(agent_id="a1", task_id="t1", large_local_model=True)
+        engine.scheduler.add(spec)
+        engine.scheduler.acquire(spec)
+        engine.scheduler.release("t1", keep_model=True)
+        self.assertTrue(engine.scheduler.leases.holds("large_local_models", "t1"))
+        engine._warm_models["t1"] = {"provider": "mock", "model_id": "m",
+                                     "last_used": __import__("time").time() - 1000}
+        engine.scheduler.leases.touch("large_local_models", "t1", __import__("time").time() - 1000)
+        evicted = engine._evict_idle_models()
+        self.assertEqual(["t1"], evicted)
+        self.assertFalse(engine.scheduler.leases.holds("large_local_models", "t1"))
+        engine.close()
+
+    def test_a_used_model_lease_is_not_evicted(self):
+        engine = self.engine(resource_mode="BALANCED")
+        spec = AgentSpec(agent_id="a2", task_id="t2", large_local_model=True)
+        engine.scheduler.add(spec)
+        engine.scheduler.acquire(spec)
+        engine.scheduler.release("t2", keep_model=True)
+        engine._warm_models["t2"] = {"provider": "mock", "model_id": "m",
+                                     "last_used": __import__("time").time()}
+        self.assertEqual([], engine._evict_idle_models())
+        self.assertTrue(engine.scheduler.leases.holds("large_local_models", "t2"))
+        engine.close()
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -181,4 +259,7 @@ class CorePlanTests(unittest.TestCase):
     def test_concurrent_agents_stay_within_six(self):
         specs = [AgentSpec("w", "t{}".format(index)) for index in range(6)]
         self.engine.submit_plan(specs, "synthetic")
-        self.assertEqual(6, self.engine.scheduler.max_agents)
+        # the profile is the performance knob, the policy the ceiling: the
+        # scheduler bound never exceeds either
+        self.assertEqual(min(self.engine.profile.max_agents, self.engine.policy.max_agents),
+                         self.engine.scheduler.max_agents)

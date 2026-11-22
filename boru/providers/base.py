@@ -22,6 +22,7 @@ FAILURE_CATEGORIES: Tuple[str, ...] = (
     "policy_denied",
     "request_too_large",
     "server_error",
+    "unsupported_capability",
 )
 
 ROLES: Tuple[str, ...] = ("system", "user", "assistant")
@@ -136,3 +137,15 @@ class ChatProvider:
         timeout: float = 30.0,
     ) -> ChatReply:  # pragma: no cover - interface
         raise NotImplementedError
+
+    def unload(self, model_id: str) -> bool:
+        """Release a loaded model when the provider has a lifecycle endpoint.
+
+        The default refuses with a typed failure: most providers (Jan today)
+        expose no documented model lifecycle API, and a connector that guessed
+        one could unload a model an unrelated session still uses.  A provider
+        that *does* support release returns ``True``.
+        """
+        raise ProviderFailure(
+            "unsupported_capability",
+            "this provider exposes no documented model lifecycle endpoint")

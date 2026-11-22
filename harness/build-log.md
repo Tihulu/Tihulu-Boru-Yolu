@@ -674,3 +674,14 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Wiring:** a `Grant` may now carry an owner-declared input schema (`input_declaration_json`, bounded to 16 KiB / 16 typed specs, validated at construction), `Grant.declared_inputs()` parses it, and `check_dispatch_body` validates the body's inputs against it before any transport. The declaration is owner-provided only: a dispatch body's extra top-level keys are now refused, so a payload can neither carry its own schema nor smuggle an extra key toward the endpoint.
 - **Documentation corrected:** the workflows module no longer claims a file-reading schema step it does not perform; closing that last step (read the workflow file, then dispatch) is recorded as a pilot-gate task.
 - **Tests observed:** `unittest discover -s tests` **618 tests OK** (2 new tests in `tests/test_connector_scope.py`). MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — resource profiles: PERFORMANCE / BALANCED / RESOURCE_OPTIMIZED / CUSTOM (commit on `p1/boru-core-vertical-slice`)
+
+- **Why:** the owner asked for modes that keep an idle host free of RAM/VRAM/swap pressure, modes that do not disturb active use, both GPUs usable when needed, and an optional way to keep models open in the background.
+- **What was built:** `boru/resources.py` — four resource profiles (a performance knob, never an authorization axis) setting `max_agents`, `max_large_local_models`, `idle_eviction_seconds`, `keep_warm` and owner-declared device budgets. `RESOURCE_OPTIMIZED` releases a kept-warm model lease after 60 s idle; `PERFORMANCE` holds up to two large local models warm and never evicts; `CUSTOM` takes owner bounds (either evict idle or keep warm). Host RAM is read from `/proc/meminfo` where available; VRAM stays an owner-declared budget, never a guessed measurement.
+- **Usage-safe idle eviction:** `LeaseLedger` stamps every lease; an agent lease is always released when the task ends and an in-flight task is never idle, so only a *kept-warm model lease* can be evicted, and only after the profile's own threshold.
+- **The model-release boundary, stated honestly:** Boru releases its own lease and then asks the provider (`ChatProvider.unload`, new typed hook) to release the model. A provider with no documented lifecycle endpoint refuses with `unsupported_capability` (Jan today; the HOLD recorded in `docs/ROUTING_AND_RESOURCES.md`), and that refusal is recorded in the ledger rather than hidden.
+- **Wiring:** `CoreConfig.resource_mode`/`resource_overrides`, `BoruCore` builds the profile and the scheduler from it, `boru resources` reports profile + lease bounds + detected RAM, `boru doctor` gained a memory check, and the docs record the mode table and the keep-warm/eviction semantics.
+- **Tests observed:** `unittest discover -s tests` **635 tests OK** (new `tests/test_resources.py`, 10 tests, plus scheduler/core wiring tests). MOCK/STATIC only.

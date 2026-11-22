@@ -184,3 +184,11 @@ class CloudProvider(ChatProvider):
             usage=dict(reply.usage),
         )
         return reply
+
+    def unload(self, model_id: str) -> bool:
+        """Refuse: a cloud model is not a local resource Boru can release."""
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ProviderFailure("model_missing", "unknown model")
+        raise ProviderFailure(
+            "unsupported_capability",
+            "a cloud model is not a local resource Boru Core can release")

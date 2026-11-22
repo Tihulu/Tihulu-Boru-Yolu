@@ -16,6 +16,7 @@ from typing import Any, List, Optional, Tuple
 from .boundary import BOUNDARIES, DATA_CLASSES, RECIPIENTS, Classification
 from .errors import ConfigurationError
 from .policy import Policy
+from .resources import DEFAULT_MODE, ResourceMode, ResourceProfile, profile_for
 
 CONFIG_VERSION = 1
 QUEUE_LIMIT = 16
@@ -165,6 +166,12 @@ class CoreConfig:
     #: Declared outbound directions. An undeclared direction is refused before
     #: any network call (issue #9).
     classifications: Tuple["ClassificationSpec", ...] = ()
+    #: Resource profile: a performance knob (PERFORMANCE / BALANCED /
+    #: RESOURCE_OPTIMIZED / CUSTOM). It is not an authorization axis and can
+    #: never widen policy, inference, execution or disclosure rights.
+    resource_mode: str = DEFAULT_MODE.value
+    #: Owner bounds for CUSTOM; ignored for a named mode.
+    resource_overrides: Any = field(default_factory=dict)
 
     def validate(self) -> List[str]:
         errors: List[str] = []
@@ -186,11 +193,33 @@ class CoreConfig:
         errors.extend(_int_errors(self.max_context_chars, "max_context_chars", 256, 1 << 20))
         for spec in self.classifications:
             errors.extend(spec.validate())
+        try:
+            self.resource_profile()
+        except ConfigurationError as exc:
+            errors.append(str(exc))
         if not self.providers:
             errors.append("at least one provider must be configured")
         for provider in self.providers:
             errors.extend(provider.validate())
         return errors
+
+    def resource_profile(self) -> ResourceProfile:
+        """The resolved resource profile for this configuration."""
+        if not isinstance(self.resource_mode, str):
+            raise ConfigurationError("resource_mode must be a string")
+        try:
+            mode = ResourceMode(self.resource_mode.strip().upper())
+        except ValueError:
+            raise ConfigurationError("unknown resource mode: " + str(self.resource_mode))
+        overrides = dict(self.resource_overrides or {}) if isinstance(self.resource_overrides, dict) else None
+        if overrides is None:
+            raise ConfigurationError("resource_overrides must be an object")
+        if not overrides:
+            return profile_for(mode)
+        # Overrides are owner bounds: they relabel the profile as CUSTOM, so a
+        # named mode can never be silently half-edited.
+        base = profile_for(mode) if mode is not ResourceMode.CUSTOM else ResourceProfile(mode=mode)
+        return base.with_overrides(**overrides)
 
     def assert_valid(self) -> None:
         errors = self.validate()

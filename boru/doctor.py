@@ -70,12 +70,27 @@ def _check_repo_tests() -> Dict[str, Any]:
             "detail": "unittest suite exit " + str(result.returncode)}
 
 
+def _check_resources() -> Dict[str, Any]:
+    """Report the resource profile and the host memory the profile can see."""
+    from .resources import detect_memory, memory_pressure
+
+    total, available = detect_memory()
+    if total is None:
+        return {"status": "hold", "detail": "host memory is not reported on this platform"}
+    share = memory_pressure()
+    detail = "{} MB total, {} MB available".format(total, available)
+    if share is not None and share < 0.1:
+        detail += " (pressure: less than 10% available)"
+    return {"status": "ok", "detail": detail}
+
+
 def run_checks(state_dir: str = "local-state", include_tests: bool = True) -> Dict[str, Any]:
     checks = {
         "python": _check_python(),
         "sqlite": _check_sqlite(),
         "loopback": _check_loopback(),
         "state_dir": _check_state_dir(state_dir),
+        "resources": _check_resources(),
     }
     if include_tests:
         checks["repo_tests"] = _check_repo_tests()

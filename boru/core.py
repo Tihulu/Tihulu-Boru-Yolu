@@ -35,6 +35,9 @@ from .store import TaskStore
 from .types import SCHEMA_VERSION, AgentResult, TaskEnvelope
 
 CAPABILITIES = ("text",)
+#: Held (kept-warm) model leases are bounded: a profile can never accumulate
+#: them without limit.
+MAX_WARM_MODELS = 8
 
 #: Stable audit reasons. Provider text is never used as a reason category.
 REASONS = {
@@ -110,7 +113,15 @@ class BoruCore:
         self.budgets = BudgetLedger(ceiling=Budget())
         self.cooldowns = CooldownTracker(seconds=config.cooldown_seconds)
         self.router = Router(registry) if registry is not None else Router(_registry_for(config, self._providers))
-        self.scheduler = AgentScheduler(config.policy, max_agents=config.policy.max_agents)
+        # The resource profile is a performance knob, never an authorization
+        # axis: it sizes leases and the idle policy, and it cannot widen any
+        # policy bound (ADR-0002/0004).
+        self.profile = config.resource_profile()
+        self.scheduler = AgentScheduler(config.policy, profile=self.profile)
+        #: Held model leases: task_id -> provider, model_id, last_used.
+        self._warm_models: Dict[str, Dict[str, Any]] = {}
+        #: The provider/model that answered a task, for the kept-warm record.
+        self._last_model: Dict[str, Tuple[str, str]] = {}
         self.budgets = BudgetLedger(ceiling=Budget())
         self.cooldowns = CooldownTracker(seconds=config.cooldown_seconds)
 
@@ -261,8 +272,57 @@ class BoruCore:
             summary = self._dispatch_queued(task_id)
         finally:
             if spec is not None:
-                self.scheduler.release(task_id)
+                # A PERFORMANCE/CUSTOM keep-warm profile holds the large local
+                # model lease open after the task; every profile releases the
+                # agent lease.
+                keep_model = self.profile.keep_warm and spec.large_local_model
+                self.scheduler.release(task_id, keep_model=keep_model)
+                if keep_model:
+                    self._remember_warm(task_id)
+        self._evict_idle_models()
         return summary
+
+    def _remember_warm(self, task_id: str) -> None:
+        """Record which model a held lease stands for (bounded and bounded-old)."""
+        provider, model_id = self._last_model.get(task_id, (None, None))
+        while len(self._warm_models) > MAX_WARM_MODELS:
+            self._warm_models.pop(next(iter(self._warm_models)), None)
+        if provider is None:
+            self.scheduler.release(task_id, keep_model=False)
+            return
+        self._warm_models[task_id] = {"provider": provider, "model_id": model_id,
+                                      "last_used": self._clock_seconds()}
+        self.scheduler.leases.touch("large_local_models", task_id, self._clock_seconds())
+
+    def _evict_idle_models(self) -> List[str]:
+        """Release idle kept-warm leases, then ask the provider to unload.
+
+        The lease release is Boru's own bookkeeping; releasing the model is the
+        provider's decision.  A provider without a lifecycle endpoint refuses
+        with a typed failure, which is recorded rather than hidden.
+        """
+        now = self._clock_seconds()
+        evicted = self.scheduler.evict_idle(now)
+        for task_id in evicted:
+            record = self._warm_models.pop(task_id, None)
+            if record is None:
+                continue
+            provider = self._providers.get(record["provider"])
+            released = False
+            if provider is not None:
+                try:
+                    released = bool(provider.unload(record["model_id"]))
+                except ProviderFailure:
+                    released = False
+            self.audit.record("scheduler", task_id,
+                              "model_released" if released else "model_unload_unavailable",
+                              record["model_id"])
+        return evicted
+
+    def _clock_seconds(self) -> float:
+        from .state import utc_now
+
+        return __import__("time").time()
 
     def _hold_by_id(self, task_id: str, reason: str) -> None:
         row = self.store.get(task_id)
@@ -370,6 +430,7 @@ class BoruCore:
                 return self._summary(envelope)
             # A reply reached the record step: the model answered on this path.
             self.router.registry.mark_tested(candidate.provider, candidate.model_id, self._clock())
+            self._last_model[envelope.task_id] = (candidate.provider, candidate.model_id)
             return self._record(envelope, attempt_id, candidate.provider, candidate.model_id, reply, ceiling)
         self._hold(envelope, REASONS["provider_unavailable"])
         return self._summary(envelope)

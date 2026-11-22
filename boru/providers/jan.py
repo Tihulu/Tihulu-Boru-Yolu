@@ -388,3 +388,15 @@ class JanProvider(ChatProvider):
         if {"input_tokens", "output_tokens", "total_tokens"} <= set(parsed) and parsed["total_tokens"] != parsed["input_tokens"] + parsed["output_tokens"]:
             raise ProviderFailure("invalid_response", "inconsistent usage totals")
         return parsed
+
+    def unload(self, model_id: str) -> bool:
+        """Refuse: Jan exposes no documented model lifecycle endpoint.
+
+        Guessing an endpoint could unload a model an unrelated Jan session is
+        using; the honest answer is a typed refusal until one is documented.
+        """
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ProviderFailure("model_missing", "unknown model")
+        raise ProviderFailure(
+            "unsupported_capability",
+            "Jan exposes no documented model lifecycle endpoint")

@@ -48,3 +48,9 @@ class MockProvider(ChatProvider):
             evidence_class="simulated",
             usage={"input_tokens": 8, "output_tokens": 8, "total_tokens": 16},
         )
+
+    def unload(self, model_id: str) -> bool:
+        """A synthetic model holds no memory: releasing it always succeeds."""
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ProviderFailure("model_missing", "unknown model")
+        return True

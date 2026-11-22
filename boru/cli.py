@@ -99,6 +99,9 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--accept", action="store_true", help="accept; omit to reject")
     providers = sub.add_parser("providers", help="list configured providers and models (no discovery calls)")
     _add_common_shorthands(providers)
+    resources = sub.add_parser("resources",
+                               help="show the active resource profile, lease bounds and detected host RAM")
+    _add_common_shorthands(resources)
     doctor = sub.add_parser("doctor", help="local self-check readiness report (no network, no host state)")
     _add_common_shorthands(doctor)
     audit = sub.add_parser("audit", help="show recent rejection rows from the local ledger")
@@ -333,6 +336,29 @@ def _providers(args) -> int:
     return EXIT_OK
 
 
+def _resources(args) -> int:
+    """Report the active resource profile, its lease bounds and detected RAM.
+
+    The profile is a performance knob, never an authorization axis; nothing
+    here starts, stops or reconfigures a model or an external session.
+    """
+    from .resources import detect_memory, memory_pressure
+
+    config = _load_config(args.config)
+    profile = config.resource_profile()
+    total, available = detect_memory()
+    payload = {
+        "profile": profile.as_dict(),
+        "memory": {"total_mb": total, "available_mb": available,
+                   "available_share": memory_pressure()},
+        "not_an_authorization_axis": True,
+        "model_release": "provider-hook; a provider without a lifecycle endpoint "
+                         "refuses with unsupported_capability",
+    }
+    _emit(payload, args.show_text)
+    return EXIT_OK
+
+
 _HANDLERS = {
     "demo": _run_demo,
     "run": _run_task,
@@ -340,6 +366,7 @@ _HANDLERS = {
     "cancel": _cancel,
     "review": _review,
     "providers": _providers,
+    "resources": _resources,
     "doctor": _doctor,
     "connect": _connect,
     "accounts": _accounts,
