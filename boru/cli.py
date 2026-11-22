@@ -354,6 +354,8 @@ def _resources(args) -> int:
     warm: List[Dict[str, Any]] = []
     core = None
     if getattr(args, "state_dir", None):
+        # An unusable state directory is reported, not silently ignored: the
+        # lease view would otherwise look empty instead of wrong.
         try:
             core = _open_core(config, args.state_dir)
             core._evict_idle_models()
@@ -363,8 +365,11 @@ def _resources(args) -> int:
                       "remote_calls": ledger.remote_calls}
             warm = [dict(record, task_id=task_id)
                     for task_id, record in sorted(core._warm_models.items())]
-        except ConfigurationError:
-            core = None
+        except ConfigurationError as exc:
+            if core is not None:
+                core.close()
+            _emit({"error": exc.kind, "detail": str(exc)}, args.show_text)
+            return EXIT_ERROR
         finally:
             if core is not None:
                 core.close()

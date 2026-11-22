@@ -754,3 +754,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Defect found and fixed:** when the in-process replay history reached its bound, `BoundedTaskQueue.pop()` raised `QueueFull` — *after* removing the envelope from the queue, so dispatch lost the task and stopped working. The bound is now a documented sliding window: a consumed key leaves the window oldest-first, and the module records that `TaskStore.submit`'s idempotency fingerprint is the authoritative replay guard while this window covers the in-process case. A pop never raises for bookkeeping and never loses an item; `put()` still refuses a duplicate key inside the window.
 - **Self-review of `boru/state.py`:** the transition table is complete and terminal for `DONE`/`CANCELLED`; `HOLD` resumes into the pipeline; an agent's self-report can never reach `DONE` (only the owner review path promotes it, from `REVIEW`). No change needed.
 - **Tests observed:** `unittest discover -s tests` **654 tests OK** (new: bounded-window test in `tests/test_queue.py`); `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — CLI self-review: a bad state directory is reported, not ignored (commit on `p1/boru-core-vertical-slice`)
+
+- **Self-review of the CLI surface** with deliberately bad input (missing file, invalid JSON, invalid config, a state directory that is a file, a non-numeric audit limit, an oversized task id): every path produced a typed error with a stable `kind` and no traceback - except `boru resources --state-dir <file>`, which silently reported an empty lease view. The lease view is now a reported failure, so an unusable state directory cannot look like "nothing is held".
+- **Also reviewed in this pass:** `boru/state.py` (complete transitions, terminal states, no agent self-report path to `DONE`) and `boru/queue.py` (fixed in the previous entry).
+- **Tests observed:** `unittest discover -s tests` **654 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
