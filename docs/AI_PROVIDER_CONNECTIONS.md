@@ -99,6 +99,32 @@ Registration with the provider is an owner action; this repository connects
 nobody by itself. `TokenVault` persists handle metadata (owner-only, no secret
 values) across restarts.
 
+## What the owner does, step by step (Gate 2)
+
+Registration is the owner's action; Boru Core connects nobody by itself. On the
+provider's developer console, create an application and bring back these five
+values (nothing else — no secret is committed, logged or stored by this
+repository):
+
+| Value | Example | Note |
+| --- | --- | --- |
+| Provider name | `openai` | used as the label in config and audit |
+| Authorization endpoint | `https://provider.example/authorize` | must be `https` |
+| Token endpoint | `https://provider.example/token` | must be `https`| Client ID | `app_1234...` | public identifier |
+| Redirect URI | `http://127.0.0.1:8731/callback` | **numeric loopback**; a provider that refuses a plain-HTTP loopback redirect is a documented limitation, not a bypass to work around |
+| Scopes | `openid email` | at most 16; the connection command requests them bound |
+
+For a confidential client, the provider also issues a client secret: give Boru
+only the **environment variable name** that holds it (`--client-secret-env`), and
+set that variable in your own shell. Boru reads it at request time, never stores
+it and never prints it.
+
+Then run the command above (`--vault-dir` must be an existing owner-only
+directory). The result is either an opaque handle in the vault — an identity,
+`model_test_passed: false`, `identity_is_not_inference: true` — or a typed
+refusal. A successful sign-in is **not** inference authorization and never
+widens a policy axis.
+
 ## Status
 
 **DESIGNED / PILOTABLE.** No provider account is connected by this repository
