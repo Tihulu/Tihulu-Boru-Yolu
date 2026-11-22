@@ -10,6 +10,35 @@ from typing import Dict, Tuple
 DEFAULT_LANGUAGE = "en"
 LANGUAGES: Tuple[str, ...] = ("en", "tr", "de")
 
+#: Repository text (source, docs, tests, commit messages, issues, PRs) is
+#: English.  The user-facing dashboard localization is in product scope and is
+#: the only permitted non-English text, together with the test that asserts it.
+REPOSITORY_TEXT_EXEMPT = ("boru/i18n.py", "tests/test_dashboard.py")
+
+#: Turkish-specific code points, expressed as code points so that this file
+#: stays English while still detecting every Turkish letter.
+_NON_ENGLISH_CODEPOINTS: Tuple[int, ...] = (
+    0x00C7, 0x00DC, 0x00D6,          # C, U, O with diaeresis/cedilla (upper)
+    0x00E7, 0x00FC, 0x00F6,          # c, u, o with diaeresis/cedilla (lower)
+    0x011E, 0x011F,                  # G with breve
+    0x0130, 0x0131,                  # dotted and dotless I
+    0x015E, 0x015F,                  # S with cedilla
+    0x00DF,                          # sharp s (German, never repository text)
+)
+NON_ENGLISH_CHARS = frozenset(chr(code) for code in _NON_ENGLISH_CODEPOINTS)
+
+
+def is_repository_english(text: str) -> bool:
+    """True when a text carries no non-English letter.
+
+    The predicate is deliberately letter-based: it marks text that cannot be
+    English repository communication without judging prose that happens to
+    quote another language.
+    """
+    if not isinstance(text, str):
+        return True
+    return not any(character in NON_ENGLISH_CHARS for character in text)
+
 TRANSLATIONS: Dict[str, Dict[str, str]] = {
     "title": {"en": "Boru Core status", "tr": "Boru Core durumu", "de": "Boru Core-Status"},
     "policy": {"en": "Policy axes", "tr": "Politika eksenleri", "de": "Richtlinien-Achsen"},

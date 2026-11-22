@@ -86,6 +86,37 @@ def validate_example(c: dict) -> list[str]:
     return errors
 
 
+def scan_english_text() -> list[str]:
+    """Every tracked text file must be English outside the localization set.
+
+    The product's user-facing dashboard localization is in product scope; the
+    predicate lives in ``boru.i18n`` so the rule and its enforcement share one
+    definition.
+    """
+    import subprocess
+    import sys
+
+    sys.path.insert(0, str(ROOT))
+
+    from boru.i18n import REPOSITORY_TEXT_EXEMPT, is_repository_english
+
+    problems = []
+    tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+    for name in tracked:
+        if name in REPOSITORY_TEXT_EXEMPT:
+            continue
+        path = ROOT / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if not is_repository_english(text):
+            problems.append("non-English text outside the localization set: " + name)
+    return problems
+
+
 def main() -> int:
     problems = []
     for name in REQUIRED_DOCS:
@@ -100,6 +131,10 @@ def main() -> int:
         problems.extend(validate_example(config))
     except (OSError, json.JSONDecodeError) as exc:
         problems.append("sample config invalid: " + type(exc).__name__)
+    try:
+        problems.extend(scan_english_text())
+    except Exception as exc:  # pragma: no cover - git unavailable outside a checkout
+        problems.append("English-text scan unavailable: " + type(exc).__name__)
     if problems:
         for problem in problems:
             print("FAIL:", problem)

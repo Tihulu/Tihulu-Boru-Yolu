@@ -685,3 +685,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **The model-release boundary, stated honestly:** Boru releases its own lease and then asks the provider (`ChatProvider.unload`, new typed hook) to release the model. A provider with no documented lifecycle endpoint refuses with `unsupported_capability` (Jan today; the HOLD recorded in `docs/ROUTING_AND_RESOURCES.md`), and that refusal is recorded in the ledger rather than hidden.
 - **Wiring:** `CoreConfig.resource_mode`/`resource_overrides`, `BoruCore` builds the profile and the scheduler from it, `boru resources` reports profile + lease bounds + detected RAM, `boru doctor` gained a memory check, and the docs record the mode table and the keep-warm/eviction semantics.
 - **Tests observed:** `unittest discover -s tests` **635 tests OK** (new `tests/test_resources.py`, 10 tests, plus scheduler/core wiring tests). MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — "repository text is English" is now enforced, not just stated (commit on `p1/boru-core-vertical-slice`)
+
+- **Audit performed:** every tracked file was scanned for non-English letters. The only hits are `boru/i18n.py` (12 lines — the TR/EN/DE dashboard label table) and `tests/test_dashboard.py` (4 lines asserting those labels render), i.e. the user-facing localization AGENTS.md explicitly keeps in product scope. Commit messages, source comments, docs, harness, tests, scripts and examples are English.
+- **Enforcement added:** the predicate lives in `boru.i18n` (`is_repository_english`, codepoint-based so the checking file itself stays English), `scripts/check_project.py` scans every tracked file against it, and `tests/test_repository_language.py` runs the same rule inside CI.
+- **Tests observed:** `unittest discover -s tests` full suite with the new test; `scripts/check_project.py` PASS.
