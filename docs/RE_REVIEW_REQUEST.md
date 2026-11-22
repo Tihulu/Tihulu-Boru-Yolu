@@ -8,9 +8,8 @@ Re-review request — TIHULU Boru Yolu, Gate 1 (previous verdict: FAIL, findings
 
 Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 Branch: `p1/boru-core-vertical-slice` (draft PR #14)
-Code head under review: the head recorded in `docs/REVIEW_PACKAGE.md`
-(currently `87d75d91fa562729f0516e994a9a15ad965fe393`; a later
-documents-only commit does not change the code tree).
+Code head under review: `1617709ce6c7fbd42a6879dd997d124ef22af052` (branch `p1/boru-core-vertical-slice`, pushed;
+CI on this head: https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/45059854129)
 
 What changed since your review of cc73940:
 - Every finding F01-F22 is remediated; the per-finding table with the closing
@@ -51,6 +50,7 @@ docs/REVIEW_FINDINGS.md). Please re-issue their exact text and the reproducing
 input, and this head will be tested and remediated against it.
 
 Known remaining HOLDs (not to be "fixed" by code): host-level process
-authentication, OS confinement, live provider/GitHub behaviour,
-clean-machine acceptance, and the CI run for this head (the owner-authorized
-push had not happened when this request was prepared).
+authentication, OS confinement, live provider/GitHub behaviour and
+clean-machine acceptance. The repository itself is pushed and green in CI on
+this head: 676 tests, the reviewer's 20 probes, the static manifest, the
+evidence report, the install/uninstall round trip and `boru doctor`.
