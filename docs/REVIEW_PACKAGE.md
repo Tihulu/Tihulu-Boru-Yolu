@@ -7,9 +7,7 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 - Branch under review: `p1/boru-core-vertical-slice`
 - Code head under review: `87d75d91fa562729f0516e994a9a15ad965fe393` (a later documents-only commit may add this package's final pin; the code tree is identical)
 - Pull request: https://github.com/Tihulu/Tihulu-Boru-Yolu/pull/14 (draft, not merged)
-- CI: this head was pushed with the owner's authorization and its run is
-  recorded below once the result is known; the previous head's successful run is
-  https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/44931288098
+- CI (this head, success): https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/45048886502
 - Issue tracker: https://github.com/Tihulu/Tihulu-Boru-Yolu/issues
 - Ledger: [harness/build-log.md](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/harness/build-log.md)
 
@@ -34,8 +32,8 @@ python3 -m boru demo                 # expected: state REVIEW, evidence_class si
 
 Observed result on the head commit: **PASS / 673 tests / exit 0** (local run of
 `check_project.py`, the full suite, `scripts/evidence.py`, `boru doctor` and
-`boru demo`); the same suite passed in CI on the previous head. If any of
-these fail on your run, that is a finding.
+`boru demo`); the same suite passed in CI on this head (run 45048886502). If any
+of these fail on your run, that is a finding.
 
 ## 2. What to review, in order
 

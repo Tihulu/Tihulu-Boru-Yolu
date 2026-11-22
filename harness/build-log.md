@@ -836,3 +836,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Push executed by the authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`) under the owner's session authorization: `git push origin p1/boru-core-vertical-slice` → `cc73940..988738a`, 43 commits, remote head `988738a`. Working tree clean before and after; no files modified.
 - **CI:** run `#45048886502` ("Source-only contract checks") was triggered for this head; its outcome is recorded below once the local agent reports it — the package is not linked to a run whose result is unknown.
 - **Routing note recorded honestly:** the cloud coordinator did not execute host Shell directly for the push; the operation ran through the independently authorized local agent, and only a sanitized report (SHA, run id, tree state) crossed back.
+
+---
+
+### 2026-11-22 — CI green on the pushed head; Gate 1 package re-pinned (commit on `p1/boru-core-vertical-slice`)
+
+- **CI verified:** run `#45048886502` on head `988738a` concluded **success** (no failed jobs or steps), reported by the authorized local agent. Link: https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/45048886502
+- **Package re-pinned:** `docs/REVIEW_PACKAGE.md` now cites this head's own CI run instead of the previous head's, and no longer states that a run is pending.
+- **Gate 1 state:** the remediation work, the local verification (673 tests, 20/20 probes, check/evidence/doctor) and the CI run are all in place; what remains is the **independent verdict**, which belongs to the reviewer.
