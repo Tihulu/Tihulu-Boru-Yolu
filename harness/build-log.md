@@ -582,3 +582,25 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Changes made:** `docs/REVIEW_PACKAGE.md` — a self-contained review package for an external reviewer: repository/branch/PR/CI links, the exact reproduction commands with their observed results, 19 components with file links, a 57-item invariant checklist where every invariant points to the named test that asserts it, out-of-scope statements, the recorded live evidence (A21, A23), a findings template and PASS criteria. Manifest extended to require it.
 - **Verification performed:** every referenced test name exists in the suite (57/57), every referenced file path exists (39/39), and the five documented commands were re-run on this head — `check_project.py` PASS, `unittest` 556 tests OK, `evidence.py` exit 0, `boru doctor` overall ok, `boru demo` REVIEW/simulated.
 - **Gate 1 status:** still **HOLD** — the package is ready; the reviewer (GPT Astray, per the owner) is the missing party.
+
+---
+
+### 2026-11-22 — Gate 1 remediation in progress (commits `e449d17`, `79abd23` on `p1/boru-core-vertical-slice`)
+
+**State: WORK IN PROGRESS — the tree is clean and committed; no uncommitted work exists.**
+
+- **Context:** the external review of `cc73940` returned FAIL with findings F01–F22. The reviewer also supplied an executable regression probe file (20 probes); it is now checked in as `tests/test_review_regressions.py` so CI runs the same acceptance spec.
+- **Closed in `e449d17`:** F01 (HMAC-signed, request-bound authorization receipts verified by the executor under the worker key), F02/F13 (worker ids stay single opaque segments; nonfinite stamps are never valid), F03/F11 (consent binds recipient, task, operation, alias, field and level; no downgrade into a wider level), F08 (component-wise `dir_fd` + `O_NOFOLLOW` target resolution), F09 (ledger identifiers validated and refused, never stored), F12 (grant ids immutable; a revocation cannot be reset by replacement), F14 (loopback service concurrency bounded), F17/F18 (used nonces bounded; read metadata real and bounded, never synthesized).
+- **Closed in `79abd23`:** receipts name the resource only by an **opaque token** (`r-<16 hex>`) derived from the owner-declared path, so no alias or absolute path rides in a receipt; an alias may be a safe name **or** an owner-declared absolute path, and every path component is checked (intermediate symlinks refused); the broker's own worker identity bounds unauthenticated in-process requests; a consent grant may omit its alias (owner-explicit any-resource) while task/field/level/expiry/nonce binding stays mandatory.
+- **Tests observed:** `unittest discover -s tests` **572 tests OK** at `e449d17`; broker/consent/executor/pipeline/service/workers modules OK at `79abd23`. MOCK/STATIC only.
+- **Remaining (exact next action):** 18 of the 20 reviewer probes still fail. Fix in this order, one commit each with a regression test:
+  1. `boru/workers.py` — `create(now=nan)` must persist a record that `valid()` refuses (probe: `test_worker_registry_cannot_issue_nonfinite_expiry`).
+  2. `boru/privacy.py` — the in-memory `ConsentStore` must bind level (probe: `test_l0_owner_grant_cannot_authorize_l2_local`); `boru/consent.py` must refuse a re-issued revoked grant id (probe: `test_grant_revocation_cannot_be_erased_by_same_id_reissue`).
+  3. `boru/connectors/scope.py` — reject NUL/control characters in slots; `rerun_workflow` must carry a granted `workflow`; add `check_dispatch_body` (body `ref` must equal the grant reference, inputs bounded) used **before** any transport (probes: `test_repository_slots_reject_nul`, `test_workflow_rerun_cannot_ignore_workflow_allowlist`, `test_workflow_dispatch_cannot_override_reference_in_body`).
+  4. `boru/connectors/github.py` + `gitlab.py` — `?ref=` uses the granted reference slot; `call()` enforces the grant account identity once per provider when a token is configured; audit records never contain a URL path; error bodies capped (probes: `test_github_read_file_must_use_granted_reference`, `test_gitlab_read_file_must_use_granted_reference`, `test_github_call_must_enforce_account_identity`, `test_connector_audit_does_not_record_repository_paths`).
+  5. `boru/connectors/polling.py` — bound the seen-event set (probe: `test_polling_does_not_replay_evicted_event_ids`).
+  6. `boru/types.py` — recursive bounded validation rejecting nested `raw_stdout` (probe: `test_result_contract_denies_nested_raw_host_content`).
+  7. `boru/core.py` — `evidence_class` derived from provider provenance, not a provider claim; outbound payload classified before dispatch.
+  8. `boru/policy.py` — documented upper bounds for every axis value.
+  9. Then: full `unittest`, `scripts/check_project.py`, `scripts/evidence.py`, `boru doctor`, re-pin `docs/REVIEW_PACKAGE.md` to the final SHA, update issues #13/#14, request the re-review.
+- **Do not weaken while remediating:** LOCAL_ONLY / LOCAL_ISOLATED / MINIMUM_NECESSARY defaults, the four independent policy axes, or the typed field maps.
