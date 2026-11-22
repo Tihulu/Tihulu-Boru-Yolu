@@ -657,3 +657,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Nonce claim vs code**: the module claimed "state and nonce verification" while only `state` is verified (nonce verification needs a parsed, signature-checked ID token, which this slice does not implement). The docstring now states the limitation and the handle record it, instead of implying a check that does not exist.
 - **Unbounded token metadata and expiry**: `TokenVault.register()` accepted any provider/account/scope length and any `expires_at` — including NaN or infinite, which no comparison can ever call expired and which `json.dump` writes as invalid strict JSON. Metadata is now bounded, the expiry must be finite, positive and within a ten-year horizon (validated on load as well as on register), and `exchange()` refuses a non-finite `expires_in` before recording a handle.
 - **Tests observed:** `unittest discover -s tests` **613 tests OK** (new: 4 hardening tests in `tests/test_oauth.py`). MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — cloud transport self-review: untyped crash closed (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed:** the cloud transport reuses `JanProvider`'s shared parser through `__new__` without running its constructor, and `_parse_reply` reads `self.model_response_is_path` when the reply names a different model. A mismatched-model reply therefore raised an untyped `AttributeError` instead of `ProviderFailure("invalid_response")` — a crash on the very path Gate 2 exercises. The shared attributes now have class-level defaults, the two reuse sites set them explicitly, and `CloudProvider.chat` validates `max_tokens` and `timeout` like the Jan transport.
+- **New coverage:** `tests/test_cloud_provider.py` (`CloudParseSafetyTests`: mismatched model, six hostile bodies, bounded request parameters) — 3 tests, 616 total.
+- **Tests observed:** `unittest discover -s tests` **616 tests OK**. MOCK/STATIC only.

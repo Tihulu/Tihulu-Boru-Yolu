@@ -143,5 +143,37 @@ class CloudStateTests(unittest.TestCase):
         self.assertEqual([], record)
 
 
+class CloudParseSafetyTests(unittest.TestCase):
+    """A hostile or unexpected reply is a typed failure, never a crash."""
+
+    def setUp(self):
+        self.provider = CloudProvider("test", "https://api.example.test/v1", model_ids=("m1",))
+
+    def test_mismatched_model_is_a_typed_failure(self):
+        # the shared parser runs on a reused JanProvider instance: an unset
+        # shared attribute used to raise an untyped AttributeError here
+        body = json.dumps({"id": "req-9", "model": "other-model",
+                           "choices": [{"message": {"role": "assistant", "content": "ack"}}]})
+        with self.assertRaises(ProviderFailure) as raised:
+            self.provider._parse_reply(body.encode("utf-8"), "m1")
+        self.assertEqual("invalid_response", raised.exception.category)
+
+    def test_hostile_bodies_are_typed_failures(self):
+        for body in (b"", b"not json", b'{"choices": []}', b'{"choices": [{"message": null}]}',
+                     b'{"choices": [{"message": {"content": ""}}], "model": "m1"}',
+                     b'{"choices": [{"message": {"content": "x", "tool_calls": [{}]}}],'
+                     b' "model": "m1", "id": "r"}',
+                     b'{"id": "r", "model": "m1", "choices": [{"message": {"content": "x"}}],'
+                     b' "id": "r2"}'):
+            with self.assertRaises(ProviderFailure):
+                self.provider._parse_reply(body, "m1")
+
+    def test_request_parameters_are_bounded(self):
+        for bad in (dict(max_tokens=0), dict(max_tokens=True), dict(max_tokens=10 ** 9),
+                    dict(timeout=0.0), dict(timeout=True)):
+            with self.assertRaises(ProviderFailure):
+                self.provider.chat("m1", [ChatMessage("user", "hi")], **bad)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,7 +20,15 @@ import json
 import os
 from typing import Optional, Sequence, Tuple
 
-from .base import ChatMessage, ChatProvider, ChatReply, ProviderFailure
+from .base import (
+    MAX_OUTPUT_TOKENS_LIMIT,
+    MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
+    ChatMessage,
+    ChatProvider,
+    ChatReply,
+    ProviderFailure,
+)
 
 #: Honest connection states.  A configured endpoint is not an authentication.
 CONNECTION_STATES: Tuple[str, ...] = (
@@ -112,6 +120,9 @@ class CloudProvider(ChatProvider):
              timeout: float = 30.0) -> ChatReply:
         if model_id not in self._allowlist:
             raise ProviderFailure("policy_denied", "model is not in the configured allowlist")
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) \
+                or not 1 <= max_tokens <= MAX_OUTPUT_TOKENS_LIMIT:
+            raise ProviderFailure("invalid_response", "invalid max_tokens")
         key = self._api_key()
         if self.api_key_env and not key:
             raise ProviderFailure("unauthorized", "credential environment variable is not set")
@@ -122,8 +133,10 @@ class CloudProvider(ChatProvider):
             "stream": False,
             "tool_choice": "none",
         }
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0.1 <= float(timeout) <= 120:
+            raise ProviderFailure("invalid_response", "invalid timeout")
         payload = json.dumps(body, ensure_ascii=True).encode("utf-8")
-        if len(payload) > 64 * 1024:
+        if len(payload) > MAX_REQUEST_BYTES:
             raise ProviderFailure("request_too_large", "request exceeds the bounded size")
         status, raw = self._exchange("POST", self._path + "/chat/completions", payload, float(timeout), key)
         if status != 200:
@@ -141,6 +154,8 @@ class CloudProvider(ChatProvider):
         exchanger = JanProvider.__new__(JanProvider)
         exchanger._host, exchanger._port, exchanger._tls = self._host, self._port, self._tls_flag
         exchanger._prefix = self._path.strip("/") or "v1"
+        exchanger.model_response_is_path = False
+        exchanger.allow_discovery = False
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if api_key:
             headers["Authorization"] = "Bearer " + api_key
@@ -157,6 +172,8 @@ class CloudProvider(ChatProvider):
         from .jan import JanProvider
 
         exchanger = JanProvider.__new__(JanProvider)
+        exchanger.model_response_is_path = False
+        exchanger.allow_discovery = False
         reply = exchanger._parse_reply(raw, model_id)
         reply = ChatReply(
             provider=self.provider,

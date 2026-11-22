@@ -41,6 +41,11 @@ class JanProvider(ChatProvider):
 
     provider = "jan"
     local = True
+    #: Class-level defaults so the shared helpers also work for an instance
+    #: built for cross-provider reuse (see CloudProvider): a reused instance
+    #: must never raise an untyped AttributeError on a shared attribute.
+    model_response_is_path = False
+    allow_discovery = False
 
     def __init__(
         self,
