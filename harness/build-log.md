@@ -623,3 +623,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Documents updated:** `docs/REVIEW_PACKAGE.md` (head re-pinned to the code head `87d75d91fa562729f0516e994a9a15ad965fe393`, 596-test and 20-probe commands, per-finding remediation table F01–F22 with closing commits, new invariant rows), `docs/SECURITY_REVIEW_REQUEST.md` (marked as a re-review of the remediated head), `docs/RE_REVIEW_REQUEST.md` (new: the ready-to-send reviewer request), `scripts/check_project.py` (manifest now requires both Gate 1 documents).
 - **Verification observed on this head:** `scripts/check_project.py` PASS (28 documents), `unittest discover -s tests` **596 tests OK**, review probes 20/20, `scripts/evidence.py` exit 0, `boru doctor` overall ok / live_acceptance HOLD.
 - **Blocking owner action:** the session harness refuses `git push`, so the CI run for this head does not exist and the package says so instead of linking a run that was never executed. Push authorization remains the owner's decision.
+
+---
+
+### 2026-11-22 — adversarial walkthroughs added; the broker refuses directory-reference targets (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed by this self-check:** `file_name` accepted `.` as a target name, so the broker could issue a receipt for a target that can never name an entry (the executor refused it later, fail-closed, but the contract now refuses it at the source). `boru/broker.py` refuses `.` and `..` targets.
+- **New coverage:** `tests/test_adversarial_walkthroughs.py` (8 tests) drives the real broker/executor/consent/registry modules with control-character and path targets, symlinked targets, a key-less worker, a token bound to another resource, ambiguous grant ids and replayed nonces.
+- **Tests observed:** `unittest discover -s tests` **604 tests OK**; reviewer probes 20/20; `scripts/check_project.py` PASS (28 documents). MOCK/STATIC only.

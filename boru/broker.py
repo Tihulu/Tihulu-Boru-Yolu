@@ -53,8 +53,15 @@ ALLOWED_OPERATIONS: frozenset = frozenset({
 
 
 def file_name(value: Any) -> str:
-    """A single-segment file name inside an alias: never a path."""
-    return safe_identifier(value, 64, "file name")
+    """A single-segment file name inside an alias: never a path.
+
+    ``.`` and ``..`` name the alias root and its parent, not an entry, so a
+    receipt can never be issued for them.
+    """
+    name = safe_identifier(value, 64, "file name")
+    if name in (".", ".."):
+        raise PolicyViolation("file name must name an entry, not a directory reference")
+    return name
 
 
 def valid_resource_path(path: Any) -> bool:
