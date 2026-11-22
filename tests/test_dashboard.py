@@ -11,7 +11,7 @@ import urllib.request
 
 from boru.config import CoreConfig, ProviderConfig
 from boru.core import BoruCore
-from boru.dashboard import BoruDashboard
+from boru.dashboard import MAX_CONNECTIONS, BoruDashboard
 from boru.types import TaskEnvelope
 
 
@@ -97,7 +97,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(404, self.get("/nope")[0])
 
     def test_non_loopback_bind_refused(self):
-        from boru.dashboard import BoruDashboard as Dashboard
+        from boru.dashboard import MAX_CONNECTIONS, BoruDashboard as Dashboard
 
         with self.assertRaises(ValueError):
             Dashboard(self.engine, host="0.0.0.0")
@@ -107,6 +107,75 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual([], [t for t in payload["tasks"] if t["task_id"] == "t1" and t["state"] == "RUNNING"])
         self.assertEqual("HOLD", payload["live_acceptance"])
+
+
+class DashboardHardeningTests(unittest.TestCase):
+    """A local owner surface is still a surface: bounds and typed failures."""
+
+    def setUp(self):
+        self.engine = BoruCore(CoreConfig(providers=(ProviderConfig(kind="mock"),)))
+        self.engine.submit(TaskEnvelope(task_id="t1", goal="ping"))
+        self.engine.dispatch_next()
+        self.dashboard = BoruDashboard(self.engine)
+        self.host, self.port = self.dashboard.start()
+
+    def tearDown(self):
+        self.dashboard.stop()
+        self.engine.close()
+
+    def get(self, path):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:{}{}".format(self.port, path), timeout=5) as response:
+                return response.status, dict(response.headers), response.read().decode("utf-8")
+        except urllib.error.HTTPError as error:
+            return error.code, dict(error.headers), error.read().decode("utf-8")
+
+    def test_responses_carry_restrictive_headers(self):
+        status, headers, _ = self.get("/status")
+        self.assertEqual(200, status)
+        self.assertIn("default-src", headers.get("Content-Security-Policy", ""))
+        self.assertEqual("nosniff", headers.get("X-Content-Type-Options"))
+
+    def test_an_oversized_body_is_refused_before_it_is_read(self):
+        status, _, _ = self.get("/task/" + "x" * 200)
+        self.assertEqual(400, status)
+
+    def test_a_malformed_content_length_is_a_bad_request(self):
+        import http.client
+
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("POST", "/review")
+            connection.putheader("Content-Length", "not-a-number")
+            connection.endheaders()
+            response = connection.getresponse()
+            self.assertEqual(400, response.status)
+        finally:
+            connection.close()
+
+    def test_a_connection_limit_refuses_beyond_the_bound(self):
+        import http.client
+
+        connections = []
+        try:
+            # idle connections hold their slot until they close: past the bound
+            # a further request is refused, never queued unbounded
+            for _ in range(MAX_CONNECTIONS):
+                connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+                connection.connect()
+                connections.append(connection)
+            status, _, body = self.get("/status")
+            self.assertEqual(503, status)
+            self.assertIn("dashboard_busy", body)
+        finally:
+            for connection in connections:
+                try:
+                    connection.close()
+                except OSError:
+                    pass
+        # the bound is per in-flight connection: after they close, requests work
+        status, _, _ = self.get("/status")
+        self.assertEqual(200, status)
 
 
 if __name__ == "__main__":
@@ -175,7 +244,7 @@ class DashboardAuditTests(DashboardTests):
         self.assertIn("no rejections recorded", body)
 
     def test_loopback_only(self):
-        from boru.dashboard import BoruDashboard as Dashboard
+        from boru.dashboard import MAX_CONNECTIONS, BoruDashboard as Dashboard
 
         with self.assertRaises(ValueError):
             Dashboard(self.engine, host="0.0.0.0", audit=self.ledger)
@@ -247,7 +316,7 @@ class DashboardAuditTests(DashboardTests):
         self.assertIn("no rejections recorded", body)
 
     def test_loopback_only(self):
-        from boru.dashboard import BoruDashboard as Dashboard
+        from boru.dashboard import MAX_CONNECTIONS, BoruDashboard as Dashboard
 
         with self.assertRaises(ValueError):
             Dashboard(self.engine, host="0.0.0.0", audit=self.ledger)

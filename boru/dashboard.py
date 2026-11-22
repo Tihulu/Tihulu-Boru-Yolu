@@ -15,10 +15,18 @@ import json
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from .errors import BoruError, StoreError
+from .errors import BoruError, ConfigurationError, StoreError
 from .i18n import translate, summary_labels
+
+#: A local owner surface is still a surface: the request body, the task path
+#: segment and the concurrent connections are bounded.
+MAX_BODY_BYTES = 64 * 1024
+MAX_PATH_SEGMENT = 128
+MAX_CONNECTIONS = 4
+#: The page is fully self-contained: no external resource is loaded at all.
+CONTENT_SECURITY_POLICY = "default-src 'none'; form-action 'none'; base-uri 'none'"
 
 
 AXIS_KEYS = (
@@ -77,20 +85,58 @@ def _summary(core) -> Dict[str, Any]:
 class _Handler(BaseHTTPRequestHandler):
     core = None  # type: ignore[assignment]
     audit = None
+    _slots = None  # bounded-connection semaphore, attached by BoruDashboard
+
+    def handle(self) -> None:
+        """Bound concurrent connections before any request is processed."""
+        slots = type(self)._slots
+        if slots is None or slots.acquire(blocking=False):
+            try:
+                super().handle()
+            finally:
+                if slots is not None:
+                    slots.release()
+            return
+        # Refuse without a slot.  The whole request is drained first: closing a
+        # socket with unread bytes would reset the connection, and the owner's
+        # client would see a reset instead of the refusal it should read.
+        try:
+            drained = 0
+            while drained < MAX_BODY_BYTES:
+                line = self.rfile.readline(65537)
+                drained += len(line)
+                if not line or line in (b"\r\n", b"\n"):
+                    break
+            # parse_request never ran, so the attributes the response writer
+            # reads are set here rather than left to fail.
+            self.requestline = ""
+            self.request_version = "HTTP/1.0"
+            self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "dashboard_busy"})
+        except Exception:  # pragma: no cover - client may close early
+            pass
 
     def log_message(self, *args):  # keep the console clean
         return
+
+    def _headers(self, content_type: str, length: int) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(length))
+        self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
 
     def _json(self, status: HTTPStatus, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
     def _render(self, status: HTTPStatus, title: str, payload: Dict[str, Any], language: str = "en") -> None:
-        localized = summary_labels(language)
         localized = summary_labels(language)
         payload_json = html.escape(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True))
         audit_rows = self.audit.recent(8) if self.audit is not None else []
@@ -143,6 +189,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(raw)
 
@@ -169,21 +217,33 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, {"awaiting_review": review, "live_acceptance": "HOLD"})
             return
         if self.path.startswith("/task/"):
-            task_id = self.path[len("/task/"):]
+            task_id = self.path[len("/task/"):].split("?", 1)[0]
+            if not task_id or len(task_id) > MAX_PATH_SEGMENT or "/" in task_id:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "malformed_request"})
+                return
             try:
                 self._json(HTTPStatus.OK, self.core.status(task_id))
             except StoreError:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "unknown task"})
+            except ConfigurationError:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "malformed_request"})
             return
         self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self) -> None:
         if self.path == "/review":
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "malformed_request"})
+                return
+            if length < 0 or length > MAX_BODY_BYTES:
+                self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "body_too_large"})
+                return
             raw = self.rfile.read(length) if length else b""
             try:
                 request = json.loads(raw.decode("utf-8") or "{}")
-            except json.JSONDecodeError:
+            except (UnicodeDecodeError, json.JSONDecodeError):
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "malformed_request"})
                 return
             task_id = request.get("task_id") if isinstance(request, dict) else None
@@ -211,7 +271,11 @@ class BoruDashboard:
     def __init__(self, core, host: str = "127.0.0.1", port: int = 0, audit=None) -> None:
         if host not in ("127.0.0.1", "localhost", "::1"):
             raise ValueError("dashboard must bind loopback only")
-        handler = type("BoruHandler", (_Handler,), {"core": core, "audit": audit})
+        # A loopback surface is still bounded: beyond the connection limit the
+        # handler refuses instead of spawning unbounded threads.
+        self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        handler = type("BoruHandler", (_Handler,), {"core": core, "audit": audit,
+                                                   "_slots": self._slots})
         self._server = ThreadingHTTPServer((host, port), handler)
         self._server.daemon_threads = True
         self._thread: Optional[threading.Thread] = None

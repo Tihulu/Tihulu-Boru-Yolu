@@ -734,3 +734,15 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Also fixed:** `mark_tested` raised an untyped `KeyError` for an unknown record, while `mark_health` raised a typed error; both are typed now, and `mark_health` validates the health state and the bounded error kind before writing.
 - **Self-review of `boru/registry.py` otherwise:** provenance (`discovered`/`configured`/`verified`), health states, all-tags matching, `LOCAL_ONLY` filtering and the literal `UNKNOWN` for unobservable values are all preserved and unchanged.
 - **Tests observed:** `unittest discover -s tests` **649 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — dashboard self-review: a local owner surface is still a surface (commit on `p1/boru-core-vertical-slice`)
+
+- **Self-review of `boru/dashboard.py`** found five gaps in the loopback status page, all closed:
+  1. an unbounded `Content-Length` read on `/review` - a malformed header raised an **untyped** error inside a network handler, and a huge one was read into memory before parsing; the body is now bounded (64 KiB) and a malformed length is a typed 400;
+  2. an unvalidated `/task/<id>` path segment - an oversized id reached the store and raised an **untyped** error; the segment is bounded and single-segment, and the store's configuration error maps to a 400;
+  3. no restrictive response headers - the self-contained page now carries a strict `Content-Security-Policy` and `nosniff`;
+  4. unbounded connection threads - the surface now bounds concurrent connections and refuses past the bound with a typed 503 (draining the request first, so a client reads the refusal instead of a connection reset, and setting the request attributes the response writer needs before `parse_request` ran);
+  5. a duplicated line in the render path.
+- **Tests observed:** `unittest discover -s tests` **653 tests OK** (4 new hardening tests in `tests/test_dashboard.py`); `scripts/check_project.py` PASS. MOCK/STATIC only.
