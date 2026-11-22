@@ -176,6 +176,22 @@ class ExecutorTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.executor.acquire(receipt, fields=("exists",), now=time.time())
 
+    def test_a_blocking_special_file_never_hangs_the_worker(self):
+        # a FIFO inside the alias must answer immediately, not block the worker
+        os.mkfifo(os.path.join(self.root, "pipe"))
+        receipt = self.authorise("probe_path_alias", ("exists",), target="pipe")
+        started = time.monotonic()
+        result = self.executor.acquire(
+            receipt, fields=("exists",), now=time.time())
+        self.assertLess(time.monotonic() - started, 5.0, "the worker must not block")
+        self.assertEqual({"exists": True, "type": "other", "size": None},
+                         result.to_dict()["fields"])
+        # reading it is refused: a FIFO is not a regular file
+        receipt = self.authorise("read_file_alias", ("exists",),
+                                 nonce="n2", task="t2", grant="g2", target="pipe")
+        with self.assertRaises(PolicyViolation):
+            self.executor.acquire(receipt, fields=("exists",), now=time.time())
+
     def test_field_maps_are_bounded_and_explicit(self):
         for operation in ("probe_path_alias", "read_file_alias", "list_dir_alias", "run_synthetic_command"):
             self.assertTrue(self.executor.fields_for(operation), operation)

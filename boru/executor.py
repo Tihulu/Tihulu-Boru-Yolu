@@ -17,6 +17,10 @@ File *content*, names, owners, timestamps, environment and any raw output stay
 local: emitting them is a separate L2 disclosure decision that this slice does
 not implement.  No subprocess, shell, network or mutation is performed, and a
 directory is never traversed outside its alias.
+
+A target is opened with ``O_NONBLOCK`` as well as ``O_NOFOLLOW``: a FIFO or
+another blocking special file inside a resource would otherwise hang the worker
+indefinitely, and a denial of service is not a typed outcome.
 """
 from __future__ import annotations
 
@@ -167,7 +171,9 @@ class LocalExecutor:
         if any(token in target for token in ("/", "\\", "\x00")) or target in (".", ".."):
             raise PolicyViolation("target must be a single name inside the alias")
         try:
-            return os.open(target, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)
+            # O_NONBLOCK keeps a FIFO (or another blocking special file) from
+            # hanging the worker; it has no effect on a regular file's reads.
+            return os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
         except FileNotFoundError:
             return None
         except NotADirectoryError:

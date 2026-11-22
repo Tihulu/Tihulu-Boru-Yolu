@@ -794,3 +794,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Defect found and fixed:** `boru doctor` computed its overall verdict so a `hold` masked a `fail`, so a broken state directory read as `hold` and an acceptance run could miss it. Precedence is now fail > hold > ok.
 - **Self-review of the last two unreviewed files:** `boru/doctor.py` (checks are read-only, bounded timeouts, no host state beyond what the checks name, a `hold` for a platform that reports no memory) and `boru/i18n.py` (fixed owner-visible labels only; the English-repository predicate is codepoint-based so the checking file stays English). No other change needed.
 - **Tests observed:** `unittest discover -s tests` **665 tests OK (1 skipped)**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — second-pass self-review: a blocking special file could hang the worker (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed (confirmed by reproduction, not by reading):** `LocalExecutor._open_target` opened a target with `O_RDONLY|O_NOFOLLOW` and no `O_NONBLOCK`, so a FIFO (or another blocking special file) placed inside a declared resource **blocked the worker indefinitely** — a directory entry any owner-level writer could create, with no typed outcome and no timeout. The target open now adds `O_NONBLOCK`, which has no effect on regular file reads.
+- **Behaviour after the fix:** a FIFO probe answers immediately with `{"exists": true, "type": "other", "size": null}`, and reading it is refused because it is not a regular file.
+- **Why this one survived the first pass:** the first pass asked "can a target escape the alias?" (traversal, symlinks, `..`); this one asks "can a target stop the worker?" — a different question class, found by executing rather than reading.
+- **Tests observed:** `unittest discover -s tests` **666 tests OK (1 skipped)**; the new regression test bounds the acquisition to 5 seconds so a regression fails instead of hanging the suite. `scripts/check_project.py` PASS. MOCK/STATIC only.
