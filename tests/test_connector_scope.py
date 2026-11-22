@@ -142,6 +142,48 @@ class ProviderScopeTests(unittest.TestCase):
         self.assertEqual([], self.requests)
 
 
+    def test_dispatch_body_validates_against_an_owner_declaration(self):
+        from boru.connectors.scope import check_dispatch_body
+
+        subject = grant(operations=("dispatch_workflow",),
+                         capabilities=(Capability.ACTIONS_DISPATCH,),
+                         workflow_ids=("ci.yml",))
+        declared = {"target": {"type": "string", "required": True}}
+        # a matching body passes; a wrong type or an unknown key is refused
+        check_dispatch_body(subject, {"ref": "main", "inputs": {"target": "staging"}}, declared)
+        with self.assertRaises(ConnectorDenied):
+            check_dispatch_body(subject, {"ref": "main", "inputs": {"target": 5}}, declared)
+        with self.assertRaises(ConnectorDenied):
+            check_dispatch_body(subject, {"ref": "main", "inputs": {"other": "x"}}, declared)
+        with self.assertRaises(ConnectorDenied):
+            check_dispatch_body(subject, {"ref": "main", "inputs": {}}, declared)
+        # the declaration is owner-provided: a body cannot carry its own schema
+        with self.assertRaises(ConnectorDenied):
+            check_dispatch_body(subject, {"ref": "main", "inputs": {"target": "staging"},
+                                          "declared": {"target": {"type": "string"}}},
+                                {"target": {"type": "string", "required": True}})
+
+    def test_owner_declared_schema_travels_with_the_grant(self):
+        import json
+
+        from boru.connectors.scope import check_dispatch_body
+
+        schema = json.dumps({"target": {"type": "string", "required": True}})
+        subject = grant(operations=("dispatch_workflow",),
+                        capabilities=(Capability.ACTIONS_DISPATCH,),
+                        workflow_ids=("ci.yml",), input_declaration_json=schema)
+        check_dispatch_body(subject, {"ref": "main", "inputs": {"target": "staging"}})
+        with self.assertRaises(ConnectorDenied):
+            check_dispatch_body(subject, {"ref": "main", "inputs": {"target": 7}})
+        with self.assertRaises(ConnectorDenied):
+            check_dispatch_body(subject, {"ref": "main", "inputs": {}})
+        # a malformed or oversized declaration is refused at grant construction
+        for bad in ("not json", json.dumps({"x": {"type": "nope"}}),
+                    json.dumps({str(i): {"type": "string"} for i in range(20)})):
+            with self.assertRaises(ValueError):
+                grant(input_declaration_json=bad)
+
+
 if __name__ == "__main__":
     unittest.main()
 

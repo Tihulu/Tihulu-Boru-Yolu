@@ -8,9 +8,11 @@ source (issue #8, #9).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import math
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 
 
@@ -90,6 +92,10 @@ class Grant:
     nonce: str = ""
     #: Workflow identifiers this grant may dispatch, configure or re-run.
     workflow_ids: Tuple[str, ...] = ()
+    #: Owner-declared workflow input schema (a JSON object). When present, a
+    #: dispatch body is validated against it before any transport. Optional,
+    #: bounded, and owner-provided only: a payload never supplies it.
+    input_declaration_json: str = ""
 
     def __post_init__(self) -> None:
         """Reject malformed grants at construction time."""
@@ -133,11 +139,39 @@ class Grant:
                 errors.append("workflow_ids must be bounded non-empty names")
         if len(set(self.workflow_ids)) != len(self.workflow_ids):
             errors.append("duplicate workflow ids")
+        if self.input_declaration_json:
+            if not isinstance(self.input_declaration_json, str) or len(self.input_declaration_json) > 16 * 1024:
+                errors.append("input_declaration_json must be a bounded string")
+            else:
+                try:
+                    declared = json.loads(self.input_declaration_json)
+                except (TypeError, ValueError):
+                    errors.append("input_declaration_json must be a JSON object")
+                else:
+                    if not isinstance(declared, Mapping) or len(declared) > 16:
+                        errors.append("input_declaration_json must declare at most 16 inputs")
+                    else:
+                        for key, spec in declared.items():
+                            if not isinstance(key, str) or not key.strip() or len(key) > 64:
+                                errors.append("input_declaration_json keys must be bounded names")
+                            elif not isinstance(spec, Mapping) or spec.get("type") not in (
+                                    "string", "boolean", "choice", "number", "environment"):
+                                errors.append("input_declaration_json specs must be typed")
         if self.disclosure_recipient is not None and (
             not isinstance(self.disclosure_recipient, str) or len(self.disclosure_recipient) > 128
         ):
             errors.append("disclosure_recipient must be a bounded string")
         return errors
+
+    def declared_inputs(self) -> Optional[Dict[str, Any]]:
+        """The owner-declared input schema, or ``None`` when none was issued."""
+        if not self.input_declaration_json:
+            return None
+        try:
+            declared = json.loads(self.input_declaration_json)
+        except (TypeError, ValueError):  # pragma: no cover - validated at construction
+            return None
+        return dict(declared) if isinstance(declared, Mapping) else None
 
     def permits(self, operation: str, now: float, calls_used: int) -> Tuple[bool, str]:
         if operation not in self.operations:

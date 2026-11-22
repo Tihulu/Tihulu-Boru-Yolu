@@ -665,3 +665,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Defect found and fixed:** the cloud transport reuses `JanProvider`'s shared parser through `__new__` without running its constructor, and `_parse_reply` reads `self.model_response_is_path` when the reply names a different model. A mismatched-model reply therefore raised an untyped `AttributeError` instead of `ProviderFailure("invalid_response")` — a crash on the very path Gate 2 exercises. The shared attributes now have class-level defaults, the two reuse sites set them explicitly, and `CloudProvider.chat` validates `max_tokens` and `timeout` like the Jan transport.
 - **New coverage:** `tests/test_cloud_provider.py` (`CloudParseSafetyTests`: mismatched model, six hostile bodies, bounded request parameters) — 3 tests, 616 total.
 - **Tests observed:** `unittest discover -s tests` **616 tests OK**. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — dispatch declarations wired end to end (commit on `p1/boru-core-vertical-slice`)
+
+- **Gap found by self-review:** `boru/connectors/workflows.py` claimed a dispatch is "validated against that declaration before any dispatch call", but `validate_dispatch_inputs` had no caller on the dispatch path — only the bounded-shape checks ran.
+- **Wiring:** a `Grant` may now carry an owner-declared input schema (`input_declaration_json`, bounded to 16 KiB / 16 typed specs, validated at construction), `Grant.declared_inputs()` parses it, and `check_dispatch_body` validates the body's inputs against it before any transport. The declaration is owner-provided only: a dispatch body's extra top-level keys are now refused, so a payload can neither carry its own schema nor smuggle an extra key toward the endpoint.
+- **Documentation corrected:** the workflows module no longer claims a file-reading schema step it does not perform; closing that last step (read the workflow file, then dispatch) is recorded as a pilot-gate task.
+- **Tests observed:** `unittest discover -s tests` **618 tests OK** (2 new tests in `tests/test_connector_scope.py`). MOCK/STATIC only.

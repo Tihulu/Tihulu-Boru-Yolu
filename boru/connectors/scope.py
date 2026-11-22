@@ -234,12 +234,18 @@ def validated_slots(payload: Mapping[str, Any]) -> Dict[str, str]:
     return slots
 
 
-def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]]) -> None:
+def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
+                         declared: Optional[Mapping[str, Any]] = None) -> None:
     """Validate a workflow dispatch body before any transport is built.
 
     The body's ``ref`` must be exactly the granted reference (a payload can
     never widen it) and its ``inputs`` must be a bounded object of bounded
     values, so no unbounded or structured payload reaches the endpoint.
+
+    When the owner supplies the workflow's declared input schema, the inputs
+    are validated against it too; a declaration-less dispatch keeps the
+    bounded shape check only.  The declaration is owner-provided — never read
+    from the request payload — so a caller cannot grant itself a schema.
     """
     if body is None:
         raise ConnectorDenied("body_required")
@@ -247,6 +253,12 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]]) -> None:
         raise ConnectorDenied("invalid_body")
     if len(body) > MAX_BODY_KEYS:
         raise ConnectorDenied("body_too_large")
+    # Only the dispatch body's documented keys may travel: an extra key is a
+    # payload smuggled toward the endpoint (and a body cannot carry the schema
+    # it is checked against).
+    unknown = sorted(set(body) - {"ref", "inputs"})
+    if unknown:
+        raise ConnectorDenied("body_unknown_key")
     reference = body.get("ref")
     if reference is None:
         raise ConnectorDenied("reference_required")
@@ -257,6 +269,15 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]]) -> None:
         raise ConnectorDenied("invalid_body")
     if len(inputs) > MAX_BODY_KEYS:
         raise ConnectorDenied("body_too_large")
+    if declared is None and hasattr(grant, "declared_inputs"):
+        # The owner-declared schema travels with the grant, never with the body.
+        declared = grant.declared_inputs()
+    if declared is not None:
+        from .workflows import validate_dispatch_inputs
+
+        allowed, reason = validate_dispatch_inputs(declared, inputs)
+        if not allowed:
+            raise ConnectorDenied(reason)
     for key, value in inputs.items():
         if not isinstance(key, str) or not key.strip() or len(key) > 64:
             raise ConnectorDenied("unsafe_body_key")

@@ -1,10 +1,17 @@
 """Workflow discovery and dispatch-input validation (issue #9, P8 source slice).
 
 Implements the read-only contract and the dispatch guard: a workflow is listed
-from the official endpoint, its declared inputs are read, and a
-``workflow_dispatch`` request is validated against that declaration **before**
-any dispatch call. Nothing here opens a listener, dispatches by itself, or
-reads secrets.
+from the official endpoint and its declared inputs can be read, and
+``boru.connectors.scope.check_dispatch_body`` validates a ``workflow_dispatch``
+body **before** any dispatch call — the granted reference exactly, bounded
+input keys and values, and, when the owner supplies the declaration, the
+inputs against that declaration.
+
+The declaration is owner-provided. The repository does not read a workflow
+file's input schema for the caller, so a dispatch without a declaration keeps
+the bounded shape check only; closing that last step (read the file, then
+dispatch) is recorded as a pilot-gate task rather than implied here. Nothing in
+this module opens a listener, dispatches by itself, or reads secrets.
 """
 from __future__ import annotations
 
