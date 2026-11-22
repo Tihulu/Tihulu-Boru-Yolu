@@ -979,3 +979,22 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
   the server is accepted; one that disagrees is discarded with the disagreement
   recorded.
 - **Remote state:** `p1/boru-core-vertical-slice` = `0742d3d`, tree clean.
+
+---
+
+### 2026-11-23 — verified push and CI state; Gate 5 preparation (heads `3be15ab`, `13c511e`)
+
+- **Verified against the server (coordinator-side, not agent narration):**
+  `git ls-remote origin p1/boru-core-vertical-slice` → `3be15ab65d75859588f4d63bc16519556ac626c7`
+  at the time of the check; the following ledger commit (`13c511e`, the license
+  decision matrix) was pushed after it. Tree clean.
+- **CI, reported by the local agent with verbatim output:** run `45084774177` on
+  `0742d3d` concluded **success** (`validate`, 1m45s); the two runs before it
+  (`45084296988`, `45083244527`) also `success`. The only annotation is a
+  non-blocking Node.js 20 deprecation notice.
+- **Gate 5 preparation:** `docs/LICENSE_CHOICE.md` — the repository has no
+  `LICENSE` (all rights reserved), and Gate 5 requires the owner to choose one.
+  The matrix compares MIT, Apache-2.0, AGPL-3.0 and BSD-3-Clause against what this
+  project is, states what a license does **not** affect (the security defaults are
+  implementation properties), and records the follow-on steps (file, manifest
+  requirement, ledger entry). No license was added: the choice is the owner's.
