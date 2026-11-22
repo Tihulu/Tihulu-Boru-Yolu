@@ -604,3 +604,14 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
   8. `boru/policy.py` — documented upper bounds for every axis value.
   9. Then: full `unittest`, `scripts/check_project.py`, `scripts/evidence.py`, `boru doctor`, re-pin `docs/REVIEW_PACKAGE.md` to the final SHA, update issues #13/#14, request the re-review.
 - **Do not weaken while remediating:** LOCAL_ONLY / LOCAL_ISOLATED / MINIMUM_NECESSARY defaults, the four independent policy axes, or the typed field maps.
+
+---
+
+### 2026-11-22 — Gate 1 remediation complete for all review findings (commit `93fb0de` on `p1/boru-core-vertical-slice`)
+
+- **Changes made (six commits):** `e449d17` signed receipts + alias/level/field consent + no-follow traversal + sanitized ledger + bounded service; `79abd23` opaque resource tokens + owner-declared aliases + broker-identity bounding; `8e0869b` level-bound consent, nonfinite identities, sanitized ledger records; `93fb0de` connector slot/workflow/dispatch binding, account identity enforcement, capped bodies, bounded polling registry, recursive typed-payload validation, evidence-class provenance, boundary payload classification, policy upper bounds.
+- **Acceptance spec executed:** the reviewer's 20 probes, checked in as `tests/test_review_regressions.py`, now pass **20/20** inside the suite.
+- **Tests observed:** `unittest discover -s tests` **596 tests OK**; `scripts/check_project.py` PASS; `scripts/evidence.py` exit 0; `boru doctor` overall ok / live_acceptance HOLD. MOCK/STATIC only.
+- **Package re-pinned:** `docs/REVIEW_PACKAGE.md` now names head `93fb0de101ed8b01eda2cdbcc8c61e29385e7321`, the 596-test and 20-probe commands, a per-finding remediation table (F01–F22 → closing commit) and the new invariant rows.
+- **Owner action required (blocking, not a defect):** the harness refuses `git push` in this session, so the CI run for `93fb0de` does not exist yet and the recorded CI link still points at the previous head's run. The package says so explicitly instead of linking a run that was never executed. Push + CI must be authorized by the owner, after which the link can be re-pinned.
+- **Next action:** request the independent re-review of `93fb0de` (Gate 1). Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval.
