@@ -53,10 +53,11 @@ Routing presets `AUTO`, `ECONOMY`, `BALANCED`, `PERFORMANCE` and `MANUAL` are **
 
 ~~~bash
 python3 scripts/check_project.py              # static manifest + sample policy invariants
-python3 -m unittest discover -s tests         # 459 unit/integration tests (offline, hermetic)
+python3 -m unittest discover -s tests         # 643 unit/integration tests (offline, hermetic)
 python3 -m boru demo                          # fixed offline synthetic task -> REVIEW
 python3 -m boru --config examples/core.example.json --state-dir local-state run --task task.json
 python3 -m boru --state-dir local-state plan --file plan.json
+python3 -m boru resources                    # resource profile, lease bounds, host RAM/swap (no host state touched)
 python3 -m boru queue                        # tasks awaiting an explicit review
 python3 -m boru review --task-id <id> --accept
 python3 -m boru cancel --task-id <id>        # cancel a queued/held task
@@ -68,6 +69,26 @@ python3 scripts/evidence.py                   # sanitized evidence block, exit 0
 `local-state` must be an existing owner-only directory. Every completed reply stays in `REVIEW`
 until you accept it with `boru review --task-id <id> --accept`; simulated results are never
 relabelled as live.
+
+### Resource profiles (performance knob, never an authorization axis)
+
+Boru Core ships four resource profiles. They size Boru's own leases and its idle
+policy and can never widen inference, execution, Shell or disclosure rights.
+
+| Profile | Logical agents | Large local models | Idle behaviour |
+| --- | --- | --- | --- |
+| `PERFORMANCE` | 6 | 2 | never evict; models kept warm for the next task |
+| `BALANCED` (default) | 4 | 1 | a kept-warm model lease is released after 900 s idle |
+| `RESOURCE_OPTIMIZED` | 2 | 1 | a kept-warm model lease is released after 60 s idle |
+| `CUSTOM` | owner-set (1..6) | owner-set (0..2) | owner-set; either evict idle or keep warm |
+
+Set `resource_mode` (and `resource_overrides` for `CUSTOM`) in your configuration,
+then run `python3 -m boru resources` to see the profile, the lease bounds and the
+host RAM and swap this process can see. Releasing a *loaded model's* memory needs a
+provider lifecycle endpoint: Boru releases its own lease and asks the provider
+(`ChatProvider.unload`), and a provider with no documented endpoint - Jan today -
+refuses with `unsupported_capability` instead of guessing. See
+`docs/ROUTING_AND_RESOURCES.md`.
 
 ## Codex implementation handoff
 
