@@ -24,7 +24,7 @@ Run from a clone of the branch:
 git clone https://github.com/Tihulu/Tihulu-Boru-Yolu.git
 cd Tihulu-Boru-Yolu
 git checkout p1/boru-core-vertical-slice
-python3 scripts/check_project.py     # expected: PASS (25 documents + sample policy invariants)
+python3 scripts/check_project.py     # expected: PASS (30 documents + sample policy invariants)
 python3 -m unittest discover -s tests   # expected: Ran 654 tests ... OK
 PYTHONPATH=. python3 tests/test_review_regressions.py   # expected: Ran 20 tests ... OK
 python3 scripts/evidence.py          # expected: exit 0, overall all-PASS
