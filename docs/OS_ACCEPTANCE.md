@@ -58,6 +58,25 @@ matrix is worth running; a `fail` row names exactly what to fix.
 5. Record the result in `harness/build-log.md`; keep evidence out of this
    public repository.
 
+## Running the mechanical checks on a clean image
+
+Three commands produce the M01–M05 and M09 evidence for one image; the live
+rows (M06–M08, M10–M12) still need the owner and a real host.
+
+~~~bash
+scripts/install_boru.sh --dry-run          # M01: what would be created, nothing is
+scripts/install_boru.sh                    # M01: the install itself
+python3 -m boru demo                       # M03: REVIEW / simulated / live_acceptance HOLD
+python3 scripts/listener_check.py --json   # M09: loopback-only, released, no thread survives
+python3 scripts/evidence.py                # M05: the full evidence block (also runs the
+                                           #      install -> demo -> uninstall round trip,
+                                           #      M04, through the installed launcher)
+~~~
+
+Record in `harness/build-log.md` per image: the image name and date, the three
+output blocks, and the `ss -ltn` summary for M09. A skipped row is recorded as
+skipped, never as passed.
+
 ## Out of scope for v1
 
 - Unrestricted root/host Shell for cloud agents.
