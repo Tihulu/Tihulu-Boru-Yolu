@@ -709,3 +709,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Defect found and fixed:** the kept-warm record bound was enforced *before* insertion, so a `keep_warm` profile could hold `MAX_WARM_MODELS + 1` records; worse, a record dropped beyond the bound lost its lease mapping, leaving a model lease that no eviction could reach - exactly the "idle holds the device" problem the resource modes exist to prevent. The bound now applies at insertion and a displaced record always releases its lease (recorded as `warm_lease_displaced`).
 - **Observability:** `boru resources --state-dir <dir>` now also reports what this process holds (agent / large-model / remote-call leases and the kept-warm model records) after releasing idle leases, and `status()` releases idle kept-warm leases before reporting, so a status report is an observation point rather than a stale snapshot. No device contents are ever read.
 - **Tests observed:** `unittest discover -s tests` **641 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — store self-review: attempt records are objects, reads never crash (commit on `p1/boru-core-vertical-slice`)
+
+- **Self-review of `boru/store.py`:** the durable-state store is well hardened (owner-only state directory, 0600 files, symlink and hard-link refusal, single-writer `flock`, compare-and-set transitions, bounded payloads, idempotency fingerprints); two gaps remained.
+- **Gaps closed:** `save_result` accepted any JSON-serialisable value, so a non-object record could be stored and every later read of that attempt (for example `result_text`) would raise an untyped `AttributeError`; stored results must now be JSON objects, and the read path tolerates a hostile row (written by another writer or an older build) by reporting "no text" instead of crashing.
+- **Tests observed:** `unittest discover -s tests` **643 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.

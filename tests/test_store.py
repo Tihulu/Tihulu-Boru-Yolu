@@ -199,5 +199,40 @@ class PersistenceTests(unittest.TestCase):
         core.close()
 
 
+class ResultShapeTests(unittest.TestCase):
+    """A stored attempt record must be a JSON object, and reading it never crashes."""
+
+    def test_a_non_object_result_is_refused(self):
+        from boru.errors import StoreError
+
+        store = TaskStore()
+        try:
+            for bad in (["list"], "text", 5, None):
+                with self.assertRaises(StoreError):
+                    store.save_result("t", "a", bad)
+        finally:
+            store.close()
+
+    def test_result_text_tolerates_a_hostile_row(self):
+        import json
+
+        from boru.core import BoruCore
+        from boru.config import CoreConfig, ProviderConfig
+        from boru.types import TaskEnvelope
+
+        engine = BoruCore(CoreConfig(providers=(ProviderConfig(kind="mock"),)))
+        try:
+            envelope = TaskEnvelope(task_id="t1", goal="hello")
+            engine.submit(envelope)
+            # a row written by another writer (corruption, or an older build)
+            # must read as "no text", never as a crash
+            engine.store._db.execute(
+                "INSERT OR REPLACE INTO attempts(task_id, attempt_id, result) VALUES(?,?,?)",
+                ("t1", "a", json.dumps(["not", "an", "object"], ensure_ascii=True)))
+            self.assertIsNone(engine.result_text("t1"))
+        finally:
+            engine.close()
+
+
 if __name__ == "__main__":
     unittest.main()

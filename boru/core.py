@@ -661,7 +661,10 @@ class BoruCore:
         attempts = row.get("attempts") or []
         if not attempts:
             return None
-        typed = attempts[-1].get("typed_result") or {}
+        latest = attempts[-1]
+        typed = latest.get("typed_result") if isinstance(latest, dict) else None
+        if not isinstance(typed, dict):
+            return None
         text = typed.get("text")
         return text if isinstance(text, str) else None
 

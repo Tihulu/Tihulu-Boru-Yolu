@@ -248,7 +248,12 @@ class TaskStore:
 
     def _save_result(self, task_id: str, attempt_id: str, result: Any) -> None:
         _bounded(attempt_id, 128, "attempt_id")
-        payload = json.dumps(result.to_dict() if hasattr(result, "to_dict") else result, sort_keys=True, ensure_ascii=True)
+        data = result.to_dict() if hasattr(result, "to_dict") else result
+        if not isinstance(data, dict):
+            # an attempt record is read back as an object; anything else would
+            # turn every later read into a crash
+            raise StoreError("a result must be a JSON object")
+        payload = json.dumps(data, sort_keys=True, ensure_ascii=True)
         if len(payload) > 256 * 1024:
             raise StoreError("result exceeds the bounded size")
         self._db.execute(
