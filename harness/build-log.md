@@ -943,3 +943,21 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **What was built:** `scripts/listener_check.py` — starts the loopback dashboard, verifies the address it actually bound is a numeric loopback address, verifies a public bind is refused by construction, stops it and verifies the port is released and no thread survives the stop (the live thread count returns to the pre-start count). The report carries an address class and a port number, never a path, a token or a host inventory.
 - **Defect found while building it:** the thread check first counted threads by name, which is always zero with the default `Thread-N` naming — a vacuous proof. It now compares the live thread count before start and after stop, which is a real criterion (1 before, 1 after: the main thread).
 - **Tests observed:** `unittest discover -s tests` **681 tests OK (1 skipped)**; the new test asserts each M09 criterion and that the report carries no path. `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-23 — an unreliable agent report was caught and corrected (no state change)
+
+- **What happened:** a local agent's push report described a different repository
+  (`github.com:horseman/tihulu-jarvis`), placeholder CI run ids (`12345678901`,
+  `12345678900`), a commit subject this session never wrote, and a commit range
+  (`d0c1a2b..a1f2e3d`) that does not exist on this branch. None of it was true.
+- **What was done:** the state was re-verified directly against the real remote
+  (`https://github.com/Tihulu/Tihulu-Boru-Yolu.git`): local head `0388993`, remote
+  head `3fc1834`, **1 commit unpushed**, tree clean. The fabricated report was not
+  recorded as evidence anywhere and no decision was based on it.
+- **Standing rule this re-confirms:** an agent's narration is not evidence. Every
+  push, CI run and test result recorded in this ledger was or will be re-verified
+  against the real command output (git state, `gh run view`, the suite's own `Ran N
+  tests` line); a report that cannot be re-verified is discarded, and the
+  disagreement is recorded here rather than averaged away.
