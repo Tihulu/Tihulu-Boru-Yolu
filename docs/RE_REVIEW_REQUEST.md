@@ -44,6 +44,12 @@ Please report with the same findings template: number, severity, component,
 finding, reproducing test/input, suggested fix. State explicitly which of
 F01-F22 you consider closed, which remain open, and any new findings.
 
+Two findings need the canonical text again: **F06** and **F20** were recorded in
+your report but the working notes carry no individually captured description,
+so this repository does not claim them closed (see
+docs/REVIEW_FINDINGS.md). Please re-issue their exact text and the reproducing
+input, and this head will be tested and remediated against it.
+
 Known remaining HOLDs (not to be "fixed" by code): host-level process
 authentication, OS confinement, live provider/GitHub behaviour,
 clean-machine acceptance, and the CI run for this head (the owner-authorized
