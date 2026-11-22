@@ -1,4 +1,4 @@
-# Security review request — P5 broker/executor chain (Gate 1)
+# Security review request — P5 broker/executor chain (Gate 1, re-review)
 
 This is the package a reviewer needs. It states exactly what to review, how to
 reproduce the tests, and what evidence a PASS requires. Nothing in this
@@ -18,6 +18,8 @@ repository claims a security boundary has been independently verified.
 | Cross-boundary tracer | `boru/boundary.py` | An outbound request without a declared classification is refused with no network call |
 | Repository connectors | `boru/connectors/` | Grant repo/ref binding; no `method`/`path` overrides; no redirects; content type, body bound, response reference, token account, workflow allowlist and typed repository encoding |
 | Shell/Sandbox | `boru/sandbox.py` | Decisions only; nothing executes; host-level Shell is absent from the allowlist |
+| Core dispatch | `boru/core.py`, `boru/types.py` | The recorded evidence class comes from provider provenance, not a reply's claim; the outbound classification is derived from the payload actually sent; a failed verification is never persisted; typed payload validation is recursive and bounded |
+| Polling sync | `boru/connectors/polling.py` | The seen registry is bounded and never forgets an id; a full registry refuses new work rather than replaying an evicted event |
 
 ## Explicitly out of scope for this review
 
@@ -29,7 +31,8 @@ repository claims a security boundary has been independently verified.
 
 ~~~bash
 python3 scripts/check_project.py
-python3 -m unittest discover -s tests      # 556 tests
+python3 -m unittest discover -s tests      # 596 tests
+PYTHONPATH=. python3 tests/test_review_regressions.py   # the previous review's probes: 20/20
 python3 scripts/evidence.py               # exit 0
 ~~~
 
@@ -51,5 +54,10 @@ should cite the test that fails, or the missing test.
 
 ## Current status
 
-**HOLD — no independent review has been performed.** The code and tests are
-ready; the reviewer is the missing party.
+**HOLD — awaiting re-review of head `2384142a46dda98accbfc8f3d7b61ab81b3002fc`.** A first review of `cc73940`
+returned FAIL with findings F01–F22; every finding is remediated on this head
+(see the per-finding table in `docs/REVIEW_PACKAGE.md`, section 3-A), and the
+reviewer's own 20 regression probes now pass inside the suite as
+`tests/test_review_regressions.py`. What remains unproven is the independent
+verdict itself, plus host-level process authentication and OS confinement,
+which are separate gates.
