@@ -64,8 +64,11 @@ def _install_round_trip() -> dict:
                                     "--target", str(target), "--state-dir", str(state),
                                     "--bin-dir", str(bin_dir)], cwd=str(ROOT),
                                    capture_output=True, text=True, timeout=300)
-        demo = subprocess.run([sys.executable, "-m", "boru", "demo"], cwd=str(target),
-                              capture_output=True, text=True, timeout=300)
+        # The demo runs through the installed launcher from an unrelated
+        # working directory: that is what an owner does after install, and it
+        # is the path a missing PYTHONPATH would break.
+        demo = subprocess.run([str(bin_dir / "boru"), "--state-dir", str(state), "demo"],
+                              cwd=str(root), capture_output=True, text=True, timeout=300)
         demo_ok = demo.returncode == 0 and '"REVIEW"' in demo.stdout
         uninstaller = subprocess.run(["/bin/sh", str(ROOT / "scripts" / "uninstall_boru.sh"),
                                       "--target", str(target), "--state-dir", str(state),

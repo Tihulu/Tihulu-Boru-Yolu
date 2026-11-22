@@ -779,3 +779,10 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Defect found and fixed (installer):** a re-install merged into the existing tree, so a module removed upstream could survive as a stale import. The installer now replaces Boru's own tree (Boru-owned paths only) before copying.
 - **Safety hardening (uninstaller):** a destructive `rm -rf` now refuses a target or state directory that is empty, relative, a root, a home path or a system directory (`/`, `$HOME`, `/bin`, `/etc`, ...) with exit 2 and nothing removed; only Boru-owned absolute paths are considered, and an unrelated command in the same `--bin-dir` survives.
 - **Tests observed:** `unittest discover -s tests` **663 tests OK** (4 new tests: launcher from an unrelated directory with an absolute path, re-install replacement, dangerous-target refusals, unrelated-command survival); `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — the install evidence now exercises the launcher (commit on `p1/boru-core-vertical-slice`)
+
+- **Change:** `scripts/evidence.py` ran the installed demo as `python -m boru demo` with the working directory set to the copied tree, which is the path a missing `PYTHONPATH` would NOT break. The round trip now runs the **installed launcher from an unrelated working directory** — the path an owner actually uses after install, and the path the previous entry's defect would have broken.
+- **Tests observed:** `scripts/evidence.py` all checks PASS (static manifest, 663 unit tests, offline demo, install/demo/uninstall round trip); `unittest discover -s tests` **663 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
