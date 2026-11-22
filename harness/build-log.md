@@ -762,3 +762,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Self-review of the CLI surface** with deliberately bad input (missing file, invalid JSON, invalid config, a state directory that is a file, a non-numeric audit limit, an oversized task id): every path produced a typed error with a stable `kind` and no traceback - except `boru resources --state-dir <file>`, which silently reported an empty lease view. The lease view is now a reported failure, so an unusable state directory cannot look like "nothing is held".
 - **Also reviewed in this pass:** `boru/state.py` (complete transitions, terminal states, no agent self-report path to `DONE`) and `boru/queue.py` (fixed in the previous entry).
 - **Tests observed:** `unittest discover -s tests` **654 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — connect self-review: a bounded authorization wait and scope list (commit on `p1/boru-core-vertical-slice`)
+
+- **Self-review of `boru/connect.py` and the scope helper:** the owner-run OAuth/PKCE flow accepted `--timeout` values of any size, so one typo could make a command wait for days (a bound that is not a bound), and the scope list was bounded per value but not in count, so an unbounded `--scope` repetition would turn the authorization URL into a weapon-sized request. The authorization wait is now bounded 1..3600 seconds (a typed refusal outside it) and at most 16 scopes may be requested.
+- **Everything else in this module reviewed and unchanged:** the loopback-only redirect, the single captured response, state verification, the opaque-handle-only vault write, and the honest `authenticated` state that is never reported as inference authorization.
+- **Tests observed:** `unittest discover -s tests` **654 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.

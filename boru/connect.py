@@ -44,7 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="scope(s) to request, e.g. --scope openid --scope email")
     parser.add_argument("--vault-dir", required=True,
                         help="existing owner-only directory for the token vault")
-    parser.add_argument("--timeout", type=float, default=180.0, help="authorization wait, seconds")
+    parser.add_argument("--timeout", type=float, default=180.0,
+                        help="authorization wait, seconds (1..3600)")
     parser.add_argument("--no-browser", action="store_true",
                         help="print the authorization URL instead of opening a browser")
     parser.add_argument("--allow-http", action="store_true",
@@ -54,7 +55,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: An owner-run authorization waits a bounded time: a command that can hang for
+#: days is not a bound, it is a trap.
+MIN_AUTHORIZATION_TIMEOUT = 1.0
+MAX_AUTHORIZATION_TIMEOUT = 3600.0
+
+
 def connect(args: argparse.Namespace) -> int:
+    timeout = getattr(args, "timeout", 180.0)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) \
+            or not MIN_AUTHORIZATION_TIMEOUT <= float(timeout) <= MAX_AUTHORIZATION_TIMEOUT:
+        return _fail(args, "configuration_error",
+                     "authorization timeout must be {}..{} seconds".format(
+                         int(MIN_AUTHORIZATION_TIMEOUT), int(MAX_AUTHORIZATION_TIMEOUT)))
     scopes = tuple(sorted(set(args.scope or ["openid"])))
     try:
         config = OAuthClientConfig(
@@ -81,7 +94,7 @@ def connect(args: argparse.Namespace) -> int:
         if not opened:
             _out(args, {"authorization_url": url, "note": "browser did not open; open the URL manually"})
     try:
-        code = flow.serve_redirect(attempt, timeout=args.timeout)
+        code = flow.serve_redirect(attempt, timeout=float(timeout))
     except PolicyViolation as exc:
         return _fail(args, "authorization_failed", str(exc))
     try:

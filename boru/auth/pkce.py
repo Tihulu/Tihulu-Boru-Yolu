@@ -68,7 +68,14 @@ def bounded_text(value: str, limit: int, label: str) -> str:
     return value
 
 
+#: A scope list is bounded in count as well as in each value: an unbounded list
+#: would turn the authorization URL into a weapon.
+MAX_SCOPES = 16
+
+
 def scopes(values: Tuple[str, ...]) -> Tuple[str, ...]:
+    if not isinstance(values, (list, tuple)) or len(values) > MAX_SCOPES:
+        raise ConfigurationError("at most {} scopes may be requested".format(MAX_SCOPES))
     for value in values:
         bounded_text(value, 64, "scope")
     if len(set(values)) != len(values):
