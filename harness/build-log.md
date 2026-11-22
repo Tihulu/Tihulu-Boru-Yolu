@@ -725,3 +725,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Defect found and fixed:** `BudgetLedger` accumulated one reservation per dispatched task and never dropped or released it, so a long-lived process (a plan of many tasks, or repeated runs in one process) grew its reservation map without bound. Reservations are now bounded (newest kept, a stale record refused rather than remembered) and explicitly released when a task's life ends - at `review()` and `cancel()`, where no further usage is recorded.
 - **Self-review of `boru/budgets.py` otherwise:** the honest-estimate and check-before/after rules hold; ceilings are validated at both ends, usage values must be non-negative integers, an unbounded cost ceiling is still refused before dispatch, and compaction is a documented deterministic bound, not a semantic summary.
 - **Tests observed:** `unittest discover -s tests` **646 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — registry self-review: a health change no longer erases ranking metadata (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed:** `ModelRegistry.mark_health` rebuilt the record without `cost_tier`/`quality_tier`, so any transient failure (a rate limit, a timeout, a missing provider) silently replaced owner-declared ranking hints with `UNKNOWN` for the rest of the process - and an unknown cost is a *penalty* in the router, so one 429 quietly changed every later routing decision for that model.
+- **Also fixed:** `mark_tested` raised an untyped `KeyError` for an unknown record, while `mark_health` raised a typed error; both are typed now, and `mark_health` validates the health state and the bounded error kind before writing.
+- **Self-review of `boru/registry.py` otherwise:** provenance (`discovered`/`configured`/`verified`), health states, all-tags matching, `LOCAL_ONLY` filtering and the literal `UNKNOWN` for unobservable values are all preserved and unchanged.
+- **Tests observed:** `unittest discover -s tests` **649 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.

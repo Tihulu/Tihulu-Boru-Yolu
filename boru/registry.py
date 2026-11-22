@@ -134,6 +134,14 @@ class ModelRegistry:
         return sorted(self._records.values(), key=lambda r: (r.provider, r.model_id))
 
     def mark_health(self, provider: str, model_id: str, health: str, error_kind: Optional[str] = None) -> None:
+        if health not in HEALTH_STATES:
+            from .errors import ContractError
+
+            raise ContractError("unknown health state: " + str(health))
+        if error_kind is not None and (not isinstance(error_kind, str) or len(error_kind) > 64):
+            from .errors import ContractError
+
+            raise ContractError("error kind must be a bounded string")
         record = self._records.get((provider, model_id))
         if record is None:
             from .errors import ContractError
@@ -146,6 +154,8 @@ class ModelRegistry:
             health=health,
             max_context=record.max_context,
             tags=record.tags,
+            cost_tier=record.cost_tier,
+            quality_tier=record.quality_tier,
             last_test_at=record.last_test_at,
             local=record.local,
             credits=record.credits,
@@ -153,7 +163,11 @@ class ModelRegistry:
         )
 
     def mark_tested(self, provider: str, model_id: str, at: str) -> None:
-        record = self._records[(provider, model_id)]
+        record = self._records.get((provider, model_id))
+        if record is None:
+            from .errors import ContractError
+
+            raise ContractError("unknown model: {}/{}".format(provider, model_id))
         self._records[(provider, model_id)] = ModelRecord(
             provider=record.provider,
             model_id=record.model_id,

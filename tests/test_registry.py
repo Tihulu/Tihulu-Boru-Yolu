@@ -74,5 +74,48 @@ class RegistryTests(unittest.TestCase):
                 self.build().register(ModelRecord(**bad))
 
 
+class MetadataPreservationTests(unittest.TestCase):
+    """A health change must not erase owner-declared ranking metadata."""
+
+    def record(self, **overrides):
+        base = dict(provider="jan", model_id="m", source="configured", local=True,
+                    cost_tier=3, quality_tier=4, tags=("text",))
+        base.update(overrides)
+        return ModelRecord(**base)
+
+    def test_mark_health_preserves_tiers(self):
+        registry = ModelRegistry()
+        registry.register(self.record())
+        registry.mark_health("jan", "m", "degraded", "rate_limited")
+        stored = registry.get("jan", "m")
+        self.assertEqual("degraded", stored.health)
+        self.assertEqual("rate_limited", stored.last_error_kind)
+        self.assertEqual(3, stored.cost_tier)
+        self.assertEqual(4, stored.quality_tier)
+
+    def test_mark_tested_promotes_and_keeps_tiers(self):
+        registry = ModelRegistry()
+        registry.register(self.record())
+        registry.mark_tested("jan", "m", "2026-11-22T00:00:00Z")
+        stored = registry.get("jan", "m")
+        self.assertEqual("verified", stored.source)
+        self.assertEqual("healthy", stored.health)
+        self.assertEqual((3, 4), (stored.cost_tier, stored.quality_tier))
+
+    def test_unknown_records_fail_typed(self):
+        from boru.errors import ContractError
+
+        registry = ModelRegistry()
+        with self.assertRaises(ContractError):
+            registry.mark_health("jan", "absent", "healthy")
+        with self.assertRaises(ContractError):
+            registry.mark_tested("jan", "absent", "2026-11-22T00:00:00Z")
+        registry.register(self.record())
+        with self.assertRaises(ContractError):
+            registry.mark_health("jan", "m", "sideways")
+        with self.assertRaises(ContractError):
+            registry.mark_health("jan", "m", "healthy", "x" * 200)
+
+
 if __name__ == "__main__":
     unittest.main()

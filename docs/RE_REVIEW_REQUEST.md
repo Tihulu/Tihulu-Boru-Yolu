@@ -22,7 +22,7 @@ What changed since your review of cc73940:
 Please run, from a clone of the branch (no host install, no network, no
 credentials, no sandbox runtime):
   python3 scripts/check_project.py
-  python3 -m unittest discover -s tests      # 646 tests ... OK
+  python3 -m unittest discover -s tests      # 649 tests ... OK
   PYTHONPATH=. python3 tests/test_review_regressions.py
   python3 scripts/evidence.py                # exit 0
   python3 -m boru doctor --state-dir local-state
