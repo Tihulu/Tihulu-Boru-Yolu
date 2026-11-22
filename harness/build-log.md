@@ -861,3 +861,67 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **What was added:** `boru connect --dry-run` validates what can be validated without contacting the provider — both endpoints https, redirect numeric loopback with a port bindable on this host *right now*, scopes within the 16 bound, vault directory usable and owner-only — and prints the authorization URL that would be opened. A refusal is typed (`configuration_error` for a bad value, `not_ready` for this host) and names what to fix; nothing is sent anywhere.
 - **Documentation:** `docs/AI_PROVIDER_CONNECTIONS.md` now names the five values a registration must bring back, states that a provider refusing a plain-HTTP loopback redirect is a documented limitation rather than a bypass, and documents the dry-run pre-flight.
 - **Tests observed:** `unittest discover -s tests` **676 tests OK (1 skipped)**; the new tests cover the ready path, four refusal classes and a busy redirect port. `scripts/check_project.py` PASS. MOCK/STATIC only — no provider was contacted.
+
+---
+
+### 2026-11-22 — SESSION HANDOFF (restart) — resume here
+
+**Branch:** `p1/boru-core-vertical-slice` (draft PR #14, not merged). Base branch:
+`plan/architecture-security-profiles-ubuntu-popos` (draft PR #1), not `main`.
+
+**Head at handoff:** `02ce191` — "docs(review): name the pushed CI-green head in the
+re-review request". Working tree clean; pushed (remote head `02ce191`); CI green on
+this head and on every pushed head before it (runs 45048886502, 45051589592,
+45054735298, 45056795448, 45059854129 — all `success`).
+
+**Verified state at handoff (all re-run on this head):**
+- `python3 -m unittest discover -s tests` → **676 tests OK (1 skipped)**
+- `PYTHONPATH=. python3 tests/test_review_regressions.py` → **20/20 OK** (the Gate 1
+  reviewer's own probes, now inside the suite)
+- `python3 scripts/check_project.py` → PASS (30 required documents + policy invariants)
+- `python3 scripts/evidence.py` → exit 0 (static manifest, 676 unit tests, offline
+  demo, install → demo → uninstall round trip — the demo now runs through the
+  installed launcher from an unrelated directory)
+- `python3 -m boru.cli doctor` → overall ok / `live_acceptance: HOLD`
+- Live evidence from earlier gates: A21 (direct Jan, 3 conversations), A23 (real
+  OpenCode child session). No cloud inference has occurred.
+
+**Completed this session:** Gate 1 remediation (F01–F22 per
+`docs/REVIEW_FINDINGS.md`, with F06/F20 explicitly marked *to re-confirm* because
+their canonical text is not in the working notes); a second adversarial self-review
+pass that found and fixed four more defects (a blocking special file could hang the
+worker; an envelope payload was unbounded; a task's event history was unbounded; a
+configuration's provider/classification lists were unbounded) plus the earlier
+campaign's ~30; the four resource profiles (PERFORMANCE/BALANCED/
+RESOURCE_OPTIMIZED/CUSTOM) with usage-safe idle eviction, keep-warm and
+`boru resources`; the English-repository rule enforced in CI; the Gate 1 package
+re-pinned to this head's own green CI run; and the Gate 2 pre-flight
+(`boru connect --dry-run`, the five registration values in
+`docs/AI_PROVIDER_CONNECTIONS.md`).
+
+**Where we stopped — the exact next action (owner's step, then the agent's):**
+1. **A (Gate 1):** the owner is to paste the ready-to-send re-review request
+   (`docs/RE_REVIEW_REQUEST.md`, and the identical text given verbatim in chat) to
+   the external reviewer. The owner then pastes the reviewer's reply back. The
+   agent's next action on that reply: remediate each new finding with a regression
+   test, commit, push (through the authorized local agent) and wait for CI; test the
+   canonical F06/F20 text when it arrives and close those rows; on a clean verdict,
+   record Gate 1 as passed in this ledger.
+2. **B (Gate 2):** the owner names the provider (OpenAI / Anthropic / GitHub /
+   GitLab). The agent then writes the exact console steps, validates the five
+   returned values with `boru connect --dry-run`, runs the real connection and
+   records the opaque-handle + `identity_is_not_inference: true` evidence.
+
+**Operating notes for the next session:**
+- Pushes are executed by the **authorized local agent** (`tihulu-qwen-local`) under
+  the owner's session authorization, not by the cloud coordinator; each push is
+  followed by a CI watch by the same agent.
+- The repository text is English and this is enforced by
+  `tests/test_repository_language.py` and `scripts/check_project.py`; the user-facing
+  dashboard localization (`boru/i18n.py` + its test) is the only exemption.
+- Do not weaken while remediating: LOCAL_ONLY / LOCAL_ISOLATED / MINIMUM_NECESSARY
+  defaults and the four independent policy axes; a resource profile never widens a
+  policy bound; a provider identity is never an inference entitlement.
+- Release gates still requiring owner action: provider OAuth registration, a
+  disposable repository for the connector pilot, clean-machine Pop!_OS/Ubuntu
+  M01–M12, and license + release approval (`docs/OWNER_GATE_GUIDE.md`).
