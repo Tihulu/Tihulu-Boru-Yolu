@@ -93,16 +93,14 @@ def scan_english_text() -> list[str]:
     predicate lives in ``boru.i18n`` so the rule and its enforcement share one
     definition.
     """
-    import subprocess
     import sys
 
     sys.path.insert(0, str(ROOT))
 
-    from boru.i18n import REPOSITORY_TEXT_EXEMPT, is_repository_english
+    from boru.i18n import REPOSITORY_TEXT_EXEMPT, is_repository_english, repository_files
 
     problems = []
-    tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
-    for name in tracked:
+    for name in repository_files(ROOT):
         if name in REPOSITORY_TEXT_EXEMPT:
             continue
         path = ROOT / name
