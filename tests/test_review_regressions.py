@@ -24,7 +24,7 @@ from boru.connectors.github import GitHubProvider
 from boru.connectors.gitlab import GitLabProvider
 from boru.connectors.polling import EventAllowlist, PollingSync, SyncEvent
 from boru.connectors.scope import RepositoryRef
-from boru.errors import ConnectorDenied
+from boru.errors import ConnectorDenied, PolicyViolation
 from boru.privacy import (ConsentStore as LocalConsent, DisclosureGate,
                           DisclosureRequest, GateDecision)
 from boru.types import AgentResult, TaskEnvelope

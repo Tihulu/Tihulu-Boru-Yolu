@@ -149,9 +149,12 @@ class ConsentStore:
                 self._db.execute(
                     "INSERT INTO grants(grant_id, recipient, task_id, field_name, alias, level,"
                     " expires_at, nonce, revoked, issued_at) VALUES(?,?,?,?,?,?,?,?,0,?)",
-                    (grant_id, recipient, task_id, field_name, alias, level, expiry, nonce, stamp))
+                    (grant_id, recipient, task_id, field_name, alias or "", level,
+                     expiry, nonce, stamp))
             except sqlite3.IntegrityError as exc:
-                raise ConsentValidationError("a grant with this id already exists") from exc
+                if "UNIQUE" in str(exc).upper():
+                    raise ConsentValidationError("a grant with this id already exists") from exc
+                raise ConsentValidationError("the grant could not be stored") from exc
 
     def revoke(self, grant_id: str) -> None:
         _identifier(grant_id, 128, "grant_id")

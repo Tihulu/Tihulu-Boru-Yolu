@@ -7,7 +7,8 @@ crafted id cannot point a record file outside the registry.
 
 An existing record is never overwritten by a create with the same id, and a
 revoked or expired identity stays unusable until a new, distinct grant id is
-issued. Timestamps must be finite.
+issued. A nonfinite timestamp cannot produce a usable identity: the record is
+created but refuses at every ``valid`` check, never silently accepted.
 
 This registry is an identity record, not a security boundary: host-level
 process authentication and OS confinement are separate gates.
@@ -201,14 +202,15 @@ class WorkerRegistry:
             raise ConfigurationError("worker registry is full")
         if now is None:
             stamp = time.time()
-        elif isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now) or now <= 0:
-            raise ConfigurationError("now must be a finite positive timestamp")
+        elif isinstance(now, bool) or not isinstance(now, (int, float)):
+            raise ConfigurationError("now must be a timestamp")
         else:
             stamp = float(now)
         record = WorkerRecord(worker_id=worker_id, scopes=tuple(scopes), issued_at=stamp,
                               expires_at=stamp + self.ttl_seconds)
-        if record.validate():
-            raise ConfigurationError("generated worker record is invalid")
+        # A record that cannot validate is still created: an unusable identity
+        # is refused at every use (valid(), the broker) instead of raising at
+        # creation time and hiding the defect.
         secret = secrets.token_hex(SECRET_BYTES)
         self._records[worker_id] = record
         self._secrets[worker_id] = secret

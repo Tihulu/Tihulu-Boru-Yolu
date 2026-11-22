@@ -113,8 +113,15 @@ def _value_error(value: Any, depth: int = 0) -> Optional[str]:
     return "unsupported payload type"
 
 
+LEVEL_RANK = {"L0": 0, "L1": 1, "L2": 2}
+
+
 class ConsentStore:
-    """In-memory, single-process owner-consent records (replay protected)."""
+    """In-memory, single-process owner-consent records (replay protected).
+
+    A grant binds recipient, task, field and **level**: a weaker grant never
+    authorizes a wider disclosure, whatever the endpoint asks for.
+    """
 
     def __init__(self) -> None:
         self._grants: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
@@ -133,6 +140,7 @@ class ConsentStore:
             raise PolicyViolation("expires_at must be a finite timestamp")
         key = (grant_id, recipient, task_id, field_name)
         if key in self._grants:
+            # A grant id is immutable: revocation cannot be reset by reissue.
             raise PolicyViolation("duplicate grant identifier")
         self._grants[key] = {"level": level, "expires_at": expires_at, "nonce": nonce, "revoked": False}
 
@@ -142,14 +150,18 @@ class ConsentStore:
                 record["revoked"] = True
                 record["expires_at"] = 0.0
 
-    def check(self, *, grant_id: str, recipient: str, task_id: str, field_name: str, nonce: str, now: Optional[float] = None) -> bool:
-        """A grant matches only if recipient, task, field, expiry and nonce all match."""
+    def check(self, *, grant_id: str, recipient: str, task_id: str, field_name: str,
+              nonce: str, level: str = "L0", now: Optional[float] = None) -> bool:
+        """A grant matches only if recipient, task, field, expiry, nonce and the
+        requested **level** all match (a weaker grant never covers wider)."""
         record = self._grants.get((grant_id, recipient, task_id, field_name))
         if record is None or record["revoked"]:
             return False
         if record["nonce"] != nonce or nonce in self._used_nonces:
             return False
         if (now if now is not None else time.time()) >= record["expires_at"]:
+            return False
+        if level not in LEVEL_RANK or LEVEL_RANK[level] > LEVEL_RANK[record["level"]]:
             return False
         self._used_nonces.add(nonce)
         return True
@@ -218,7 +230,8 @@ class DisclosureGate:
             if consent is None:
                 return GateDecision.DENY, {}, "consent_store_unavailable"
             if not consent.check(grant_id=grant_id, recipient=request.recipient,
-                                 task_id=request.task_id, field_name="excerpt", nonce=nonce, now=now):
+                                 task_id=request.task_id, field_name="excerpt", nonce=nonce,
+                                 level=request.level, now=now):
                 return GateDecision.DENY, {}, "grant_invalid"
         if self.allow_raw:
             return GateDecision.DENY, (), "raw_release_refused"

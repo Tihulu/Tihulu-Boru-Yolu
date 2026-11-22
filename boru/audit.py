@@ -46,6 +46,30 @@ class UnsafeIdentifier(ConfigurationError, PolicyViolation):
     kind = "configuration_error"
 
 
+#: Characters that carry no identity meaning in a ledger record.
+_ALLOWED_LEDGER_CHARS = __import__("string").ascii_letters + __import__("string").digits + "-._"
+
+
+def sanitize_identifier(value: Any, limit: int = 128, label: str = "identifier") -> str:
+    """A bounded, path-free identifier for a stored record.
+
+    Unsafe characters are replaced, never stored: a path, a URL or a token
+    fragment keeps its identity meaning as an opaque token while losing every
+    separator that could make it a filesystem or network reference. An empty,
+    oversized or non-string value is still refused outright.
+    """
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        raise UnsafeIdentifier(label + " must be a bounded non-empty string")
+    cleaned = "".join(character if character in _ALLOWED_LEDGER_CHARS else "_"
+                      for character in value.strip())
+    while ".." in cleaned:
+        cleaned = cleaned.replace("..", "_")
+    cleaned = cleaned.strip("_") or "unidentified"
+    if len(cleaned) > limit:
+        raise UnsafeIdentifier(label + " exceeds the stored length")
+    return cleaned
+
+
 def safe_identifier(value: Any, limit: int = 128, label: str = "identifier") -> str:
     """A bounded, path-free identifier safe for a local audit record."""
     if not isinstance(value, str) or not value.strip() or len(value) > limit:
@@ -140,9 +164,9 @@ class RejectionLedger:
         """
         if category not in CATEGORIES:
             raise ConfigurationError("unknown audit category")
-        subject = safe_identifier(subject, 128, "subject")
-        reason = safe_identifier(reason, 64, "reason")
-        detail_kind = safe_identifier(detail_kind, 64, "detail kind")
+        subject = sanitize_identifier(subject, 128, "subject")
+        reason = sanitize_identifier(reason, 64, "reason")
+        detail_kind = sanitize_identifier(detail_kind, 64, "detail kind")
         if at is None:
             stamp = time.time()
         elif isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at) or at <= 0:
