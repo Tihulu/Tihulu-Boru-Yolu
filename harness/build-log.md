@@ -998,3 +998,30 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
   project is, states what a license does **not** affect (the security defaults are
   implementation properties), and records the follow-on steps (file, manifest
   requirement, ledger entry). No license was added: the choice is the owner's.
+
+---
+
+### 2026-11-23 — verified head and CI; all five gates prepared (head `c6c76ec`)
+
+- **Verified against the server:** `git ls-remote origin p1/boru-core-vertical-slice`
+  → `c6c76ec6c6c40f9a3f6895f84873bcf45009603f`; local head identical; 0 commits
+  unpushed; tree clean; `13c511e` (license matrix) confirmed on the remote.
+- **CI, reported by the local agent with verbatim output:** run `45085276010` on
+  `c6c76ec` concluded **success** (`validate` job, 1m29s); the preceding run
+  `45085006353` also success. The only annotation is a non-blocking Node.js 20 →
+  24 deprecation notice. Consecutive green runs on this branch: 10.
+- **Gate readiness at this head:**
+  * Gate 1 — remediation complete (F01–F22 per `docs/REVIEW_FINDINGS.md`, F06/F20
+    marked to-re-confirm); probes 20/20 in CI; **awaiting the reviewer's verdict**.
+  * Gate 2 — `boru connect --dry-run` pre-flight and the five-value registration
+    walkthrough in `docs/AI_PROVIDER_CONNECTIONS.md`; **awaiting the owner's
+    provider registration**.
+  * Gate 3 — `scripts/connector_pilot.py` and `docs/CONNECTOR_PILOT_RUNBOOK.md`;
+    **awaiting a disposable repository and a token**.
+  * Gate 4 — `scripts/listener_check.py` (M09) and the clean-image runbook in
+    `docs/OS_ACCEPTANCE.md`; **awaiting clean-machine images**.
+  * Gate 5 — `docs/LICENSE_CHOICE.md`; **awaiting the owner's license choice and
+    merge approval**.
+- **Verification practice in force:** every push is re-verified from the
+  coordinator side with `git ls-remote`; an agent report that disagrees with the
+  server is discarded with the disagreement recorded (two such reports today).
