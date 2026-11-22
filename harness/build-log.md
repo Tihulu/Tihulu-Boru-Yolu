@@ -786,3 +786,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 
 - **Change:** `scripts/evidence.py` ran the installed demo as `python -m boru demo` with the working directory set to the copied tree, which is the path a missing `PYTHONPATH` would NOT break. The round trip now runs the **installed launcher from an unrelated working directory** — the path an owner actually uses after install, and the path the previous entry's defect would have broken.
 - **Tests observed:** `scripts/evidence.py` all checks PASS (static manifest, 663 unit tests, offline demo, install/demo/uninstall round trip); `unittest discover -s tests` **663 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — doctor precedence and the last two modules reviewed (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed:** `boru doctor` computed its overall verdict so a `hold` masked a `fail`, so a broken state directory read as `hold` and an acceptance run could miss it. Precedence is now fail > hold > ok.
+- **Self-review of the last two unreviewed files:** `boru/doctor.py` (checks are read-only, bounded timeouts, no host state beyond what the checks name, a `hold` for a platform that reports no memory) and `boru/i18n.py` (fixed owner-visible labels only; the English-repository predicate is codepoint-based so the checking file stays English). No other change needed.
+- **Tests observed:** `unittest discover -s tests` **665 tests OK (1 skipped)**; `scripts/check_project.py` PASS. MOCK/STATIC only.

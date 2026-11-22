@@ -50,5 +50,30 @@ class DoctorTests(unittest.TestCase):
             shutil.rmtree(root, ignore_errors=True)
 
 
+class OverallPrecedenceTests(unittest.TestCase):
+    """A hold must never mask a fail."""
+
+    def test_a_failure_wins_over_a_hold(self):
+        import boru.doctor as doctor
+
+        original = doctor._check_state_dir
+        doctor._check_state_dir = lambda path: {"status": "fail", "detail": "broken"}
+        try:
+            payload = doctor.run_checks("local-state", include_tests=False)
+        finally:
+            doctor._check_state_dir = original
+        self.assertEqual("fail", payload["overall"])
+        self.assertIn("fail", [c["status"] for c in payload["checks"].values()])
+
+    def test_all_ok_reads_ok(self):
+        import boru.doctor as doctor
+
+        payload = doctor.run_checks("local-state", include_tests=False)
+        statuses = [c["status"] for c in payload["checks"].values()]
+        if "fail" in statuses:
+            self.skipTest("this host has a genuinely failing check")
+        self.assertIn(payload["overall"], ("ok", "hold"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -97,9 +97,15 @@ def run_checks(state_dir: str = "local-state", include_tests: bool = True) -> Di
     }
     if include_tests:
         checks["repo_tests"] = _check_repo_tests()
-    overall = "ok" if all(c["status"] == "ok" for c in checks.values()) else "fail"
-    if any(c["status"] == "hold" for c in checks.values()):
+    # Precedence: a failure is never masked by a hold.  A broken state directory
+    # must read as fail, not as hold, or an acceptance run would miss it.
+    statuses = {c["status"] for c in checks.values()}
+    if "fail" in statuses:
+        overall = "fail"
+    elif "hold" in statuses:
         overall = "hold"
+    else:
+        overall = "ok"
     return {"overall": overall, "checks": checks, "live_acceptance": "HOLD"}
 
 
