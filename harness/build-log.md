@@ -631,3 +631,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Defect found and fixed by this self-check:** `file_name` accepted `.` as a target name, so the broker could issue a receipt for a target that can never name an entry (the executor refused it later, fail-closed, but the contract now refuses it at the source). `boru/broker.py` refuses `.` and `..` targets.
 - **New coverage:** `tests/test_adversarial_walkthroughs.py` (8 tests) drives the real broker/executor/consent/registry modules with control-character and path targets, symlinked targets, a key-less worker, a token bound to another resource, ambiguous grant ids and replayed nonces.
 - **Tests observed:** `unittest discover -s tests` **604 tests OK**; reviewer probes 20/20; `scripts/check_project.py` PASS (28 documents). MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — dead code removed from dispatch and the P5 documentation corrected (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect removed:** `boru/core.py::_run` carried an unreachable 28-line copy of the verification block after its early return; verification only ever ran through `_record`. The block is deleted (and the live path's always-true condition simplified). An AST scan of `boru/` now reports no unreachable statements.
+- **Documentation corrected:** `docs/BORU_CORE.md` P5 section described the pre-remediation contract (unsigned receipts carrying alias names, `read_file_alias` without `line_count`, identity store and loopback surface listed as unimplemented). It now describes signed receipts, opaque resource tokens, real bounded read metadata, the worker registry and the loopback surface, and leaves only the genuine HOLDs.
+- **Tests observed:** `unittest discover -s tests` **604 tests OK**; `scripts/check_project.py` PASS (28 documents). MOCK/STATIC only.

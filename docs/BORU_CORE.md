@@ -137,12 +137,18 @@ without it the answer is denial, never a raw fallback.
 this named resource for this task, right now?  It never executes anything.  An
 operation must be on the owner's allowlist (`read_file_alias`, `list_dir_alias`,
 `probe_path_alias`, `run_synthetic_command`), a resource must be a declared
-**alias** — never a caller-supplied path, and escapes such as `..`, relative
-paths and symlinked aliases are refused — and the request must carry a valid
-worker attestation holding that resource scope plus a matching consent grant.
-Replay, expiry, revocation, malformed requests and missing consent all deny;
-an allowed decision becomes an `AuthorizationReceipt` carrying alias names and
-typed outcomes only.
+**alias** — an owner-declared name or an owner-declared absolute path, never a
+caller-supplied one, and escapes such as `..`, relative paths and symlinked (or
+symlink-bridged) aliases are refused — and the request must carry a valid worker
+attestation holding that resource scope plus a matching consent grant.  Replay,
+expiry, revocation, malformed requests and missing consent all deny.
+
+An allowed decision becomes an `AuthorizationReceipt` (`boru/authorization.py`)
+that is **signed** with a key derived from the worker secret and names the
+resource only by an opaque token (`r-<hex>`) — never by alias or path.  It binds
+the task, operation, resource, worker, grant, nonce, expiry, requested fields
+and the single target name, and it expires; the worker refuses anything it
+cannot verify.
 
 `boru/consent.py` persists those grants in an owner-only SQLite file
 (`boru-consent.sqlite`, mode 0600, single writer) so a revoked or expired grant
@@ -152,17 +158,24 @@ output is ever stored.
 
 `boru/executor.py` adds the bounded local worker that performs the *acquisition
 and reduction* steps for the three read-only operations: `probe_path_alias`
-returns `exists`/`type`/`size`, `list_dir_alias` returns a bounded
-`entry_count` (never names), and `read_file_alias` reports `exists`/`size`
-without ever producing file content. Aliases are opened with
-`O_DIRECTORY|O_NOFOLLOW`, receipts must be unexpired and carry an allowlisted
-operation, and requesting any field the operation does not produce — including
-`content`, `raw_stdout` or `file_contents` — is refused.
+returns `exists`/`type`/`size` for one entry (or the alias root),
+`list_dir_alias` returns a bounded `entry_count` (never names), and
+`read_file_alias` reports the real bounded `exists`/`size`/`line_count` without
+ever producing file content. Aliases are opened with
+`O_DIRECTORY|O_NOFOLLOW`, a target is resolved component-wise against that
+descriptor (`dir_fd` + `O_NOFOLLOW`, so no symlink or parent reference can
+escape), every receipt is verified under this worker's authorization key before
+any filesystem access, and requesting any field the receipt does not name —
+including `content`, `raw_stdout` or `file_contents` — is refused.
 
-Still **not** implemented: an authenticated persistent worker identity store, a
-live socket, OS confinement, any mutating or subprocess operation, and the
-release of L2 excerpts to a model. Those remain HOLD pending an independent
-security review.
+`boru/workers.py` keeps owner-created worker identities (bounded, revocable,
+expiring, 0600) and `boru/broker_service.py` exposes one authenticated loopback
+authorization surface (single request per connection, bounded concurrency,
+never a public bind).
+
+Still **not** implemented: host-level process authentication and OS
+confinement, any mutating or subprocess operation, and the release of L2
+excerpts to a model. Those remain HOLD pending an independent security review.
 
 ## Cloud provider (P7 source slice, no live calls)
 

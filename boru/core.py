@@ -368,38 +368,10 @@ class BoruCore:
                 else:
                     self._fail(envelope, REASONS["invalid_reply"])
                 return self._summary(envelope)
-            if attempts > 1 or True:
-                self.router.registry.mark_tested(candidate.provider, candidate.model_id, self._clock())
+            # A reply reached the record step: the model answered on this path.
+            self.router.registry.mark_tested(candidate.provider, candidate.model_id, self._clock())
             return self._record(envelope, attempt_id, candidate.provider, candidate.model_id, reply, ceiling)
         self._hold(envelope, REASONS["provider_unavailable"])
-        return self._summary(envelope)
-        result = self._result(envelope, attempt_id, provider_name, model_id, reply)
-        problems = result.validate(self.policy.max_result_fields)
-        if problems or not self._reply_matches(reply, provider_name, model_id):
-            self.store.transition(
-                envelope.task_id, TaskState.RUNNING.value, TaskState.VERIFYING.value,
-                REASONS["VERIFYING"], self._clock(),
-            )
-            self.store.transition(
-                envelope.task_id, TaskState.VERIFYING.value, TaskState.REVIEW.value,
-                REASONS["VERIFYING"], self._clock(),
-            )
-            self.store.transition(
-                envelope.task_id, TaskState.REVIEW.value, TaskState.FAILED.value,
-                REASONS["verification_failed"], self._clock(),
-            )
-            self.store.save_result(envelope.task_id, attempt_id, result)
-            return self._summary(envelope)
-        self.store.save_result(envelope.task_id, attempt_id, result)
-        self._queue.pop(envelope.task_id, None)
-        self.store.transition(
-            envelope.task_id, TaskState.RUNNING.value, TaskState.VERIFYING.value,
-            REASONS["VERIFYING"], self._clock(),
-        )
-        self.store.transition(
-            envelope.task_id, TaskState.VERIFYING.value, TaskState.REVIEW.value,
-            REASONS["VERIFYING"], self._clock(),
-        )
         return self._summary(envelope)
 
     def _provider_kind(self, provider_name: str) -> str:
