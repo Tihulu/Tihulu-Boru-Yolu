@@ -285,8 +285,14 @@ class BoruCore:
     def _remember_warm(self, task_id: str) -> None:
         """Record which model a held lease stands for (bounded and bounded-old)."""
         provider, model_id = self._last_model.get(task_id, (None, None))
-        while len(self._warm_models) > MAX_WARM_MODELS:
-            self._warm_models.pop(next(iter(self._warm_models)), None)
+        if task_id not in self._warm_models:
+            # A dropped record must release its lease, or a keep-warm profile
+            # would hold a model lease no eviction can ever reach.
+            while len(self._warm_models) >= MAX_WARM_MODELS:
+                stale = next(iter(self._warm_models))
+                self._warm_models.pop(stale, None)
+                self.scheduler.release(stale, keep_model=False)
+                self.audit.record("scheduler", stale, "warm_lease_displaced", "lease")
         if provider is None:
             self.scheduler.release(task_id, keep_model=False)
             return
@@ -663,6 +669,9 @@ class BoruCore:
         row = self.store.get(task_id)
         if row is None:
             raise StoreError("unknown task")
+        # A report is an observation point: release idle kept-warm leases first,
+        # so the reported state is the state this profile actually holds.
+        self._evict_idle_models()
         return self._summary_from_row(row)
 
     # -- summaries -----------------------------------------------------------

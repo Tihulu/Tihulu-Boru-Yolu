@@ -3,7 +3,7 @@ import unittest
 
 from boru.errors import PolicyViolation
 from boru.config import CoreConfig, ProviderConfig
-from boru.core import BoruCore
+from boru.core import MAX_WARM_MODELS, BoruCore
 from boru.policy import Policy
 from boru.resources import ResourceMode, ResourceProfile
 from boru.scheduler import AgentScheduler, AgentSpec, build_envelopes
@@ -182,6 +182,25 @@ class ResourceProfileTests(unittest.TestCase):
         evicted = engine._evict_idle_models()
         self.assertEqual(["t1"], evicted)
         self.assertFalse(engine.scheduler.leases.holds("large_local_models", "t1"))
+        engine.close()
+
+    def test_a_displaced_warm_lease_is_released_not_leaked(self):
+        # keep-warm records are bounded: dropping one must release its lease,
+        # or a profile would hold a model lease no eviction can ever reach
+        engine = self.engine(resource_mode="PERFORMANCE")
+        for index in range(MAX_WARM_MODELS + 4):
+            task_id = "warm{}".format(index)
+            engine._last_model[task_id] = ("mock", "mock-text-v1")
+            engine.scheduler.leases.acquire("large_local_models", task_id,
+                                            __import__("time").time())
+            engine._remember_warm(task_id)
+        self.assertLessEqual(len(engine._warm_models), MAX_WARM_MODELS)
+        # every displaced record released its lease: nothing is held beyond the
+        # records that remain
+        self.assertEqual(len(engine._warm_models),
+                         engine.scheduler.leases.large_local_models)
+        for task_id in list(engine._warm_models):
+            self.assertTrue(engine.scheduler.leases.holds("large_local_models", task_id))
         engine.close()
 
     def test_a_used_model_lease_is_not_evicted(self):

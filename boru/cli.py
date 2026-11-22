@@ -348,11 +348,33 @@ def _resources(args) -> int:
     profile = config.resource_profile()
     total, available = detect_memory()
     swap_total, swap_free = detect_swap()
+    # With a state directory the report also shows what this process holds:
+    # Boru-owned leases and kept-warm model records, never device contents.
+    leases: Dict[str, int] = {}
+    warm: List[Dict[str, Any]] = []
+    core = None
+    if getattr(args, "state_dir", None):
+        try:
+            core = _open_core(config, args.state_dir)
+            core._evict_idle_models()
+            ledger = core.scheduler.leases
+            leases = {"agents_active": ledger.agents_active,
+                      "large_local_models": ledger.large_local_models,
+                      "remote_calls": ledger.remote_calls}
+            warm = [dict(record, task_id=task_id)
+                    for task_id, record in sorted(core._warm_models.items())]
+        except ConfigurationError:
+            core = None
+        finally:
+            if core is not None:
+                core.close()
     payload = {
         "profile": profile.as_dict(),
         "memory": {"total_mb": total, "available_mb": available,
                    "available_share": memory_pressure()},
         "swap": {"total_mb": swap_total, "free_mb": swap_free},
+        "leases": leases,
+        "warm_models": warm,
         "not_an_authorization_axis": True,
         "model_release": "provider-hook; a provider without a lifecycle endpoint "
                          "refuses with unsupported_capability",

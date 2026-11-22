@@ -31,7 +31,7 @@ repository claims a security boundary has been independently verified.
 
 ~~~bash
 python3 scripts/check_project.py
-python3 -m unittest discover -s tests      # 639 tests
+python3 -m unittest discover -s tests      # 641 tests
 PYTHONPATH=. python3 tests/test_review_regressions.py   # the previous review's probes: 20/20
 python3 scripts/evidence.py               # exit 0
 ~~~

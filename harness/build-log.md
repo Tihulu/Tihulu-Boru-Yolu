@@ -701,3 +701,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **`boru resources` and `boru doctor` now report swap** (total/free from `/proc/meminfo`): the owner asked for an idle host free of RAM/VRAM/swap pressure, so swap belongs in the same report as RAM. Swap is reported, never tuned: swapping behaviour is the host's configuration and Boru only shrinks its own footprint by releasing leases.
 - **Two defects found by the doctor's own suite run and fixed:** (a) the English-text rule flagged its own test file, because the file carried literal Turkish sample strings — the samples are built from code points now, so the file itself stays English while still proving detection; (b) the rule and its test required `git ls-files`, so an unpacked source tree (the evidence script's copied run) reported a failure — the file iterator now walks the tree when git is unavailable, with the same exemptions.
 - **Tests observed:** `unittest discover -s tests` **639 tests OK**; `scripts/evidence.py` all checks PASS (static manifest, 639 unit tests, offline demo, install/uninstall round trip); `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — resource observability and a warm-lease bound defect fixed (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed:** the kept-warm record bound was enforced *before* insertion, so a `keep_warm` profile could hold `MAX_WARM_MODELS + 1` records; worse, a record dropped beyond the bound lost its lease mapping, leaving a model lease that no eviction could reach - exactly the "idle holds the device" problem the resource modes exist to prevent. The bound now applies at insertion and a displaced record always releases its lease (recorded as `warm_lease_displaced`).
+- **Observability:** `boru resources --state-dir <dir>` now also reports what this process holds (agent / large-model / remote-call leases and the kept-warm model records) after releasing idle leases, and `status()` releases idle kept-warm leases before reporting, so a status report is an observation point rather than a stale snapshot. No device contents are ever read.
+- **Tests observed:** `unittest discover -s tests` **641 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
