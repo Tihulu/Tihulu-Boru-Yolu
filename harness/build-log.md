@@ -639,3 +639,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Defect removed:** `boru/core.py::_run` carried an unreachable 28-line copy of the verification block after its early return; verification only ever ran through `_record`. The block is deleted (and the live path's always-true condition simplified). An AST scan of `boru/` now reports no unreachable statements.
 - **Documentation corrected:** `docs/BORU_CORE.md` P5 section described the pre-remediation contract (unsigned receipts carrying alias names, `read_file_alias` without `line_count`, identity store and loopback surface listed as unimplemented). It now describes signed receipts, opaque resource tokens, real bounded read metadata, the worker registry and the loopback surface, and leaves only the genuine HOLDs.
 - **Tests observed:** `unittest discover -s tests` **604 tests OK**; `scripts/check_project.py` PASS (28 documents). MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — property-style hostile-input tests added (commit on `p1/boru-core-vertical-slice`)
+
+- **Method:** beyond example-based tests, random bytes and text (control characters, bidi overrides, zero-width characters, oversized strings) are fed through the real broker/executor/consent/connector/contract paths with a deterministic seed. The exploratory run used 3000 rounds per property (~18,000 hostile inputs): **0 unhandled exceptions, 0 receipts verified without the key, 0 probes disclosing the resource path or entry names**; 497 well-formed names were accepted and 2,503 inputs were typed denials.
+- **New coverage:** `tests/test_property_hostile_inputs.py` (5 properties, CI-sized at 250 rounds each) — random targets, aliases, forged receipts, connector payloads and typed results must each yield a typed outcome.
+- **Tests observed:** `unittest discover -s tests` **609 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
