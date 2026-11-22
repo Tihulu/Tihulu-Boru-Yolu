@@ -43,6 +43,25 @@ class QueueTests(unittest.TestCase):
     def test_remove_unknown_is_false(self):
         self.assertFalse(BoundedTaskQueue().remove("nope"))
 
+    def test_the_bounded_window_keeps_dispatch_working(self):
+        queue = BoundedTaskQueue(maxsize=8)
+        queue._history_limit = 3
+        for index in range(3):
+            queue.put(envelope("k{}".format(index)))
+            queue.pop()
+        # the window holds the newest three consumed keys
+        self.assertEqual(["k0", "k1", "k2"], list(queue._history))
+        # a pop never fails for the bookkeeping limit, and never loses an item
+        queue.put(envelope("k9"))
+        popped = queue.pop()
+        self.assertEqual("k9", popped.task_id)
+        self.assertEqual([], [e.task_id for e in queue.pending()])
+        self.assertEqual(["k1", "k2", "k9"], list(queue._history))
+        # the oldest key left the window; the durable store remains the
+        # authoritative replay guard
+        queue.put(envelope("k0"))
+        self.assertEqual("k0", queue.pop().task_id)
+
     def test_history_cap_rejects_safely(self):
         queue = BoundedTaskQueue(maxsize=2)
         queue._history_limit = 3  # bounded replay history

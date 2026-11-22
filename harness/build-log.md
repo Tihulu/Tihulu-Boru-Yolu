@@ -746,3 +746,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
   4. unbounded connection threads - the surface now bounds concurrent connections and refuses past the bound with a typed 503 (draining the request first, so a client reads the refusal instead of a connection reset, and setting the request attributes the response writer needs before `parse_request` ran);
   5. a duplicated line in the render path.
 - **Tests observed:** `unittest discover -s tests` **653 tests OK** (4 new hardening tests in `tests/test_dashboard.py`); `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — queue self-review: dispatch never fails for a bookkeeping limit (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed:** when the in-process replay history reached its bound, `BoundedTaskQueue.pop()` raised `QueueFull` — *after* removing the envelope from the queue, so dispatch lost the task and stopped working. The bound is now a documented sliding window: a consumed key leaves the window oldest-first, and the module records that `TaskStore.submit`'s idempotency fingerprint is the authoritative replay guard while this window covers the in-process case. A pop never raises for bookkeeping and never loses an item; `put()` still refuses a duplicate key inside the window.
+- **Self-review of `boru/state.py`:** the transition table is complete and terminal for `DONE`/`CANCELLED`; `HOLD` resumes into the pipeline; an agent's self-report can never reach `DONE` (only the owner review path promotes it, from `REVIEW`). No change needed.
+- **Tests observed:** `unittest discover -s tests` **654 tests OK** (new: bounded-window test in `tests/test_queue.py`); `scripts/check_project.py` PASS. MOCK/STATIC only.

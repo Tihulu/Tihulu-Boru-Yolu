@@ -3,6 +3,12 @@
 Boru Core never accepts unbounded work: a full queue raises ``QueueFull``
 instead of silently buffering, and duplicate idempotency keys are refused so a
 retried submit cannot double-run a side effect.
+
+The replay history is a **bounded window**: the durable store's idempotency
+fingerprint (``TaskStore.submit``) is the authoritative replay guard, and this
+window covers the in-process case — the newest ``history_limit`` consumed keys.
+An older key leaving the window is a documented bound, not a silent clearing:
+dispatch never fails for a bookkeeping limit, and a pop never loses an item.
 """
 from __future__ import annotations
 
@@ -62,10 +68,10 @@ class BoundedTaskQueue:
         key = envelope.idempotency_key or envelope.task_id
         self._seen.pop(key, None)
         if key not in self._history:
-            if len(self._history) >= self._history_limit:
-                from .errors import QueueFull
-
-                raise QueueFull("replay history is exhausted; refuse to clear replay protection")
+            # The oldest key leaves the bounded window: dispatch must never fail
+            # for a bookkeeping limit, and an item is never lost.
+            while len(self._history) >= self._history_limit:
+                self._history.popleft()
             self._history.append(key)
         return envelope
 
