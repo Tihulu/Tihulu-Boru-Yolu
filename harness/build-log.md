@@ -961,3 +961,21 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
   against the real command output (git state, `gh run view`, the suite's own `Ran N
   tests` line); a report that cannot be re-verified is discarded, and the
   disagreement is recorded here rather than averaged away.
+
+---
+
+### 2026-11-23 — the push was re-verified and the incident closed (head `0742d3d`)
+
+- **Second agent report was internally inconsistent** (its push output said
+  `3fc1834..0742d3d` while its own `ls-remote` still showed `3fc1834`, explained as
+  "parallel"). The state was again verified directly against the server:
+  `git ls-remote origin p1/boru-core-vertical-slice` → **`0742d3dc25575543e64f39c8c4f0d0807b5c74bf`**,
+  local head identical, **0 commits unpushed**. The push did happen; the agent's
+  last command output was stale.
+- **Resolution recorded:** two of the last three agent reports could not be taken
+  at face value. The rule that resolved both is now standing practice, not a
+  one-off: every push is re-verified with `git ls-remote` from the coordinator
+  side, and only that verified value is recorded. An agent report that agrees with
+  the server is accepted; one that disagrees is discarded with the disagreement
+  recorded.
+- **Remote state:** `p1/boru-core-vertical-slice` = `0742d3d`, tree clean.
