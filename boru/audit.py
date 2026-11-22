@@ -20,7 +20,6 @@ import sqlite3
 import stat
 import threading
 import time
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from .errors import ConfigurationError, PolicyViolation

@@ -16,7 +16,7 @@ Guarantees:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..errors import ConnectorDenied
 

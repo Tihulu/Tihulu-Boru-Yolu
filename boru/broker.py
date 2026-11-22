@@ -40,7 +40,7 @@ MAX_NONCES = 4096
 TOKEN_PREFIX = "r-"
 
 #: A receipt names a resource only by this opaque form.
-_TOKEN_RE = __import__("re").compile("^r-[0-9a-f]{16}$")
+_TOKEN_RE = re.compile("^r-[0-9a-f]{16}$")
 
 #: The typed local operations a worker may be asked to perform. Anything else
 #: (a shell, a network write, a mutation) is refused before any other check.
