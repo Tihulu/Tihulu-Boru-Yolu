@@ -42,7 +42,7 @@ matrix is worth running; a `fail` row names exactly what to fix.
 | M06 | Offline run (no internet) with a local Jan model | Same behaviour as M03; no cloud endpoints contacted | date, tester |
 | M07 | A21 direct Jan 3-turn chat on a clean image | `REVIEW`/`direct` with the allowlisted model ID and measured usage | provider/model/request IDs |
 | M08 | Optional OpenCode child session in a disposable directory | Real session/message IDs, agent, model and provider identity recorded; session deleted | IDs |
-| M09 | Ports and processes | No non-loopback listener; no Boru-owned background service after stop; no autostart entry | `ss -ltn` summary |
+| M09 | Ports and processes | No non-loopback listener; no Boru-owned background service after stop; no autostart entry | `ss -ltn` summary plus `python3 scripts/listener_check.py --json` (bound address class, public-bind refusal, port released after stop, no surviving thread) |
 | M10 | Partial outage: cloud provider unavailable | Only permitted fallback; LOCAL_ONLY yields zero remote calls; budget holds, never escalated | test log summary |
 | M11 | Revocation and cancellation | Revoked consent denies; cancelled tasks release leases; interrupted tasks return to HOLD on restart | ledger rows |
 | M12 | Rollback after a failed install | Restore from backup reproduces the pre-install state; Jan/OpenCode unchanged | verification listing |

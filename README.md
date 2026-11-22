@@ -3,7 +3,7 @@
 **Local-first, user-controlled orchestration for AI coding agents, visual workflows, and hybrid local/cloud models.**
 
 > Status: **Boru Core P1–P10 source slices are implemented and unit/integration tested locally**
-> (680 tests, CI green). What exists is a local, offline-first core with typed contracts,
+> (681 tests, CI green). What exists is a local, offline-first core with typed contracts,
 > durable task state, a bounded provider layer, mode-aware routing with budgets, a DAG planner,
 > a fail-closed authorization chain, grant-bound GitHub/GitLab connectors, a loopback dashboard
 > and user-space install/rollback scripts. Two live gates have passed on this machine:

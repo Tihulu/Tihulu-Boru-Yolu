@@ -934,3 +934,12 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **What was built:** `scripts/connector_pilot.py` — one command that runs the four grant-bound denials, then the read pilot, the write pilot (draft PR only) and the Actions pilot, emitting a sanitized evidence block (object IDs, decisions, denial reasons — never a token, a path or a private payload). `--dry-run` makes no outbound request at all: the transport refuses any exchange, so the claim is enforced by construction.
 - **Defect found and fixed while building it:** the first draft's dry-run actually reached the network (a dummy credential produced a real `identity_endpoint_refused` from GitHub) and two of the "denial" cases were mis-constructed — the payload matched the grant, so the binding check passed. The denials now name the pilot repository in the grant and another in the payload, producing `repository_not_granted`, `reference_not_granted`, `operation_not_granted` and `workflow_required`, and the dry-run's refusing transport makes the no-network claim true.
 - **Tests observed:** `unittest discover -s tests` **680 tests OK (1 skipped)**; the new tests cover the no-credential refusal, the malformed repository, the four denial reasons and the checkout-relative import. `scripts/check_project.py` PASS. MOCK/STATIC only — no provider was contacted.
+
+---
+
+### 2026-11-23 — Gate 4 preparation: the M09 listener proof is now mechanical (commit on `p1/boru-core-vertical-slice`)
+
+- **Why:** Gate 4 runs on clean images the owner provides; its mechanical checks should be one command each so an image is proved, not narrated.
+- **What was built:** `scripts/listener_check.py` — starts the loopback dashboard, verifies the address it actually bound is a numeric loopback address, verifies a public bind is refused by construction, stops it and verifies the port is released and no thread survives the stop (the live thread count returns to the pre-start count). The report carries an address class and a port number, never a path, a token or a host inventory.
+- **Defect found while building it:** the thread check first counted threads by name, which is always zero with the default `Thread-N` naming — a vacuous proof. It now compares the live thread count before start and after stop, which is a real criterion (1 before, 1 after: the main thread).
+- **Tests observed:** `unittest discover -s tests` **681 tests OK (1 skipped)**; the new test asserts each M09 criterion and that the report carries no path. `scripts/check_project.py` PASS. MOCK/STATIC only.
