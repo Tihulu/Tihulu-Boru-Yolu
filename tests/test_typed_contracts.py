@@ -121,5 +121,45 @@ class PolicyAlignmentTests(unittest.TestCase):
         self.assertEqual(policy.disclosure_policy, envelope.disclosure_policy)
 
 
+class EnvelopePayloadBoundTests(unittest.TestCase):
+    """An envelope's payload is bounded like its result is."""
+
+    def envelope(self, payload):
+        return TaskEnvelope(task_id="t", goal="g", payload=payload)
+
+    def test_hostile_payloads_are_refused(self):
+        for label, payload in (
+            ("huge content", {"messages": [{"role": "user", "content": "x" * 20_000_000}]}),
+            ("too many messages", {"messages": [{"role": "user", "content": "x"}] * 100}),
+            ("unknown payload key", {"messages": [], "extra": 1}),
+            ("unknown role", {"messages": [{"role": "system2", "content": "x"}]}),
+            ("extra message field", {"messages": [{"role": "user", "content": "x", "secret": 1}]}),
+            ("private key", {"raw_stdout": "x"}),
+            ("messages not a list", {"messages": {"role": "user"}}),
+        ):
+            errors = self.envelope(payload).validate()
+            self.assertTrue(errors, label + " must not validate")
+
+    def test_a_well_formed_payload_is_accepted(self):
+        for payload in ({}, {"messages": [{"role": "user", "content": "ping"}]},
+                       {"messages": [{"role": "system", "content": "rules"},
+                                     {"role": "assistant", "content": "ack"}]}):
+            self.assertEqual([], self.envelope(payload).validate(), payload)
+
+    def test_core_submission_refuses_an_unbounded_payload(self):
+        from boru.config import CoreConfig, ProviderConfig
+        from boru.core import BoruCore
+        from boru.errors import ContractError
+
+        engine = BoruCore(CoreConfig(providers=(ProviderConfig(kind="mock"),)))
+        try:
+            with self.assertRaises(ContractError):
+                engine.submit(self.envelope(
+                    {"messages": [{"role": "user", "content": "x" * 20_000_000}]}))
+            engine.submit(self.envelope({"messages": [{"role": "user", "content": "ping"}]}))
+        finally:
+            engine.close()
+
+
 if __name__ == "__main__":
     unittest.main()

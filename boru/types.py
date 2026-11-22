@@ -29,6 +29,11 @@ MAX_RESULT_DEPTH = 2
 MAX_PAYLOAD_KEYS = 32
 MAX_PAYLOAD_STRING_CHARS = 512
 MAX_PAYLOAD_INT = 10 ** 12
+#: An envelope's own payload is bounded the same way its result is: a bounded
+#: message list, bounded roles and content, and no other keys.
+MAX_ENVELOPE_MESSAGES = 64
+MAX_ENVELOPE_CONTENT_CHARS = 32 * 1024
+ENVELOPE_ROLES = ("system", "user", "assistant")
 EVIDENCE_CLASSES: Tuple[str, ...] = ("direct", "user_reported", "simulated", "unknown")
 COMPLEXITY_LEVELS: Tuple[str, ...] = ("simple", "medium", "difficult")
 RESULT_STATUSES: Tuple[str, ...] = ("completed", "failed", "cancelled", "timeout")
@@ -62,6 +67,36 @@ FORBIDDEN_RESULT_KEYS = frozenset(
 
 def _names(cls) -> Tuple[str, ...]:
     return tuple(f.name for f in fields(cls))
+
+
+def _envelope_payload_error(payload: Any) -> Optional[str]:
+    """Bound an envelope's payload before it can reach the durable store.
+
+    The message list, the roles and the content are bounded, and no other key
+    is accepted: an unbounded payload is a denial of service the owner did not
+    ask for, and a result is already held to exactly this kind of bound.
+    """
+    if not isinstance(payload, Mapping):
+        return "payload must be an object"
+    unknown = sorted(set(payload) - {"messages"})
+    if unknown:
+        return "payload carries unexpected keys: " + ", ".join(unknown)
+    if not payload:
+        return None
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or len(messages) > MAX_ENVELOPE_MESSAGES:
+        return "messages must be a bounded list"
+    for turn in messages:
+        if not isinstance(turn, Mapping):
+            return "a message must be an object"
+        if sorted(set(turn) - {"role", "content"}):
+            return "a message carries unexpected fields"
+        role, content = turn.get("role"), turn.get("content")
+        if role not in ENVELOPE_ROLES:
+            return "unknown message role"
+        if not isinstance(content, str) or not content.strip() or len(content) > MAX_ENVELOPE_CONTENT_CHARS:
+            return "message content must be a bounded non-empty string"
+    return None
 
 
 def _payload_error(value: Any, depth: int = 0) -> Optional[str]:
@@ -225,6 +260,9 @@ class TaskEnvelope:
         leak = sorted(set(self.payload) & FORBIDDEN_RESULT_KEYS)
         if leak:
             errors.append("payload may not carry private fields: " + ", ".join(leak))
+        payload_error = _envelope_payload_error(self.payload)
+        if payload_error:
+            errors.append("payload rejected: " + payload_error)
         if self.schema_version != SCHEMA_VERSION:
             errors.append("unsupported schema_version")
         return errors

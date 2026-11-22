@@ -803,3 +803,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Behaviour after the fix:** a FIFO probe answers immediately with `{"exists": true, "type": "other", "size": null}`, and reading it is refused because it is not a regular file.
 - **Why this one survived the first pass:** the first pass asked "can a target escape the alias?" (traversal, symlinks, `..`); this one asks "can a target stop the worker?" — a different question class, found by executing rather than reading.
 - **Tests observed:** `unittest discover -s tests` **666 tests OK (1 skipped)**; the new regression test bounds the acquisition to 5 seconds so a regression fails instead of hanging the suite. `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — second-pass self-review: an envelope payload was unbounded (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed (confirmed by execution):** `TaskEnvelope.validate()` did not bound its `payload` at all, so a 20 MB `messages` entry passed the typed contract and reached `TaskStore.submit`. The result contract had been bounded recursively since F10; the request contract had not, and the asymmetry was the defect. `TaskEnvelope` now validates its payload: only a bounded message list, bounded roles and content, no other keys.
+- **Also verified in this pass:** `RejectionLedger.recent` is bounded (1..1024) and refuses a negative limit; `BoruCore.submit` calls `assert_valid()` before the durable store, so the production path is now protected at the contract boundary rather than at the storage boundary.
+- **Tests observed:** `unittest discover -s tests` **669 tests OK (1 skipped)**; the new tests cover seven hostile payload shapes, three well-formed ones and the core submission path. `scripts/check_project.py` PASS. MOCK/STATIC only.
