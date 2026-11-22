@@ -844,3 +844,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **CI verified:** run `#45048886502` on head `988738a` concluded **success** (no failed jobs or steps), reported by the authorized local agent. Link: https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/45048886502
 - **Package re-pinned:** `docs/REVIEW_PACKAGE.md` now cites this head's own CI run instead of the previous head's, and no longer states that a run is pending.
 - **Gate 1 state:** the remediation work, the local verification (673 tests, 20/20 probes, check/evidence/doctor) and the CI run are all in place; what remains is the **independent verdict**, which belongs to the reviewer.
+
+---
+
+### 2026-11-22 — CI green on the final head; Gate 1 fully prepared (head `e9854a6` on `p1/boru-core-vertical-slice`)
+
+- **CI verified:** run `#45051589592` on head `e9854a644c9ebfdddd3909d6e0ba579b993c338b` concluded **success** (job `validate`, no failed steps), reported by the authorized local agent. Remote head confirmed as `e9854a644...`.
+- **Combined Gate 1 evidence on this head:** 673 tests OK locally, the reviewer's 20 probes passing inside CI's suite, `check_project.py`/`evidence.py`/`boru doctor` all green locally, and two consecutive green CI runs (45048886502, 45051589592).
+- **Remaining for Gate 1:** the independent verdict, which belongs to the reviewer; the request is ready in `docs/RE_REVIEW_REQUEST.md`.
