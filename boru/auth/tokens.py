@@ -8,13 +8,25 @@ contains only bounded metadata and is created owner-only.
 from __future__ import annotations
 
 import json
+import math
 import os
 import stat
 import tempfile
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from ..errors import ConfigurationError
+
+#: Bounded handle metadata: an unbounded provider, account or scope list could
+#: turn the owner-only metadata file into a slow-growing, unparseable record.
+MAX_PROVIDER = 64
+MAX_ACCOUNT = 256
+MAX_SCOPES = 16
+#: A persisted expiry must be a finite positive timestamp, and never further
+#: than a decade ahead: a NaN or infinite value would make a token that no
+#: comparison can ever call expired.
+MAX_EXPIRY_YEARS = 10
 
 
 @dataclass(frozen=True)
@@ -100,19 +112,51 @@ class TokenVault:
                 raise ConfigurationError("vault entry handle is invalid")
             if record.security_level not in ("UNKNOWN", "UNSUPPORTED", "REVOKED", "REFUSED"):
                 raise ConfigurationError("vault entry security level is invalid")
+            record = TokenHandle(
+                handle=record.handle, provider=self._bounded(record.provider, MAX_PROVIDER, "provider"),
+                account=self._bounded(record.account, MAX_ACCOUNT, "account"),
+                scopes=tuple(self._bounded(value, 64, "scope") for value in record.scopes),
+                expires_at=self._expiry(record.expires_at, None),
+                security_level=record.security_level)
             self._handles[record.handle] = record
 
     def register(self, handle: str, *, provider: str, account: str, scopes: tuple,
-                 expires_at: Optional[float], security_level: str = "UNKNOWN") -> TokenHandle:
+                 expires_at: Optional[float], security_level: str = "UNKNOWN",
+                 now: Optional[float] = None) -> TokenHandle:
         if not isinstance(handle, str) or not handle.strip() or len(handle) > 128:
             raise ConfigurationError("handle must be a bounded non-empty string")
+        provider = self._bounded(provider, MAX_PROVIDER, "provider")
+        account = self._bounded(account, MAX_ACCOUNT, "account")
+        cleaned = tuple(self._bounded(value, 64, "scope") for value in scopes)
+        if len(cleaned) > MAX_SCOPES or len(set(cleaned)) != len(cleaned):
+            raise ConfigurationError("scopes must be a bounded set")
+        expires_at = self._expiry(expires_at, now)
         if security_level not in ("UNKNOWN", "UNSUPPORTED", "REVOKED", "REFUSED"):
             security_level = "UNKNOWN"
         entry = TokenHandle(handle=handle, provider=provider, account=account,
-                            scopes=tuple(scopes), expires_at=expires_at, security_level=security_level)
+                            scopes=cleaned, expires_at=expires_at, security_level=security_level)
         self._handles[handle] = entry
         self._flush()
         return entry
+
+    @staticmethod
+    def _bounded(value: Any, limit: int, label: str) -> str:
+        if not isinstance(value, str) or not value.strip() or value.strip() != value or len(value) > limit:
+            raise ConfigurationError(label + " must be a bounded, trimmed string")
+        return value
+
+    @staticmethod
+    def _expiry(value: Any, now: Optional[float]) -> Optional[float]:
+        """A finite, positive, sane timestamp or nothing at all."""
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ConfigurationError("expires_at must be a finite timestamp")
+        stamp = time.time() if now is None else float(now)
+        horizon = stamp + MAX_EXPIRY_YEARS * 366 * 86400
+        if not 0 < float(value) <= horizon:
+            raise ConfigurationError("expires_at is outside the sane range")
+        return float(value)
 
     def get(self, handle: str) -> Optional[TokenHandle]:
         return self._handles.get(handle)

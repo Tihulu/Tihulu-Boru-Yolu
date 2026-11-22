@@ -12,6 +12,8 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from boru.auth import OAuthClientConfig, OAuthFlow, PkcePair, TokenVault, constant_time_equals
+from boru.auth.oauth import MAX_ATTEMPTS
+from boru.errors import ConfigurationError
 
 
 def config(**overrides):
@@ -270,6 +272,67 @@ class TokenVaultTests(unittest.TestCase):
             import shutil
 
             shutil.rmtree(root, ignore_errors=True)
+
+
+class HardeningTests(unittest.TestCase):
+    """Regressions for the auth-slice self-review findings."""
+
+    def test_attempt_registry_is_bounded(self):
+        flow = OAuthFlow(config())
+        for _ in range(20):
+            flow.start()
+        self.assertLessEqual(len(flow._attempts), MAX_ATTEMPTS)
+
+    def test_vault_metadata_is_bounded(self):
+        vault = TokenVault()
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p" * 200, account="a", scopes=("openid",),
+                           expires_at=None)
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a", scopes=("s" * 200,),
+                           expires_at=None)
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a",
+                           scopes=tuple("s{}".format(i) for i in range(40)), expires_at=None)
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a", scopes=("openid",),
+                           expires_at=float("nan"))
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a", scopes=("openid",),
+                           expires_at=float("inf"))
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a", scopes=("openid",),
+                           expires_at=10 ** 12, now=time.time())
+        stamp = time.time()
+        entry = vault.register("tok-ok", provider="test", account="client", scopes=("openid",),
+                               expires_at=stamp + 3600, now=stamp)
+        self.assertEqual(stamp + 3600, entry.expires_at)
+
+    def test_persisted_vault_entries_are_validated_on_load(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp(prefix="boru-vault-load-")
+        os.chmod(root, 0o700)
+        try:
+            path = os.path.join(root, "handles.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump([{"handle": "tok-1", "provider": "p" * 400, "account": "a",
+                            "scopes": ["openid"], "expires_at": None,
+                            "security_level": "UNKNOWN"}], handle)
+            with self.assertRaises(ConfigurationError):
+                TokenVault(path)
+        finally:
+            import shutil
+
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_client_config_defines_post_init_once(self):
+        import boru.auth.oauth as module
+
+        source = open(module.__file__, "r", encoding="utf-8").read()
+        self.assertEqual(1, source.count("def __post_init__"),
+                         "a second definition would shadow the first")
 
 
 if __name__ == "__main__":

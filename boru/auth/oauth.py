@@ -5,7 +5,13 @@ Implements the documented flow only:
 * authorization URL with `code_challenge_method=S256`, `state` and `nonce`;
 * a bounded, **numeric-loopback** redirect listener that captures exactly one
   authorization response and then stops;
-* state and nonce verification, and single-use state;
+* ``state`` verification (constant time) and single-use state;
+
+The authorization request also carries an OpenID Connect ``nonce``, which is
+generated and retained per attempt.  Verifying it requires parsing and
+checking a signed ID token, which this slice does **not** implement: the
+nonce is currently carrying no verification, and that limitation is recorded
+rather than hidden.
 * token exchange with the provider token endpoint, recording an opaque token
   **handle** in `TokenVault` — token values are never logged, stored in
   configuration or forwarded anywhere.
@@ -20,6 +26,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import json
+import math
 import socket
 import threading
 import time
@@ -34,6 +41,9 @@ from .tokens import TokenVault
 
 MAX_CODE_CHARS = 2048
 MAX_STATE_CHARS = 512
+#: In-flight and recently finished authorization attempts are bounded, so a
+#: long-lived flow object cannot accumulate them without limit.
+MAX_ATTEMPTS = 8
 
 
 @dataclass(frozen=True)
@@ -52,10 +62,6 @@ class OAuthClientConfig:
     #: Owner opt-in for http endpoints. Off by default; needed by tests and by
     #: pinned local providers only.
     allow_http_endpoints: bool = False
-
-    def __post_init__(self) -> None:
-        """Reject malformed client configurations at construction time."""
-        self.assert_valid()
 
     def validate(self) -> List[str]:
         errors: List[str] = []
@@ -97,7 +103,10 @@ class OAuthClientConfig:
             raise ConfigurationError("; ".join(sorted(set(errors))))
 
     def __post_init__(self) -> None:
-        """Reject malformed client configurations and normalize scopes."""
+        """Reject malformed client configurations and normalize scopes.
+
+        Defined once: a second definition would silently shadow this one.
+        """
         errors = self.validate()
         if errors:
             raise ConfigurationError("; ".join(sorted(set(errors))))
@@ -136,6 +145,7 @@ class OAuthFlow:
         attempt = AuthorizationAttempt(config=self.config, pkce=PkcePair.generate(),
                                        state=random_state(), nonce=random_nonce())
         self._attempts[attempt.state] = attempt
+        self._prune_attempts()
         params = {
             "response_type": "code",
             "client_id": self.config.client_id,
@@ -148,6 +158,14 @@ class OAuthFlow:
         }
         query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         return "{}?{}".format(self.config.authorization_endpoint, query), attempt
+
+    def _prune_attempts(self) -> None:
+        """Keep the newest bounded number of attempts; drop finished ones first."""
+        while len(self._attempts) > MAX_ATTEMPTS:
+            finished = [state for state, attempt in self._attempts.items()
+                        if attempt.finished.is_set()]
+            drop = finished[0] if finished else next(iter(self._attempts))
+            self._attempts.pop(drop, None)
 
     def serve_redirect(self, attempt: AuthorizationAttempt, timeout: float = 120.0) -> str:
         """Listen on the numeric loopback redirect port until the code arrives."""
@@ -240,10 +258,16 @@ class OAuthFlow:
         if not isinstance(payload, dict) or not payload.get("access_token"):
             raise PolicyViolation("token endpoint response is missing a token")
         handle = "tok-{}".format(random_state()[:32])
+        stamp = time.time() if now is None else float(now)
+        expires_in = payload.get("expires_in")
+        if isinstance(expires_in, bool) or not isinstance(expires_in, (int, float)) \
+                or not math.isfinite(expires_in) or expires_in < 0:
+            raise PolicyViolation("token endpoint lifetime is not a finite duration")
+        expires_at = stamp + float(expires_in)
+        if not math.isfinite(expires_at) or expires_at <= stamp:
+            raise PolicyViolation("token endpoint lifetime cannot extend the expiry")
         self.vault.register(handle, provider=self.config.provider, account=self.config.client_id,
-                            scopes=self.config.scopes,
-                            expires_at=float(payload["expires_in"]) + (now if now is not None else time.time())
-                            if isinstance(payload.get("expires_in"), (int, float)) else None,
+                            scopes=self.config.scopes, expires_at=expires_at, now=stamp,
                             security_level="UNKNOWN")
         return handle
 

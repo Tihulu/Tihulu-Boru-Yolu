@@ -647,3 +647,13 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Method:** beyond example-based tests, random bytes and text (control characters, bidi overrides, zero-width characters, oversized strings) are fed through the real broker/executor/consent/connector/contract paths with a deterministic seed. The exploratory run used 3000 rounds per property (~18,000 hostile inputs): **0 unhandled exceptions, 0 receipts verified without the key, 0 probes disclosing the resource path or entry names**; 497 well-formed names were accepted and 2,503 inputs were typed denials.
 - **New coverage:** `tests/test_property_hostile_inputs.py` (5 properties, CI-sized at 250 rounds each) — random targets, aliases, forged receipts, connector payloads and typed results must each yield a typed outcome.
 - **Tests observed:** `unittest discover -s tests` **609 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — auth slice self-review: four defects closed (commit on `p1/boru-core-vertical-slice`)
+
+- **Duplicate `__post_init__`** in `OAuthClientConfig`: the second definition shadowed the first; defined once now, with a source check that fails if a second appears.
+- **Unbounded attempt registry**: `OAuthFlow.start()` accumulated attempts forever; the registry is bounded (8 newest, finished attempts dropped first) so a long-lived flow object cannot grow without limit.
+- **Nonce claim vs code**: the module claimed "state and nonce verification" while only `state` is verified (nonce verification needs a parsed, signature-checked ID token, which this slice does not implement). The docstring now states the limitation and the handle record it, instead of implying a check that does not exist.
+- **Unbounded token metadata and expiry**: `TokenVault.register()` accepted any provider/account/scope length and any `expires_at` — including NaN or infinite, which no comparison can ever call expired and which `json.dump` writes as invalid strict JSON. Metadata is now bounded, the expiry must be finite, positive and within a ten-year horizon (validated on load as well as on register), and `exchange()` refuses a non-finite `expires_in` before recording a handle.
+- **Tests observed:** `unittest discover -s tests` **613 tests OK** (new: 4 hardening tests in `tests/test_oauth.py`). MOCK/STATIC only.
