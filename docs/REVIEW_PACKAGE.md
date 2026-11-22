@@ -116,9 +116,14 @@ these fail on your run, that is a finding.
 ## 3-A. First review findings and their remediation
 
 The first review of `cc73940` returned **FAIL** with findings F01–F22. Every
-finding is remediated on this head; the reviewer's own 20 regression probes
-are now checked in at `tests/test_review_regressions.py` so CI runs the same
-executable acceptance spec (20/20 pass). Re-review must confirm each row.
+finding recorded in the working notes is remediated on this head — see
+`docs/REVIEW_FINDINGS.md` for the per-finding table, which also records the two
+findings (F06 and F20) whose canonical text the working notes do not carry and
+which are marked *to re-confirm* rather than described from memory. The
+reviewer's own 20 regression probes are checked in at
+`tests/test_review_regressions.py` so CI runs the same executable acceptance
+spec (20/20 pass). Re-review must confirm each row and re-issue the canonical
+finding text for F06 and F20.
 
 | # | Finding (short) | Remediation | Commit |
 |---|---|---|---|
@@ -169,6 +174,8 @@ provider/GitHub behaviour and clean-machine acceptance are separate gates
 3. Reviewer name, date and reviewed commit recorded in `harness/build-log.md`.
 
 **Current status: HOLD — a first review of `cc73940` failed with F01–F22;
-every finding is remediated on this head (`87d75d91fa`) and the reviewer's regression
-probes pass, but no independent re-review has been performed yet, and the CI
-run for this head is pending the owner-authorized push.**
+every finding recorded in the working notes is remediated on this head
+(`87d75d91fa`) and the reviewer's regression probes pass, but no independent
+re-review has been performed yet, the canonical text of F06 and F20 must be
+re-issued by the reviewer, and the CI run for this head is pending the
+owner-authorized push.**
