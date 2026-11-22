@@ -22,12 +22,16 @@ Local private source, personal documents, Jan/OpenCode config and chat state, pr
 | Kandev agent defaults to host-level Shell | Disposable workspace, explicit runtime/profile review, deny native host tools until approved |
 | Langflow custom Python component opens files or internet | Disable/contain component runtime in restricted profile; OS isolation and file-access settings |
 | Cloud model given "Shell permission" sees private host paths | Confined sandbox, explicit mount allowlists, no home/Jan/OpenCode mounts, output release gate |
-| Fake local-model identity or forged consent | Host-authenticated worker identity and local authority-signed, recipient-bound grants |
-| Stale/replayed approval | Persistent atomic nonce and revocation state |
+| Fake local-model identity or forged consent | Registry-authenticated worker identity, and consent grants that are immutable, recipient/task/operation/alias/field/level-bound and level-checked on every use |
+| Stale/replayed approval | Broker nonce detection plus a persistent, bounded used-nonce table; a revoked grant id cannot be re-issued; the polling registry never forgets an id |
 | Leaking terminal output through error messages, tracing or task summaries | Default deny all untyped fields; local redaction before any model request, sanitized errors |
-| Tool result contains extra JSON keys or nested payload | Strict schema validation and size/cardinality limits |
-| Race between approved path and file access | Directory file descriptors, no-follow semantics and OS-level confinement; path normalization alone is insufficient |
+| Tool result contains extra JSON keys or nested payload | Strict schema validation and size/cardinality limits, applied recursively at every depth so a private field cannot hide inside an innocent key |
+| Race between approved path and file access | Directory file descriptors, no-follow semantics and OS-level confinement; a target is resolved component-wise against the opened alias (`dir_fd` + `O_NOFOLLOW`) and the allowlist refuses symlinked or symlink-bridged paths; path normalization alone is insufficient |
 | Unsafe fallback from local to cloud | Authorization and disclosure filters apply to *every* dispatch including retries |
+| A caller replays or tampers with a disclosure decision | The decision is a signed, request-bound receipt (task, operation, resource token, worker, grant, nonce, expiry, fields, target); the worker verifies it under the shared authorization key before any filesystem access, and names the resource only by an opaque token |
+| A provider or model reply claims a stronger evidence class than its provenance | The recorded evidence class is derived from provider provenance; a reply's own claim is never trusted |
+| A connector call reaches a different repository, reference or account than granted | One validated reference for check and path construction, account identity enforced inside `call()`, dispatch bodies validated before the transport, redirects never followed, response and error bodies capped |
+| An outbound payload carries more than the owner declared | The boundary classification is derived from the payload actually sent, and the classified messages are the ones transmitted |
 | Compromised LAN listener | Loopback by default, no public port; authenticated TLS proxy only with separate approval |
 | Resource exhaustion / swap thrash | Bounded agents, memory leases, cgroups/job quotas where available, timeouts |
 | Supply-chain compromise during install | Pin upstream version, validate official origin/checksums, no unreviewed pipe-to-shell |
