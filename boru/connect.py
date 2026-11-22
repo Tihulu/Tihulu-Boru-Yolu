@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 import sys
 import webbrowser
 from typing import Any, Dict, Optional, Sequence
@@ -48,6 +50,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="authorization wait, seconds (1..3600)")
     parser.add_argument("--no-browser", action="store_true",
                         help="print the authorization URL instead of opening a browser")
+    parser.add_argument("--dry-run", action="store_true",
+                         help="validate the registration values and the loopback port, then stop: "
+                              "no browser, no authorization request")
     parser.add_argument("--allow-http", action="store_true",
                         help="owner opt-in for http endpoints (tests or a pinned local provider only)")
 
@@ -84,9 +89,19 @@ def connect(args: argparse.Namespace) -> int:
         config.assert_valid()
     except (PolicyViolation, ConfigurationError, ValueError) as exc:
         return _fail(args, "configuration_error", str(exc))
+    try:
+        readiness = _readiness(config, args.vault_dir)
+    except PolicyViolation as exc:
+        return _fail(args, "not_ready", str(exc))
     vault = TokenVault(args.vault_dir)
     flow = OAuthFlow(config, vault=vault)
     url, attempt = flow.start()
+    if args.dry_run:
+        # Validate everything the owner supplied, then stop before the browser:
+        # a registration that cannot work is refused before it is attempted.
+        _out(args, dict(readiness, authorization_url=url, state_length=len(attempt.state),
+                        dry_run=True, live_acceptance="HOLD"))
+        return 0
     if args.no_browser:
         _out(args, {"authorization_url": url, "state_hint": "open this URL in your browser"})
     else:
@@ -113,6 +128,48 @@ def connect(args: argparse.Namespace) -> int:
         "live_acceptance": "HOLD",
     })
     return 0
+
+
+def _readiness(config: OAuthClientConfig, vault_dir: str) -> Dict[str, Any]:
+    """Report whether the supplied values can complete a connection at all.
+
+    Checked without contacting the provider: the endpoints are https, the
+    redirect is numeric loopback, the scopes are bounded, the vault directory is
+    usable and the redirect port is bindable on this host right now.
+    """
+    import socket
+
+    from urllib.parse import urlsplit
+
+    for name in ("authorization_endpoint", "token_endpoint"):
+        parsed = urlsplit(getattr(config, name))
+        if parsed.scheme != "https":
+            raise PolicyViolation(name + " must be https")
+    redirect = urlsplit(config.redirect_uri)
+    port = redirect.port
+    if port is None or not 1 <= port <= 65535:
+        raise PolicyViolation("redirect uri must name a port")
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("127.0.0.1", port))
+    except OSError as exc:
+        raise PolicyViolation("redirect port {} is not bindable: {}".format(port, exc.strerror))
+    finally:
+        probe.close()
+    if not os.path.isdir(vault_dir):
+        raise PolicyViolation("vault directory must already exist")
+    mode = stat.S_IMODE(os.stat(vault_dir).st_mode)
+    if mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise PolicyViolation("vault directory must not be group or world writable")
+    return {
+        "endpoints_https": True,
+        "redirect_loopback_port": port,
+        "redirect_port_bindable": True,
+        "scopes": list(config.scopes),
+        "vault_directory": "owner-only" if not mode & (stat.S_IRWXG | stat.S_IRWXO) else "accessible-to-others",
+        "provider": config.provider,
+        "client_id_length": len(config.client_id),
+    }
 
 
 def vault_connection_state(vault: TokenVault, handle: str) -> str:

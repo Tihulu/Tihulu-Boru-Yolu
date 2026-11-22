@@ -1,6 +1,7 @@
 """Owner-run connection flow tests: real loopback exchange, no secrets printed."""
 import json
 import os
+import shutil
 import stat
 import tempfile
 import threading
@@ -201,6 +202,84 @@ def main_or_connect(args):
         from boru.connect import connect as run_connect
         code = run_connect(args)
     return code
+
+
+class DryRunReadinessTests(unittest.TestCase):
+    """--dry-run validates the owner's five values before a browser opens."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="boru-dryrun-")
+        os.chmod(self.root, 0o700)
+        self.vault = os.path.join(self.root, "vault")
+        os.makedirs(self.vault)
+        os.chmod(self.vault, 0o700)  # a group-writable directory is refused by design
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def argv(self, *, redirect_uri=None, authorization_endpoint=None, vault_dir=None, scopes=None):
+        argv = ["connect", "--provider", "test",
+                "--authorization-endpoint",
+                authorization_endpoint or "https://accounts.example.test/authorize",
+                "--token-endpoint", "https://accounts.example.test/token",
+                "--client-id", "test-client",
+                "--vault-dir", vault_dir or self.vault,
+                "--redirect-uri", redirect_uri or "http://127.0.0.1:8731/callback",
+                "--dry-run", "--json"]
+        for scope in (scopes if scopes is not None else ["openid"]):
+            argv.extend(["--scope", scope])
+        return argv
+
+    def run_main(self, argv):
+        from io import StringIO
+        import contextlib
+
+        buffer = StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = main(argv)
+        return code, buffer.getvalue()
+
+    def test_good_values_report_ready(self):
+        code, out = self.run_main(self.argv())
+        self.assertEqual(0, code)
+        payload = json.loads(out)
+        self.assertTrue(payload["endpoints_https"])
+        self.assertTrue(payload["redirect_port_bindable"])
+        self.assertEqual(8731, payload["redirect_loopback_port"])
+        self.assertTrue(payload["dry_run"])
+        self.assertIn("authorization_url", payload)
+
+    def test_bad_values_are_refused_before_any_request(self):
+        # the CLI reports a typed refusal with a stable kind and a non-zero exit
+        cases = (
+            (self.argv(authorization_endpoint="http://insecure.example/authorize"),
+             "configuration_error"),
+            (self.argv(redirect_uri="http://93.184.216.34:8731/callback"),
+             "configuration_error"),
+            (self.argv(vault_dir=os.path.join(self.root, "absent")), "not_ready"),
+            (self.argv(scopes=["s{}".format(i) for i in range(20)]), "configuration_error"),
+        )
+        for argv, kind in cases:
+            code, out = self.run_main(argv)
+            self.assertEqual(2, code, out)
+            payload = json.loads(out)
+            self.assertEqual(kind, payload["error"], out)
+            self.assertNotIn("authorization_url", payload)
+
+    def test_a_busy_redirect_port_is_refused(self):
+        import socket
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        probe.listen(1)
+        try:
+            code, out = self.run_main(self.argv(
+                redirect_uri="http://127.0.0.1:{}/callback".format(probe.getsockname()[1])))
+            self.assertEqual(2, code, out)
+            self.assertEqual("not_ready", json.loads(out)["error"])
+            self.assertIn("Address already in use", out)
+        finally:
+            probe.close()
 
 
 if __name__ == "__main__":

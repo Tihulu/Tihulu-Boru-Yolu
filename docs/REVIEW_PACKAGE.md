@@ -23,14 +23,14 @@ git clone https://github.com/Tihulu/Tihulu-Boru-Yolu.git
 cd Tihulu-Boru-Yolu
 git checkout p1/boru-core-vertical-slice
 python3 scripts/check_project.py     # expected: PASS (30 documents + sample policy invariants)
-python3 -m unittest discover -s tests   # expected: Ran 673 tests ... OK
+python3 -m unittest discover -s tests   # expected: Ran 676 tests ... OK
 PYTHONPATH=. python3 tests/test_review_regressions.py   # expected: Ran 20 tests ... OK
 python3 scripts/evidence.py          # expected: exit 0, overall all-PASS
 python3 -m boru doctor --state-dir local-state   # expected: overall: ok, live_acceptance: HOLD
 python3 -m boru demo                 # expected: state REVIEW, evidence_class simulated
 ~~~
 
-Observed result on the head commit: **PASS / 673 tests / exit 0** (local run of
+Observed result on the head commit: **PASS / 676 tests / exit 0** (local run of
 `check_project.py`, the full suite, `scripts/evidence.py`, `boru doctor` and
 `boru demo`); the same suite passed in CI on this head (run 45048886502). If any
 of these fail on your run, that is a finding.

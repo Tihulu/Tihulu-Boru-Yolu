@@ -852,3 +852,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **CI verified:** run `#45051589592` on head `e9854a644c9ebfdddd3909d6e0ba579b993c338b` concluded **success** (job `validate`, no failed steps), reported by the authorized local agent. Remote head confirmed as `e9854a644...`.
 - **Combined Gate 1 evidence on this head:** 673 tests OK locally, the reviewer's 20 probes passing inside CI's suite, `check_project.py`/`evidence.py`/`boru doctor` all green locally, and two consecutive green CI runs (45048886502, 45051589592).
 - **Remaining for Gate 1:** the independent verdict, which belongs to the reviewer; the request is ready in `docs/RE_REVIEW_REQUEST.md`.
+
+---
+
+### 2026-11-22 — Gate 2 preparation: --dry-run validates the five registration values (commit on `p1/boru-core-vertical-slice`)
+
+- **Why:** Gate 2 is blocked on the owner's provider registration, so everything that can be done *before* it was done. A wrong endpoint, a non-loopback redirect or a busy port would otherwise be discovered only after the owner has spent a registration.
+- **What was added:** `boru connect --dry-run` validates what can be validated without contacting the provider — both endpoints https, redirect numeric loopback with a port bindable on this host *right now*, scopes within the 16 bound, vault directory usable and owner-only — and prints the authorization URL that would be opened. A refusal is typed (`configuration_error` for a bad value, `not_ready` for this host) and names what to fix; nothing is sent anywhere.
+- **Documentation:** `docs/AI_PROVIDER_CONNECTIONS.md` now names the five values a registration must bring back, states that a provider refusing a plain-HTTP loopback redirect is a documented limitation rather than a bypass, and documents the dry-run pre-flight.
+- **Tests observed:** `unittest discover -s tests` **676 tests OK (1 skipped)**; the new tests cover the ready path, four refusal classes and a busy redirect port. `scripts/check_project.py` PASS. MOCK/STATIC only — no provider was contacted.

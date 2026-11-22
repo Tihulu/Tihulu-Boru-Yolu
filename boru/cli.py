@@ -127,6 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="existing owner-only directory for the token vault")
     connect.add_argument("--timeout", type=float, default=180.0)
     connect.add_argument("--no-browser", action="store_true")
+    connect.add_argument("--dry-run", action="store_true",
+                         help="validate the registration values and the loopback port, then stop")
     connect.add_argument("--json", action="store_true")
     accounts = sub.add_parser("accounts", help="list stored token handles (no secrets)")
     _add_common_shorthands(accounts)

@@ -119,6 +119,27 @@ only the **environment variable name** that holds it (`--client-secret-env`), an
 set that variable in your own shell. Boru reads it at request time, never stores
 it and never prints it.
 
+**Before** registering, or as soon as you have the five values, validate them in
+one command — no browser, no authorization request, nothing sent to the provider:
+
+~~~bash
+python3 -m boru connect --provider <name> \
+  --authorization-endpoint https://<provider>/authorize \
+  --token-endpoint https://<provider>/token \
+  --client-id <registered-client-id> \
+  --redirect-uri http://127.0.0.1:8731/callback \
+  --scope openid [--scope ...] \
+  --vault-dir local-state/vault --dry-run --json
+~~~
+
+`--dry-run` checks what can be checked without the provider: both endpoints are
+https, the redirect is a numeric loopback address whose port is bindable on this
+machine right now, the scopes are within the bound, and the vault directory is
+usable and owner-only. A refusal names the value to fix (`configuration_error`
+for a bad value, `not_ready` for this host); a success prints the authorization
+URL that would be opened, so the registration can be corrected before it is
+wasted.
+
 Then run the command above (`--vault-dir` must be an existing owner-only
 directory). The result is either an opaque handle in the vault — an identity,
 `model_test_passed: false`, `identity_is_not_inference: true` — or a typed
