@@ -615,3 +615,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Package re-pinned:** `docs/REVIEW_PACKAGE.md` now names head `93fb0de101ed8b01eda2cdbcc8c61e29385e7321`, the 596-test and 20-probe commands, a per-finding remediation table (F01–F22 → closing commit) and the new invariant rows.
 - **Owner action required (blocking, not a defect):** the harness refuses `git push` in this session, so the CI run for `93fb0de` does not exist yet and the recorded CI link still points at the previous head's run. The package says so explicitly instead of linking a run that was never executed. Push + CI must be authorized by the owner, after which the link can be re-pinned.
 - **Next action:** request the independent re-review of `93fb0de` (Gate 1). Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval.
+
+---
+
+### 2026-11-22 — Gate 1 package, re-review request and final verification state (commits `87d75d9`, `a076dc5`, `b46720f`)
+
+- **Documents updated:** `docs/REVIEW_PACKAGE.md` (head re-pinned to the code head `87d75d91fa562729f0516e994a9a15ad965fe393`, 596-test and 20-probe commands, per-finding remediation table F01–F22 with closing commits, new invariant rows), `docs/SECURITY_REVIEW_REQUEST.md` (marked as a re-review of the remediated head), `docs/RE_REVIEW_REQUEST.md` (new: the ready-to-send reviewer request), `scripts/check_project.py` (manifest now requires both Gate 1 documents).
+- **Verification observed on this head:** `scripts/check_project.py` PASS (28 documents), `scripts/evidence.py` exit 0, `boru doctor` overall ok / live_acceptance HOLD, review probes 20/20.
+- **Blocking owner action:** the session harness refuses `git push`, so the CI run for this head does not exist and the package says so instead of linking a run that was never executed. Push authorization remains the owner's decision.
