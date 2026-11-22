@@ -925,3 +925,12 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - Release gates still requiring owner action: provider OAuth registration, a
   disposable repository for the connector pilot, clean-machine Pop!_OS/Ubuntu
   M01–M12, and license + release approval (`docs/OWNER_GATE_GUIDE.md`).
+
+---
+
+### 2026-11-23 — Gate 3 preparation: the connector pilot runbook and script (commit on `p1/boru-core-vertical-slice`)
+
+- **Why:** Gate 3 needs an owner-created disposable repository, so everything that can be done *before* that was done. The pilot was a plan, not a procedure.
+- **What was built:** `scripts/connector_pilot.py` — one command that runs the four grant-bound denials, then the read pilot, the write pilot (draft PR only) and the Actions pilot, emitting a sanitized evidence block (object IDs, decisions, denial reasons — never a token, a path or a private payload). `--dry-run` makes no outbound request at all: the transport refuses any exchange, so the claim is enforced by construction.
+- **Defect found and fixed while building it:** the first draft's dry-run actually reached the network (a dummy credential produced a real `identity_endpoint_refused` from GitHub) and two of the "denial" cases were mis-constructed — the payload matched the grant, so the binding check passed. The denials now name the pilot repository in the grant and another in the payload, producing `repository_not_granted`, `reference_not_granted`, `operation_not_granted` and `workflow_required`, and the dry-run's refusing transport makes the no-network claim true.
+- **Tests observed:** `unittest discover -s tests` **680 tests OK (1 skipped)**; the new tests cover the no-credential refusal, the malformed repository, the four denial reasons and the checkout-relative import. `scripts/check_project.py` PASS. MOCK/STATIC only — no provider was contacted.

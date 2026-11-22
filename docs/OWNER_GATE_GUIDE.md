@@ -51,6 +51,9 @@ and no secrets.
 
 **Agent action:** run the read-only pilot first, then the write pilot, then the
 Actions pilot, recording object IDs and denials; nothing is merged or published.
+The runbook is `docs/CONNECTOR_PILOT_RUNBOOK.md` and the script is
+`scripts/connector_pilot.py` — its `--dry-run` proves the grant-bound denials
+with no outbound request before the owner's token is spent.
 
 ## Gate 4 — Clean-machine acceptance (P10, M01–M12)
 
