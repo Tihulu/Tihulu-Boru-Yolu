@@ -7,8 +7,8 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 - Branch under review: `p1/boru-core-vertical-slice`
 - Code head under review: `87d75d91fa562729f0516e994a9a15ad965fe393` (a later documents-only commit may add this package's final pin; the code tree is identical)
 - Pull request: https://github.com/Tihulu/Tihulu-Boru-Yolu/pull/14 (draft, not merged)
-- CI: the run for this head is pending the owner-authorized push of the
-  remediation commits; the previous head's successful run is
+- CI: this head was pushed with the owner's authorization and its run is
+  recorded below once the result is known; the previous head's successful run is
   https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/44931288098
 - Issue tracker: https://github.com/Tihulu/Tihulu-Boru-Yolu/issues
 - Ledger: [harness/build-log.md](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/harness/build-log.md)
@@ -177,5 +177,5 @@ provider/GitHub behaviour and clean-machine acceptance are separate gates
 every finding recorded in the working notes is remediated on this head
 (`87d75d91fa`) and the reviewer's regression probes pass, but no independent
 re-review has been performed yet, the canonical text of F06 and F20 must be
-re-issued by the reviewer, and the CI run for this head is pending the
-owner-authorized push.**
+re-issued by the reviewer.** The head is pushed (remote `988738a`) with the
+owner's authorization; its CI run is recorded in the ledger once it finishes.
