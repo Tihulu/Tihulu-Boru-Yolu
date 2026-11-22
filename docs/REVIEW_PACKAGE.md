@@ -5,7 +5,7 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 
 - Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 - Branch under review: `p1/boru-core-vertical-slice`
-- Head commit: `93fb0de101ed8b01eda2cdbcc8c61e29385e7321`
+- Code head under review: `87d75d91fa562729f0516e994a9a15ad965fe393` (a later documents-only commit may add this package's final pin; the code tree is identical)
 - Pull request: https://github.com/Tihulu/Tihulu-Boru-Yolu/pull/14 (draft, not merged)
 - CI: the run for this head is pending the owner-authorized push of the
   remediation commits; the previous head's successful run is
@@ -169,5 +169,6 @@ provider/GitHub behaviour and clean-machine acceptance are separate gates
 3. Reviewer name, date and reviewed commit recorded in `harness/build-log.md`.
 
 **Current status: HOLD — a first review of `cc73940` failed with F01–F22;
-every finding is remediated on this head and the reviewer's regression probes
-pass, but no independent re-review has been performed yet.**
+every finding is remediated on this head (`87d75d91fa`) and the reviewer's regression
+probes pass, but no independent re-review has been performed yet, and the CI
+run for this head is pending the owner-authorized push.**
