@@ -24,6 +24,7 @@ REQUIRED_DOCS = [
     "docs/ADRS/0005-boru-core-runtime-slice.md", "docs/BORU_CORE.md",
     "docs/JAN_PILOT.md", "docs/AI_PROVIDER_CONNECTIONS.md",
     "docs/OS_ACCEPTANCE.md", "docs/SECURITY_REVIEW_REQUEST.md",
+    "docs/RE_REVIEW_REQUEST.md", "docs/REVIEW_PACKAGE.md",
     "docs/OWNER_GATE_GUIDE.md",
 ]
 
