@@ -717,3 +717,11 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Self-review of `boru/store.py`:** the durable-state store is well hardened (owner-only state directory, 0600 files, symlink and hard-link refusal, single-writer `flock`, compare-and-set transitions, bounded payloads, idempotency fingerprints); two gaps remained.
 - **Gaps closed:** `save_result` accepted any JSON-serialisable value, so a non-object record could be stored and every later read of that attempt (for example `result_text`) would raise an untyped `AttributeError`; stored results must now be JSON objects, and the read path tolerates a hostile row (written by another writer or an older build) by reporting "no text" instead of crashing.
 - **Tests observed:** `unittest discover -s tests` **643 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — budget self-review: reservations are bounded and released (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed:** `BudgetLedger` accumulated one reservation per dispatched task and never dropped or released it, so a long-lived process (a plan of many tasks, or repeated runs in one process) grew its reservation map without bound. Reservations are now bounded (newest kept, a stale record refused rather than remembered) and explicitly released when a task's life ends - at `review()` and `cancel()`, where no further usage is recorded.
+- **Self-review of `boru/budgets.py` otherwise:** the honest-estimate and check-before/after rules hold; ceilings are validated at both ends, usage values must be non-negative integers, an unbounded cost ceiling is still refused before dispatch, and compaction is a documented deterministic bound, not a semantic summary.
+- **Tests observed:** `unittest discover -s tests` **646 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.

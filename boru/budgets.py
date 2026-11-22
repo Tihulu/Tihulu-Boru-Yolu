@@ -23,6 +23,9 @@ from .providers.base import ChatMessage
 
 #: Deterministic character heuristic used only for bounded estimates.
 CHARS_PER_TOKEN = 4
+#: In-flight reservations are bounded: a long-lived process must not accumulate
+#: them, and a reservation past its window is refused rather than remembered.
+MAX_RESERVATIONS = 1024
 
 
 def estimate_tokens(text: str) -> int:
@@ -89,6 +92,11 @@ class BudgetLedger:
             raise PolicyViolation("requested_output must be a positive integer")
         ceiling = ceiling or self.ceiling
         ceiling.assert_valid()
+        while len(self._reserved) >= MAX_RESERVATIONS:
+            # drop the oldest reservation: its usage was recorded or its task
+            # is long finished, and a stale record must not outlive the window
+            stale = next(iter(self._reserved))
+            self._reserved.pop(stale, None)
         self._reserved[label] = {
             "estimated_input": estimated_input,
             "requested_output": requested_output,
@@ -139,6 +147,10 @@ class BudgetLedger:
             if ceiling.max_cost_usd and float(cost_usd) > ceiling.max_cost_usd:
                 return False, "cost_over_ceiling"
         return True, ""
+
+    def release(self, task_id: str) -> None:
+        """Drop one task's reservation once its usage is recorded (idempotent)."""
+        self._reserved.pop(_bounded_id(task_id), None)
 
     def observed(self, task_id: str) -> Dict[str, Any]:
         entry = self._reserved.get(_bounded_id(task_id))

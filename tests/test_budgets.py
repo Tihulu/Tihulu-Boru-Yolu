@@ -2,7 +2,13 @@
 import unittest
 
 from boru.budgets import (
-    Budget, BudgetLedger, CooldownTracker, compact, estimate_message_tokens, estimate_tokens,
+    MAX_RESERVATIONS,
+    Budget,
+    BudgetLedger,
+    CooldownTracker,
+    compact,
+    estimate_message_tokens,
+    estimate_tokens,
 )
 from boru.errors import PolicyViolation
 from boru.providers.base import ChatMessage
@@ -114,6 +120,43 @@ class CompactionTests(unittest.TestCase):
     def test_compaction_never_reaches_the_ceiling(self):
         result = compact(messages(20), max_chars=512, keep_last=2)
         self.assertTrue(sum(len(m.content) for m in result.messages) <= 512)
+
+
+class ReservationBoundTests(unittest.TestCase):
+    """Reservations are bounded and released at the end of a task's life."""
+
+    def test_reservations_stay_bounded(self):
+        ledger = BudgetLedger()
+        for index in range(MAX_RESERVATIONS + 16):
+            ledger.reserve("t{}".format(index), estimated_input=10, requested_output=8)
+        self.assertLessEqual(len(ledger._reserved), MAX_RESERVATIONS)
+
+    def test_release_is_idempotent_and_a_stale_reservation_refuses(self):
+        from boru.errors import PolicyViolation
+
+        ledger = BudgetLedger()
+        ledger.reserve("t1", estimated_input=1, requested_output=1)
+        ledger.release("t1")
+        ledger.release("t1")  # idempotent
+        with self.assertRaises(PolicyViolation):
+            ledger.record("t1", {"input_tokens": 1, "output_tokens": 1})
+        with self.assertRaises(PolicyViolation):
+            ledger.observed("t1")
+
+    def test_a_reviewed_task_releases_its_reservation(self):
+        from boru.config import CoreConfig, ProviderConfig
+        from boru.core import BoruCore
+        from boru.types import TaskEnvelope
+
+        engine = BoruCore(CoreConfig(providers=(ProviderConfig(kind="mock"),)))
+        try:
+            engine.submit(TaskEnvelope(task_id="t1", goal="g"))
+            engine.dispatch_next()
+            self.assertIn("t1", engine.budgets._reserved)
+            engine.review("t1", accept=True)
+            self.assertNotIn("t1", engine.budgets._reserved)
+        finally:
+            engine.close()
 
 
 if __name__ == "__main__":

@@ -620,6 +620,8 @@ class BoruCore:
         target = TaskState.DONE if accept else TaskState.FAILED
         self.store.transition(task_id, state.value, target.value, reason, self._clock())
         self._queue.pop(task_id, None)
+        # no further usage is recorded for this task: its reservation ends here
+        self.budgets.release(task_id)
         return target.value
 
     def cancel(self, task_id: str) -> str:
@@ -630,6 +632,7 @@ class BoruCore:
         if state is TaskState.CANCELLED:
             return state.value
         self._queue.pop(task_id, None)
+        self.budgets.release(task_id)
         if state in (TaskState.QUEUED, TaskState.HOLD, TaskState.REVIEW) and can_transition(state, TaskState.CANCELLED):
             self.store.transition(task_id, state.value, TaskState.CANCELLED.value, REASONS["CANCELLED"], self._clock())
             return TaskState.CANCELLED.value
