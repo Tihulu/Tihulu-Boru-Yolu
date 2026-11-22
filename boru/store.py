@@ -21,6 +21,9 @@ from .errors import ConfigurationError, DuplicateTask, StoreError
 
 SCHEMA_VERSION = 1
 STATE_FILENAME = "boru-state.sqlite"
+#: The event history is a bounded window: the task's *state* is authoritative,
+#: and a long-lived process cycling a task must not grow the table without end.
+MAX_EVENTS_PER_TASK = 1024
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -240,7 +243,18 @@ class TaskStore:
             "INSERT INTO events(task_id, at, from_state, to_state, reason) VALUES(?,?,?,?,?)",
             (task_id, at, expected, target, reason),
         )
+        self._prune_events(task_id)
         return expected
+
+    def _prune_events(self, task_id: str) -> None:
+        """Keep the newest bounded window of one task's transitions."""
+        count = int(self._db.execute(
+            "SELECT COUNT(*) FROM events WHERE task_id = ?", (task_id,)).fetchone()[0])
+        if count > MAX_EVENTS_PER_TASK:
+            self._db.execute(
+                "DELETE FROM events WHERE task_id = ? AND seq IN ("
+                " SELECT seq FROM events WHERE task_id = ? ORDER BY seq LIMIT ?)",
+                (task_id, task_id, count - MAX_EVENTS_PER_TASK))
 
     def save_result(self, task_id: str, attempt_id: str, result: Any) -> None:
         with self._guard:
@@ -272,8 +286,9 @@ class TaskStore:
             return None
         data = dict(row)
         data["events"] = [dict(r) for r in self._db.execute(
-            "SELECT task_id, at, from_state, to_state, reason FROM events WHERE task_id = ? ORDER BY seq", (task_id,)
-        )]
+            "SELECT task_id, at, from_state, to_state, reason FROM events WHERE task_id = ?"
+            " ORDER BY seq DESC LIMIT ?", (task_id, MAX_EVENTS_PER_TASK)
+        )][::-1]
         data["attempts"] = [json.loads(r["result"]) for r in self._db.execute(
             "SELECT task_id, attempt_id, result FROM attempts WHERE task_id = ? ORDER BY attempt_id", (task_id,)
         )]

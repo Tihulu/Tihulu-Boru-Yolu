@@ -11,7 +11,7 @@ from boru.config import ProviderConfig, CoreConfig
 from boru.core import BoruCore
 from boru.errors import ConfigurationError, DuplicateTask, StoreError
 from boru.state import TaskState
-from boru.store import TaskStore
+from boru.store import MAX_EVENTS_PER_TASK, TaskStore
 from boru.types import TaskEnvelope
 
 STAMP = "2026-01-01T00:00:00Z"
@@ -232,6 +232,42 @@ class ResultShapeTests(unittest.TestCase):
             self.assertIsNone(engine.result_text("t1"))
         finally:
             engine.close()
+
+
+class EventWindowTests(unittest.TestCase):
+    """One task's event history is a bounded window; the state is authoritative."""
+
+    def test_the_event_history_stays_bounded(self):
+        store = TaskStore()
+        try:
+            envelope = TaskEnvelope(task_id="t1", goal="g")
+            store.submit("t1", "k1", envelope.to_dict(), "QUEUED", "2026-01-01T00:00:00Z")
+            for index in range(MAX_EVENTS_PER_TASK + 64):
+                store._db.execute(
+                    "INSERT INTO events(task_id, at, from_state, to_state, reason)"
+                    " VALUES(?,?,?,?,?)",
+                    ("t1", "2026-01-01T00:00:00Z", "QUEUED", "RUNNING", "r" + str(index)))
+            store._prune_events("t1")
+            row = store.get("t1")
+            self.assertLessEqual(len(row["events"]), MAX_EVENTS_PER_TASK)
+            # the newest events are the ones kept
+            self.assertIn("r" + str(MAX_EVENTS_PER_TASK + 63), row["events"][-1]["reason"])
+        finally:
+            store.close()
+
+    def test_a_read_stays_bounded_even_for_an_older_row(self):
+        store = TaskStore()
+        try:
+            envelope = TaskEnvelope(task_id="t1", goal="g")
+            store.submit("t1", "k1", envelope.to_dict(), "QUEUED", "2026-01-01T00:00:00Z")
+            for index in range(MAX_EVENTS_PER_TASK * 2):
+                store._db.execute(
+                    "INSERT INTO events(task_id, at, from_state, to_state, reason)"
+                    " VALUES(?,?,?,?,?)",
+                    ("t1", "2026-01-01T00:00:00Z", "QUEUED", "RUNNING", "r" + str(index)))
+            self.assertLessEqual(len(store.get("t1")["events"]), MAX_EVENTS_PER_TASK)
+        finally:
+            store.close()
 
 
 if __name__ == "__main__":

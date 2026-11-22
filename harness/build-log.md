@@ -811,3 +811,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Defect found and fixed (confirmed by execution):** `TaskEnvelope.validate()` did not bound its `payload` at all, so a 20 MB `messages` entry passed the typed contract and reached `TaskStore.submit`. The result contract had been bounded recursively since F10; the request contract had not, and the asymmetry was the defect. `TaskEnvelope` now validates its payload: only a bounded message list, bounded roles and content, no other keys.
 - **Also verified in this pass:** `RejectionLedger.recent` is bounded (1..1024) and refuses a negative limit; `BoruCore.submit` calls `assert_valid()` before the durable store, so the production path is now protected at the contract boundary rather than at the storage boundary.
 - **Tests observed:** `unittest discover -s tests` **669 tests OK (1 skipped)**; the new tests cover seven hostile payload shapes, three well-formed ones and the core submission path. `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — second-pass self-review: a task's event history is a bounded window (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed (confirmed by execution):** the durable `events` table had no per-task bound and `_get` loaded every event for a task. `HOLD`/`CLASSIFIED` cycles are legal and repeatable, so a long-lived process cycling one task grew that table and every read of it without end (30k events = 3.3 MB of JSON per task read, and the dashboard reads every task).
+- **Fix, in the repository's established pattern:** the newest bounded window of one task's transitions is kept (the task's *state* is authoritative, not its history), and a read is bounded even for rows written by an older build.
+- **Second-pass findings so far:** a blocking special file could hang the worker (fixed with `O_NONBLOCK`), an envelope payload was unbounded (fixed with a bounded message contract), and now the event window. Reading alone did not surface any of the three; each was found by executing an input the author had not imagined.
+- **Tests observed:** `unittest discover -s tests` **671 tests OK (1 skipped)**; `scripts/check_project.py` PASS. MOCK/STATIC only.
