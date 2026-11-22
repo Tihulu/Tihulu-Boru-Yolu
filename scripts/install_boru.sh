@@ -21,6 +21,18 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# The launcher records these paths, so they are absolute: a relative one would
+# resolve against whatever directory the owner runs the command from later.
+abspath() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$PWD/$1" ;;
+  esac
+}
+TARGET=$(abspath "$TARGET")
+STATE_DIR=$(abspath "$STATE_DIR")
+BIN_DIR=$(abspath "$BIN_DIR")
+
 echo "source:       $SOURCE_DIR"
 echo "install dir:  $TARGET"
 echo "state dir:    $STATE_DIR"
@@ -33,15 +45,24 @@ fi
 
 mkdir -p "$TARGET" "$STATE_DIR" "$BIN_DIR"
 chmod 700 "$STATE_DIR"
+# Re-installing replaces Boru's own tree instead of merging into it, so a
+# module removed upstream cannot survive here as a stale import.
+if [ -e "$TARGET/boru" ]; then
+  rm -rf -- "$TARGET/boru"
+fi
 cp -R "$SOURCE_DIR/boru" "$TARGET/boru"
 cp "$SOURCE_DIR/examples/core.example.json" "$TARGET/core.example.json"
 cp "$SOURCE_DIR/docs/BORU_CORE.md" "$TARGET/BORU_CORE.md"
 cp "$SOURCE_DIR/LICENSE" "$TARGET/LICENSE" 2>/dev/null || true
 
-cat > "$BIN_DIR/boru" <<'LAUNCHER'
+cat > "$BIN_DIR/boru" <<LAUNCHER
 #!/bin/sh
 # Boru Core launcher (user-space, no service, no autostart).
-exec python3 -m boru "$@"
+# The install directory is on PYTHONPATH so the command works from any
+# working directory; nothing else is added to the environment.
+PYTHONPATH="$TARGET\${PYTHONPATH:+:\$PYTHONPATH}"
+export PYTHONPATH
+exec python3 -m boru "\$@"
 LAUNCHER
 chmod 755 "$BIN_DIR/boru"
 

@@ -89,5 +89,74 @@ def sys_executable():
     return sys.executable
 
 
+class LauncherAndSafetyTests(unittest.TestCase):
+    """The installed launcher works anywhere; the uninstaller refuses harm."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="boru-install2-")
+        os.chmod(self.root, 0o700)
+        self.paths = {
+            "target": os.path.join(self.root, "share"),
+            "state": os.path.join(self.root, "state"),
+            "bin": os.path.join(self.root, "bin"),
+        }
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def run_script(self, script, args):
+        return subprocess.run(["/bin/sh", script] + args, capture_output=True, text=True, timeout=120)
+
+    def install(self, *relative_to_root):
+        target = os.path.join(self.root, *relative_to_root) if relative_to_root else self.paths["target"]
+        result = self.run_script(INSTALL, ["--target", target, "--state-dir", self.paths["state"],
+                                           "--bin-dir", self.paths["bin"]])
+        self.assertEqual(0, result.returncode, result.stderr)
+        return target
+
+    def test_launcher_works_from_an_unrelated_directory(self):
+        self.install()
+        launcher = os.path.join(self.paths["bin"], "boru")
+        # a relative --target must not bake a relative PYTHONPATH into the launcher
+        with open(launcher, "r", encoding="utf-8") as handle:
+            body = handle.read()
+        self.assertIn('PYTHONPATH="{}'.format(self.paths["target"]), body)
+        run = subprocess.run([launcher, "--state-dir", self.paths["state"], "resources"],
+                             cwd=self.root, capture_output=True, text=True, timeout=120)
+        self.assertEqual(0, run.returncode, run.stderr)
+        self.assertIn('"BALANCED"', run.stdout)
+
+    def test_reinstall_replaces_the_tree(self):
+        self.install()
+        stale = os.path.join(self.paths["target"], "boru", "stale_module.py")
+        with open(stale, "w", encoding="utf-8") as handle:
+            handle.write("# a module this repository no longer has\n")
+        self.install()
+        self.assertFalse(os.path.exists(stale), "a re-install must not leave a stale module")
+
+    def test_uninstall_refuses_dangerous_and_relative_targets(self):
+        self.install()
+        for bad in ("/", os.path.expanduser("~"), "relative/path", "/etc"):
+            result = self.run_script(UNINSTALL, ["--target", bad, "--state-dir", self.paths["state"],
+                                                 "--bin-dir", self.paths["bin"]])
+            self.assertEqual(2, result.returncode, bad)
+            self.assertIn("refusing", result.stderr + result.stdout)
+        # nothing was removed
+        self.assertTrue(os.path.exists(self.paths["target"]))
+        self.assertTrue(os.path.exists(self.paths["state"]))
+
+    def test_uninstall_removes_only_the_boru_launcher(self):
+        self.install()
+        sibling = os.path.join(self.paths["bin"], "other-command")
+        with open(sibling, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\n")
+        self.run_script(UNINSTALL, ["--target", self.paths["target"], "--state-dir", self.paths["state"],
+                                    "--bin-dir", self.paths["bin"]])
+        self.assertFalse(os.path.exists(self.paths["target"]))
+        self.assertFalse(os.path.exists(self.paths["state"]))
+        self.assertFalse(os.path.exists(os.path.join(self.paths["bin"], "boru")))
+        self.assertTrue(os.path.isfile(sibling), "an unrelated command must survive")
+
+
 if __name__ == "__main__":
     unittest.main()

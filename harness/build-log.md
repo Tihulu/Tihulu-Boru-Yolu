@@ -770,3 +770,12 @@ Never mark an entire phase PASS because one unit test passed. Do not overwrite p
 - **Self-review of `boru/connect.py` and the scope helper:** the owner-run OAuth/PKCE flow accepted `--timeout` values of any size, so one typo could make a command wait for days (a bound that is not a bound), and the scope list was bounded per value but not in count, so an unbounded `--scope` repetition would turn the authorization URL into a weapon-sized request. The authorization wait is now bounded 1..3600 seconds (a typed refusal outside it) and at most 16 scopes may be requested.
 - **Everything else in this module reviewed and unchanged:** the loopback-only redirect, the single captured response, state verification, the opaque-handle-only vault write, and the honest `authenticated` state that is never reported as inference authorization.
 - **Tests observed:** `unittest discover -s tests` **654 tests OK**; `scripts/check_project.py` PASS. MOCK/STATIC only.
+
+---
+
+### 2026-11-22 — install/uninstall self-review: the launcher works anywhere and the uninstaller refuses harm (commit on `p1/boru-core-vertical-slice`)
+
+- **Defect found and fixed (installer):** the generated launcher ran `exec python3 -m boru` with no `PYTHONPATH`, so the installed command only worked when the owner's working directory happened to contain the copied `boru/` tree. The launcher now puts the install directory on `PYTHONPATH`, and the installer resolves `--target`/`--state-dir`/`--bin-dir` to absolute paths first, so a relative flag cannot bake a relative path into the launcher.
+- **Defect found and fixed (installer):** a re-install merged into the existing tree, so a module removed upstream could survive as a stale import. The installer now replaces Boru's own tree (Boru-owned paths only) before copying.
+- **Safety hardening (uninstaller):** a destructive `rm -rf` now refuses a target or state directory that is empty, relative, a root, a home path or a system directory (`/`, `$HOME`, `/bin`, `/etc`, ...) with exit 2 and nothing removed; only Boru-owned absolute paths are considered, and an unrelated command in the same `--bin-dir` survives.
+- **Tests observed:** `unittest discover -s tests` **663 tests OK** (4 new tests: launcher from an unrelated directory with an absolute path, re-install replacement, dangerous-target refusals, unrelated-command survival); `scripts/check_project.py` PASS. MOCK/STATIC only.
