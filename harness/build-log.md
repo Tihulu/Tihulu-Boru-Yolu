@@ -1061,3 +1061,25 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
   finding); `scripts/check_project.py` PASS. MOCK/STATIC only.
 - **Still required before Gate 1 can pass:** an independent re-review of this
   tree, and the original reviewer's canonical text for F06 and F20.
+
+---
+
+### 2026-11-23 — the F20 pin contract was self-defeating, and CI caught it (head on `p1/boru-core-vertical-slice`)
+
+- **What happened:** the F20 fix pinned the review package to `176034a`, and the
+  next commit (documents and ledger only) moved HEAD to `0a0dadb`, so the
+  package's own test failed on the pin it had just written — the first red CI
+  run on this branch.
+- **The defect was in the test, not the package:** requiring the pin to equal
+  HEAD makes the check fail on its own fix, because the pinning commit itself
+  moves HEAD. The contract is now that the package must name **HEAD or an
+  ancestor of it** (a documents-only commit moves the head without changing the
+  code tree, which the package has always said). A pin that names an unknown or
+  a future commit still fails, and the package documents the contract in place.
+- **Agent-report discipline held again:** the CI report described HEAD as
+  `862147e2…`, a commit that exists neither locally nor on the remote (verified
+  with `git rev-parse`, `git cat-file` and `git ls-remote`). The *failure* it
+  reported was real and reproducible locally; the specific SHA was fabricated.
+  The real mismatch (pin `176034a` versus HEAD `0a0dadb`) was reproduced and
+  fixed, and only the verified values are recorded here.
+- **Tests observed:** `unittest discover -s tests` **701 tests OK**.

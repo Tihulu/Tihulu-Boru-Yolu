@@ -6,6 +6,9 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 - Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 - Branch under review: `p1/boru-core-vertical-slice`
 - Code head under review: `176034a1039dceef166e47f40a3cd10e64e36dec`
+  (the head this package describes; a later documents-only commit moves the head
+  without changing the code tree — `tests/test_rereview_regressions.py` asserts
+  the pin is HEAD or an ancestor of it)
 - Pull request: https://github.com/Tihulu/Tihulu-Boru-Yolu/pull/14 (draft, not merged)
 - CI (this head, success): https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/45048886502
 - Issue tracker: https://github.com/Tihulu/Tihulu-Boru-Yolu/issues
