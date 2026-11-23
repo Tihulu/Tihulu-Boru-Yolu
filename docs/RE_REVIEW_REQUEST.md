@@ -1,56 +1,54 @@
-# Re-review request — Gate 1 (previous verdict: FAIL, findings F01–F22)
-
-Ready-to-send request for the independent reviewer of the first Gate 1 review.
-The repository never records a verdict the reviewer has not given: this file
-prepares the ask, it does not claim a PASS.
-
-Re-review request — TIHULU Boru Yolu, Gate 1 (previous verdict: FAIL, findings F01-F22)
+# Re-review request — TIHULU Boru Yolu, Gate 1 (second re-review)
 
 Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 Branch: `p1/boru-core-vertical-slice` (draft PR #14)
-Code head under review: `1617709ce6c7fbd42a6879dd997d124ef22af052` (branch `p1/boru-core-vertical-slice`, pushed;
-CI on this head: https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/45059854129)
+Code head under review: `HEAD` (branch head at the time you read this)
+CI: the Actions run for this head is green (see the PR's checks).
 
-What changed since your review of cc73940:
-- Every finding F01-F22 is remediated; the per-finding table with the closing
-  commit is in docs/REVIEW_PACKAGE.md section 3-A.
-- Your 20 regression probes are now checked in as
-  tests/test_review_regressions.py and run inside the suite: 20/20 pass
-  (only the PolicyViolation import was added; assertions are unchanged).
+**What changed since your re-review of `1617709`:**
 
-Please run, from a clone of the branch (no host install, no network, no
-credentials, no sandbox runtime):
-  python3 scripts/check_project.py
-  python3 -m unittest discover -s tests      # 701 tests ... OK
-  PYTHONPATH=. python3 tests/test_review_regressions.py
-  python3 scripts/evidence.py                # exit 0
-  python3 -m boru doctor --state-dir local-state
-  python3 -m boru demo
+Your report returned FAIL/DO NOT APPROVE with findings F03, F06, F07, F12, F14,
+F15, F17, F20 and five new findings N01–N05. Each was first reproduced against
+the tree, then remediated, then closed with a named negative regression test in
+`tests/test_rereview_regressions.py` (20 tests, two or more per finding):
 
-Review focus (unchanged scope in docs/REVIEW_PACKAGE.md):
-1. The broker/executor chain: signed receipts, opaque resource tokens,
-   alias/level/field consent binding, no-follow alias traversal, ledger
-   sanitization, bounded service concurrency.
-2. The connectors: single validated reference for check and path construction,
-   account-identity enforcement in call(), dispatch-body validation before
-   transport, response and error-body caps, workflow allowlist coverage.
-3. Core dispatch: evidence-class provenance (a provider claim cannot upgrade
-   it), boundary classification derived from the actual payload, results
-   persisted only after verification, recursive bounded typed payloads.
-4. Polling sync: bounded, never-forgetting seen registry.
+| # | Remediation |
+| --- | --- |
+| F03 | The alias is required and matched in both consent stores; a legacy alias-less row denies rather than matching |
+| F06 | The permitted scopes come from the authenticated registry record; a request that declares more or less than it holds is refused |
+| F07 | The cached connector identity is a fingerprint of (provider, token); every externally connected path verifies identity and counts its usage |
+| F12 | Schema version 3: grant_id globally unique; a version-2 store migrates and refuses an ambiguous history; a revoked id is a tombstone |
+| F14 | Capacity is acquired before a thread spawns; an excess connection is refused on a drained request through the instance method |
+| F15 | The GitHub exchange caps its HTTP error body, as the account request already did |
+| F17 | A used nonce outlives its grant; an expired grant's nonce is dropped; past the bound the store rolls the insert back and refuses rather than evicting a live nonce |
+| N01 | Grant timestamps must be finite, positive and ordered |
+| N02 | Workflow discovery verifies identity and charges the grant |
+| N03 | The worker returns exactly the fields the receipt names |
+| N04 | A dispatch with inputs and no owner-supplied declaration is refused |
+| N05 | A restored polling registry is bounded as it is loaded |
+| F20 | The review package names the head it describes (HEAD or an ancestor) |
 
-Please report with the same findings template: number, severity, component,
-finding, reproducing test/input, suggested fix. State explicitly which of
-F01-F22 you consider closed, which remain open, and any new findings.
+**Please run, from a clone of the branch:**
+```
+python3 scripts/check_project.py
+python3 -m unittest discover -s tests      # 701 tests ... OK
+PYTHONPATH=. python3 tests/test_review_regressions.py
+PYTHONPATH=. python3 tests/test_rereview_regressions.py
+python3 scripts/evidence.py                # exit 0
+python3 -m boru doctor --state-dir local-state
+python3 -m boru demo
+```
 
-Two findings need the canonical text again: **F06** and **F20** were recorded in
-your report but the working notes carry no individually captured description,
-so this repository does not claim them closed (see
-docs/REVIEW_FINDINGS.md). Please re-issue their exact text and the reproducing
-input, and this head will be tested and remediated against it.
+**Please state:** which of F03/F06/F07/F12/F14/F15/F17/N01–N05 you now consider
+closed, which remain open, and any new findings — with the same findings
+template (number, severity, component, finding, reproducing test/input,
+suggested fix).
 
-Known remaining HOLDs (not to be "fixed" by code): host-level process
+**Still outstanding from the earlier review:** the canonical text and
+reproducing input for **F06** and **F20** as originally issued. This repository
+does not claim those two closed on its own authority, and this request asks for
+the exact text again.
+
+**Known remaining HOLDs (not to be "fixed" by code):** host-level process
 authentication, OS confinement, live provider/GitHub behaviour and
-clean-machine acceptance. The repository itself is pushed and green in CI on
-this head: 701 tests, the reviewer's 20 probes, the static manifest, the
-evidence report, the install/uninstall round trip and `boru doctor`.
+clean-machine acceptance.

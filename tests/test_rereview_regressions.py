@@ -440,7 +440,10 @@ class F20Tests(unittest.TestCase):
         match = re.search(r"head under review: `([0-9a-f]{7,40})", package)
         self.assertIsNotNone(match, "the package names no head")
         pinned = match.group(1)
-        head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+        if head.returncode != 0:
+            self.skipTest("no git history is available in this tree")
+        head = head.stdout.strip()
         resolved = subprocess.run(["git", "rev-parse", "--verify", pinned + "^{commit}"],
                                   capture_output=True, text=True)
         self.assertEqual(0, resolved.returncode,

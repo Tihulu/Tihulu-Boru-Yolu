@@ -9,7 +9,11 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     steps:
+      # Full history: the review-package pin is checked against HEAD and its
+      # ancestors, and a depth-1 checkout makes every other pin unresolvable.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

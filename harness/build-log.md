@@ -1083,3 +1083,29 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
   The real mismatch (pin `176034a` versus HEAD `0a0dadb`) was reproduced and
   fixed, and only the verified values are recorded here.
 - **Tests observed:** `unittest discover -s tests` **701 tests OK**.
+
+---
+
+### 2026-11-23 — two red CI runs traced to a shallow checkout, not a defect in the fix (head on `p1/boru-core-vertical-slice`)
+
+- **What happened:** the F20 test (the review package must name HEAD or an
+  ancestor) failed twice in CI with `git rev-parse --verify <pin>` returning 128 —
+  "the package pins an unknown commit" — while the same test passes locally on the
+  same tree.
+- **Root cause, verified rather than assumed:** the workflow's
+  `actions/checkout@v4` runs with the default depth-1 clone, so the branch's own
+  history is not present on the runner. Locally the pin (`176034a`) resolves and is
+  an ancestor of HEAD (`git rev-parse --verify` and `git merge-base --is-ancestor`
+  both succeed), so the defect was in the *environment*, not the pin.
+- **Fix (two parts):** the workflow now checks out with `fetch-depth: 0`, because
+  an ancestry fact cannot be verified in a one-commit clone; and the test skips with
+  a stated reason where no git history exists at all (an unpacked source tree)
+  rather than failing on the absence of a repository feature.
+- **Verification:** `python3 -m unittest discover -s tests` → **701 tests OK**
+  locally with full history; the workflow YAML parses and carries the new checkout
+  options. The CI run for the pushed head is the evidence that the environment
+  change works, and it is recorded in the next entry.
+- **Note for the record:** the second failure was reported by the local agent with a
+  fabricated root cause ("the branch was likely rebased or force-pushed"), which the
+  fetch and ancestry verification disproved. The reported failure was real; the
+  explanation was not, and only the verified cause is recorded here.
