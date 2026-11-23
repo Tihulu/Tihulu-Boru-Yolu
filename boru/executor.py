@@ -99,9 +99,13 @@ class LocalExecutor:
             raise PolicyViolation("requested fields are not produced for this operation")
         root = os.open(self.aliases.aliases[alias], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
-            return self._run(receipt.operation, alias, root, receipt.target, fields)
+            acquisition = self._run(receipt.operation, alias, root, receipt.target, fields)
         finally:
             os.close(root)
+        # The worker returns exactly the fields this acquisition asked for: a
+        # receipt naming one field never yields the others beside it.
+        return Acquisition(acquisition.operation, acquisition.resource_alias,
+                           {name: acquisition.fields[name] for name in fields})
 
     def _run(self, operation: str, alias: str, root: int, target: str,
              fields: Tuple[str, ...]) -> Acquisition:

@@ -145,12 +145,16 @@ class ProviderScopeTests(unittest.TestCase):
     def test_dispatch_body_validates_against_an_owner_declaration(self):
         from boru.connectors.scope import check_dispatch_body
 
-        subject = grant(operations=("dispatch_workflow",),
-                         capabilities=(Capability.ACTIONS_DISPATCH,),
-                         workflow_ids=("ci.yml",))
+        import json
+
         declared = {"target": {"type": "string", "required": True}}
+        subject = grant(operations=("dispatch_workflow",),
+                        capabilities=(Capability.ACTIONS_DISPATCH,),
+                        workflow_ids=("ci.yml",),
+                        input_declaration_json=json.dumps(declared))
         # a matching body passes; a wrong type or an unknown key is refused
-        check_dispatch_body(subject, {"ref": "main", "inputs": {"target": "staging"}}, declared)
+        # the owner-supplied declaration travels with the grant
+        check_dispatch_body(subject, {"ref": "main", "inputs": {"target": "staging"}})
         with self.assertRaises(ConnectorDenied):
             check_dispatch_body(subject, {"ref": "main", "inputs": {"target": 5}}, declared)
         with self.assertRaises(ConnectorDenied):
@@ -162,6 +166,14 @@ class ProviderScopeTests(unittest.TestCase):
             check_dispatch_body(subject, {"ref": "main", "inputs": {"target": "staging"},
                                           "declared": {"target": {"type": "string"}}},
                                 {"target": {"type": "string", "required": True}})
+        # inputs with no declaration anywhere are refused, not shape-checked
+        undeclared = grant(operations=("dispatch_workflow",),
+                            capabilities=(Capability.ACTIONS_DISPATCH,),
+                            workflow_ids=("ci.yml",))
+        with self.assertRaises(ConnectorDenied):
+            check_dispatch_body(undeclared, {"ref": "main", "inputs": {"target": "staging"}})
+        # and an empty input set still needs no declaration
+        check_dispatch_body(undeclared, {"ref": "main", "inputs": {}})
 
     def test_owner_declared_schema_travels_with_the_grant(self):
         import json
@@ -172,6 +184,7 @@ class ProviderScopeTests(unittest.TestCase):
         subject = grant(operations=("dispatch_workflow",),
                         capabilities=(Capability.ACTIONS_DISPATCH,),
                         workflow_ids=("ci.yml",), input_declaration_json=schema)
+        # the owner-supplied declaration travels with the grant
         check_dispatch_body(subject, {"ref": "main", "inputs": {"target": "staging"}})
         with self.assertRaises(ConnectorDenied):
             check_dispatch_body(subject, {"ref": "main", "inputs": {"target": 7}})

@@ -127,8 +127,11 @@ class Grant:
                 errors.append(name + " must be 1..10000")
         for name in ("issued_at", "expires_at"):
             value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-                errors.append(name + " must be a positive timestamp")
+            # A nonfinite timestamp makes every expiry comparison false, so the
+            # grant would never expire: refuse it at construction.
+            if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                    or not math.isfinite(value) or value <= 0:
+                errors.append(name + " must be a finite positive timestamp")
         if isinstance(self.issued_at, (int, float)) and isinstance(self.expires_at, (int, float)) \
                 and self.expires_at <= self.issued_at:
             errors.append("expires_at must follow issued_at")

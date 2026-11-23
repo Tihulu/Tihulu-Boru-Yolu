@@ -242,10 +242,12 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
     never widen it) and its ``inputs`` must be a bounded object of bounded
     values, so no unbounded or structured payload reaches the endpoint.
 
-    When the owner supplies the workflow's declared input schema, the inputs
-    are validated against it too; a declaration-less dispatch keeps the
-    bounded shape check only.  The declaration is owner-provided — never read
-    from the request payload — so a caller cannot grant itself a schema.
+    The inputs are validated against the workflow's **declared input schema**,
+    which travels with the grant (``Grant.input_declaration_json``) or is passed
+    by the owner explicitly.  A non-empty input set without a declaration is
+    refused: an input is a value the workflow reads, and shape alone cannot
+    say which values it accepts.  The declaration is owner-provided — never
+    read from the request payload — so a caller cannot grant itself a schema.
     """
     if body is None:
         raise ConnectorDenied("body_required")
@@ -272,6 +274,11 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
     if declared is None and hasattr(grant, "declared_inputs"):
         # The owner-declared schema travels with the grant, never with the body.
         declared = grant.declared_inputs()
+    if inputs and declared is None:
+        # Without the owner-supplied declaration there is no schema to validate
+        # against, so a non-empty input set is refused rather than accepted on
+        # shape alone: an input is a value the workflow will read.
+        raise ConnectorDenied("inputs_undeclared")
     if declared is not None:
         from .workflows import validate_dispatch_inputs
 

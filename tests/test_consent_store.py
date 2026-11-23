@@ -25,9 +25,9 @@ class PersistentConsentTests(unittest.TestCase):
             store.grant(grant_id="g1", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
                        level="L2", expires_at=time.time() + 60, nonce="n1")
             self.assertTrue(store.check(grant_id="g1", recipient="cloud", task_id="t1",
-                                        field_name="excerpt", nonce="n1"))
+                                        field_name="excerpt", alias="demo", nonce="n1"))
             self.assertFalse(store.check(grant_id="g1", recipient="cloud", task_id="t1",
-                                         field_name="excerpt", nonce="n1"))
+                                         field_name="excerpt", alias="demo", nonce="n1"))
 
     def test_grants_survive_restart_and_revocation_sticks(self):
         with ConsentStore(self.path) as store:
@@ -35,13 +35,13 @@ class PersistentConsentTests(unittest.TestCase):
                        level="L2", expires_at=time.time() + 600, nonce="n1")
         with ConsentStore(self.path) as store:
             self.assertTrue(store.check(grant_id="g1", recipient="cloud", task_id="t1",
-                                        field_name="excerpt", nonce="n1"))
+                                        field_name="excerpt", alias="demo", nonce="n1"))
             store.revoke("g1")
             self.assertFalse(store.check(grant_id="g1", recipient="cloud", task_id="t1",
-                                         field_name="excerpt", nonce="n1"))
+                                         field_name="excerpt", alias="demo", nonce="n1"))
         with ConsentStore(self.path) as store:
             self.assertFalse(store.check(grant_id="g1", recipient="cloud", task_id="t1",
-                                         field_name="excerpt", nonce="n1"))
+                                         field_name="excerpt", alias="demo", nonce="n1"))
 
     def test_expiry_is_enforced_after_restart(self):
         with ConsentStore(self.path) as store:
@@ -49,7 +49,7 @@ class PersistentConsentTests(unittest.TestCase):
                        level="L2", expires_at=time.time() + 1, nonce="n2")
         with ConsentStore(self.path) as store:
             self.assertFalse(store.check(grant_id="g1" "g2".replace("g1", ""), recipient="cloud",
-                                         task_id="t1", field_name="excerpt", nonce="n2",
+                                         task_id="t1", field_name="excerpt", alias="demo", nonce="n2",
                                          now=time.time() + 10))
 
     def test_binding_is_recipient_task_and_field(self):
@@ -57,11 +57,11 @@ class PersistentConsentTests(unittest.TestCase):
             store.grant(grant_id="g3", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
                        level="L2", expires_at=time.time() + 60, nonce="n3")
             self.assertFalse(store.check(grant_id="g3", recipient="other", task_id="t1",
-                                         field_name="excerpt", nonce="n3"))
+                                         field_name="excerpt", alias="demo", nonce="n3"))
             self.assertFalse(store.check(grant_id="g3", recipient="cloud", task_id="t2",
-                                         field_name="excerpt", nonce="n3"))
+                                         field_name="excerpt", alias="demo", nonce="n3"))
             self.assertFalse(store.check(grant_id="g3", recipient="cloud", task_id="t1",
-                                         field_name="status", nonce="n3"))
+                                         field_name="status", alias="demo", nonce="n3"))
 
     def test_active_listing_excludes_expired_and_revoked(self):
         with ConsentStore(self.path) as store:
@@ -112,7 +112,7 @@ class PersistentConsentTests(unittest.TestCase):
             store.grant(grant_id="m", recipient="cloud", task_id="t1", field_name="excerpt",
                        alias="demo", level="L2", expires_at=time.time() + 60, nonce="n")
             self.assertTrue(store.check(grant_id="m", recipient="cloud", task_id="t1",
-                                        field_name="excerpt", nonce="n"))
+                                        field_name="excerpt", alias="demo", nonce="n"))
 
     def test_unknown_schema_version_rejected(self):
         import sqlite3
@@ -166,17 +166,28 @@ class PersistentConsentTests(unittest.TestCase):
                                         field_name="excerpt", alias="/home/EXAMPLE/data",
                                         nonce="np1"))
 
-    def test_used_nonces_stay_bounded(self):
+    def test_used_nonces_fail_closed_rather_than_evict_a_live_one(self):
+        # A used nonce outlives the grant that carried it: past the bound the
+        # store refuses new work instead of evicting a nonce whose grant is
+        # still live, so a live grant is never replayable.
         with ConsentStore(self.path) as store:
             for index in range(MAX_NONCES + 32):
                 store.grant(grant_id="b{}".format(index), recipient="cloud",
                             task_id="t1", field_name="excerpt", alias="demo", level="L0",
                             expires_at=time.time() + 60, nonce="nb{}".format(index))
-                self.assertTrue(store.check(grant_id="b{}".format(index), recipient="cloud",
-                                            task_id="t1", field_name="excerpt", alias="demo",
-                                            nonce="nb{}".format(index)))
+                allowed = store.check(grant_id="b{}".format(index), recipient="cloud",
+                                      task_id="t1", field_name="excerpt", alias="demo",
+                                      nonce="nb{}".format(index))
+                if index < MAX_NONCES:
+                    self.assertTrue(allowed, index)
+                else:
+                    self.assertFalse(allowed, index)
             stored = int(store._db.execute("SELECT COUNT(*) FROM used_nonces").fetchone()[0])
             self.assertLessEqual(stored, MAX_NONCES)
+            # and the first grant is still replay-protected: its nonce was not
+            # evicted to make room for the refused ones
+            self.assertFalse(store.check(grant_id="b0", recipient="cloud", task_id="t1",
+                                         field_name="excerpt", alias="demo", nonce="nb0"))
 
 
 if __name__ == "__main__":

@@ -21,7 +21,8 @@ from typing import Any, Dict, List, Optional
 from .audit import safe_identifier
 from .errors import ConfigurationError
 
-SCHEMA_VERSION = 2
+#: 3 adds global grant-id uniqueness (F12) and the alias binding (F03).
+SCHEMA_VERSION = 3
 DEFAULT_TTL_SECONDS = 900.0
 #: A declared resource alias may be a long owner-declared path.
 MAX_ALIAS_LENGTH = 1024
@@ -102,11 +103,13 @@ class ConsentStore:
                                    check_same_thread=not thread_safe)
         self._db.row_factory = sqlite3.Row
         version = self._db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, SCHEMA_VERSION):
+        if version not in (0, 2, SCHEMA_VERSION):
             raise ConfigurationError("unsupported consent schema version")
         if version == 0:
             self._db.executescript(_SCHEMA)
             self._db.execute("PRAGMA user_version = {}".format(SCHEMA_VERSION))
+        elif version == 2:
+            self._migrate_v2_to_v3()
         else:
             self._verify_schema()
 
@@ -135,6 +138,23 @@ class ConsentStore:
                 raise ConfigurationError("consent file must not be hard-linked")
         return candidate
 
+    def _migrate_v2_to_v3(self) -> None:
+        """Move a version-2 store to global grant-id uniqueness.
+
+        A history that already re-uses a grant id cannot be migrated safely:
+        the owner is told which id collides rather than one row being silently
+        preferred over another.
+        """
+        duplicates = self._db.execute(
+            "SELECT grant_id FROM grants GROUP BY grant_id HAVING COUNT(*) > 1").fetchall()
+        if duplicates:
+            raise ConfigurationError(
+                "consent store re-uses a grant id across grants: "
+                + ", ".join(sorted(row[0] for row in duplicates))
+                + "; resolve it before upgrading")
+        self._db.executescript(_MIGRATION_SQL)
+        self._db.execute("PRAGMA user_version = {}".format(SCHEMA_VERSION))
+
     def _verify_schema(self) -> None:
         present = {row[0] for row in self._db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -144,20 +164,21 @@ class ConsentStore:
 
     # -- writes ---------------------------------------------------------------
     def grant(self, *, grant_id: str, recipient: str, task_id: str, field_name: str,
-              alias: Optional[str] = None, level: str, expires_at: float, nonce: str,
+              alias: str, level: str, expires_at: float, nonce: str,
               now: Optional[float] = None) -> None:
         """Issue one grant; an existing grant id is immutable.
 
-        ``alias`` is the owner-declared resource the grant covers; when it is
-        omitted the grant is still bound by recipient, task, field and level,
-        and the broker always presents the requested alias when one is named.
+        ``alias`` is the **owner-declared resource** the grant covers and is
+        mandatory: a grant without one is refused, because an alias-less grant
+        would authorize every resource - a wildcard the owner never granted.
         """
         for name, value, limit in (("grant_id", grant_id, 128), ("recipient", recipient, 64),
                                    ("task_id", task_id, 128), ("field_name", field_name, 64),
                                    ("nonce", nonce, 64)):
             _identifier(value, limit, name)
-        if alias is not None:
-            _binding(alias, MAX_ALIAS_LENGTH, "alias")
+        if not isinstance(alias, str) or not alias.strip():
+            raise ConsentValidationError("a grant must name its resource alias")
+        _binding(alias, MAX_ALIAS_LENGTH, "alias")
         if level not in LEVELS:
             raise ConsentValidationError("level must be L0, L1 or L2")
         stamp = time.time() if now is None else _stamp(now, "now")
@@ -185,14 +206,15 @@ class ConsentStore:
 
     # -- reads ----------------------------------------------------------------
     def check(self, *, grant_id: str, recipient: Optional[str] = None, task_id: str,
-              field_name: str, nonce: str, alias: Optional[str] = None, level: str = "L0",
+              field_name: str, nonce: str, alias: str, level: str = "L0",
               now: Optional[float] = None) -> bool:
         """Verify a request against the stored grant, including its level.
 
         ``recipient`` and ``alias`` are the caller's declaration: the broker
         passes the owner-configured consent subject and the requested resource,
         so a grant for one recipient, resource or disclosure level can never
-        serve another.  A declaration left unset is simply not constrained.
+        serve another.  Both are mandatory here: a check that names no resource
+        is refused, because it cannot be bound to one.
         """
         if level not in LEVELS:
             return False
@@ -207,11 +229,10 @@ class ConsentStore:
                 _identifier(recipient, 64, "recipient")
             except Exception:
                 return False
-        if alias is not None:
-            try:
-                _binding(alias, MAX_ALIAS_LENGTH, "alias")
-            except Exception:
-                return False
+        try:
+            _binding(alias, MAX_ALIAS_LENGTH, "alias")
+        except Exception:
+            return False
         stamp = _stamp(now, "now") if now is not None else time.time()
         with self._guard or _null():
             if recipient is None:
@@ -233,7 +254,9 @@ class ConsentStore:
                 return False
             if stamp >= row["expires_at"]:
                 return False
-            if alias is not None and row["alias"] and row["alias"] != alias:
+            # A grant whose stored alias is empty was written by an older build
+            # (or by hand): it denies, it never behaves as a wildcard.
+            if not row["alias"] or row["alias"] != alias:
                 return False
             # The granted level must cover the requested level: no downgrade
             # into a wider disclosure.
@@ -243,16 +266,26 @@ class ConsentStore:
                 "SELECT 1 FROM used_nonces WHERE nonce = ?", (nonce,)).fetchone()
             if used is not None:
                 return False
-            self._db.execute("INSERT INTO used_nonces(nonce, used_at) VALUES(?,?)", (nonce, stamp))
-            self._prune_nonces()
-            return True
+            # The nonce lives as long as the grant that carried it: pruning it
+            # earlier would make a still-live grant replayable.
+            self._db.execute("INSERT INTO used_nonces(nonce, used_at, expires_at) VALUES(?,?,?)",
+                             (nonce, stamp, row["expires_at"]))
+            return self._retain(nonce, now=stamp)
 
-    def _prune_nonces(self) -> None:
+    def _retain(self, nonce: str, *, now: float) -> bool:
+        """Drop nonces whose grant has expired; refuse when still at capacity.
+
+        A nonce outlives the grant that carried it, so an expired grant's nonce
+        can go.  A nonce whose grant is still live is never evicted: past the
+        bound the store rolls this insert back and refuses, rather than making
+        a live grant replayable.
+        """
+        self._db.execute("DELETE FROM used_nonces WHERE expires_at > 0 AND expires_at < ?", (now,))
         count = int(self._db.execute("SELECT COUNT(*) FROM used_nonces").fetchone()[0])
         if count > MAX_NONCES:
-            self._db.execute(
-                "DELETE FROM used_nonces WHERE nonce IN (SELECT nonce FROM used_nonces"
-                " ORDER BY used_at LIMIT ?)", (count - MAX_NONCES,))
+            self._db.execute("DELETE FROM used_nonces WHERE nonce = ?", (nonce,))
+            return False
+        return True
 
     def active(self, now: Optional[float] = None) -> List[Dict[str, Any]]:
         stamp = time.time() if now is None else _stamp(now, "now")
@@ -273,20 +306,53 @@ class ConsentStore:
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS grants (
-    grant_id TEXT NOT NULL,
+    grant_id TEXT NOT NULL PRIMARY KEY,
     recipient TEXT NOT NULL,
     task_id TEXT NOT NULL,
     field_name TEXT NOT NULL,
-    alias TEXT NOT NULL DEFAULT '', 
+    alias TEXT NOT NULL,
     level TEXT NOT NULL,
     expires_at REAL NOT NULL,
     nonce TEXT NOT NULL,
     revoked INTEGER NOT NULL DEFAULT 0,
-    issued_at REAL NOT NULL,
-    PRIMARY KEY (grant_id, recipient, task_id, field_name)
+    issued_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS used_nonces (
     nonce TEXT PRIMARY KEY,
-    used_at REAL NOT NULL
+    used_at REAL NOT NULL,
+    expires_at REAL NOT NULL DEFAULT 0
 );
+"""
+
+#: The version-2 schema allowed the same grant id under another
+#: (recipient, task, field); version 3 makes the id globally unique.
+_MIGRATION_SQL = """
+CREATE TABLE grants_v3 (
+    grant_id TEXT NOT NULL PRIMARY KEY,
+    recipient TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    level TEXT NOT NULL,
+    expires_at REAL NOT NULL,
+    nonce TEXT NOT NULL,
+    revoked INTEGER NOT NULL DEFAULT 0,
+    issued_at REAL NOT NULL
+);
+INSERT INTO grants_v3 (grant_id, recipient, task_id, field_name, alias, level,
+                       expires_at, nonce, revoked, issued_at)
+    SELECT grant_id, recipient, task_id, field_name,
+           CASE WHEN alias IS NULL THEN '' ELSE alias END,
+           level, expires_at, nonce, revoked, issued_at FROM grants;
+DROP TABLE grants;
+ALTER TABLE grants_v3 RENAME TO grants;
+CREATE TABLE used_nonces_v3 (
+    nonce TEXT PRIMARY KEY,
+    used_at REAL NOT NULL,
+    expires_at REAL NOT NULL DEFAULT 0
+);
+INSERT INTO used_nonces_v3 (nonce, used_at, expires_at)
+    SELECT nonce, used_at, 0 FROM used_nonces;
+DROP TABLE used_nonces;
+ALTER TABLE used_nonces_v3 RENAME TO used_nonces;
 """

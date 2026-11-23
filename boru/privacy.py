@@ -114,6 +114,8 @@ def _value_error(value: Any, depth: int = 0) -> Optional[str]:
 
 
 LEVEL_RANK = {"L0": 0, "L1": 1, "L2": 2}
+#: The same nonce bound the persistent store uses, so both stores behave alike.
+MAX_NONCES = 8192
 
 
 class ConsentStore:
@@ -125,12 +127,18 @@ class ConsentStore:
 
     def __init__(self) -> None:
         self._grants: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
-        self._used_nonces: Set[str] = set()
+        #: used nonce -> the expiry of the grant that carried it
+        self._used_nonces: Dict[str, float] = {}
 
     def grant(self, *, grant_id: str, recipient: str, task_id: str, field_name: str,
-              level: str, expires_at: float, nonce: str) -> None:
+              alias: Optional[str] = None, level: str, expires_at: float,
+              nonce: str) -> None:
         if level not in DISCLOSURE_LEVELS:
             raise PolicyViolation("unknown disclosure level")
+        # The alias is mandatory and bound, exactly as in the persistent store:
+        # a grant without one would cover every resource.
+        if not isinstance(alias, str) or not alias.strip() or len(alias) > 64:
+            raise PolicyViolation("alias must be a bounded non-empty string")
         for name, value, limit in (("grant_id", grant_id, 128), ("recipient", recipient, 128),
                                     ("task_id", task_id, 128), ("field_name", field_name, 64),
                                     ("nonce", nonce, 64)):
@@ -142,7 +150,24 @@ class ConsentStore:
         if key in self._grants:
             # A grant id is immutable: revocation cannot be reset by reissue.
             raise PolicyViolation("duplicate grant identifier")
-        self._grants[key] = {"level": level, "expires_at": expires_at, "nonce": nonce, "revoked": False}
+        self._grants[key] = {"level": level, "expires_at": expires_at, "nonce": nonce,
+                             "alias": alias, "revoked": False}
+
+    def _retain(self, nonce: str, now: float) -> bool:
+        """A used nonce outlives its grant; past the bound the store refuses.
+
+        The bound is the same one the persistent store uses, so the in-memory
+        store cannot grow without limit, and a nonce whose grant is still live
+        is never evicted to make room.
+        """
+        expired = [nonce for nonce, until in self._used_nonces.items() if until <= now]
+        for nonce in expired:
+            self._used_nonces.pop(nonce, None)
+        if len(self._used_nonces) > MAX_NONCES:
+            # Roll this insert back rather than evict a live nonce to make room.
+            self._used_nonces.pop(nonce, None)
+            return False
+        return True
 
     def revoke(self, grant_id: str) -> None:
         for key, record in self._grants.items():
@@ -151,20 +176,26 @@ class ConsentStore:
                 record["expires_at"] = 0.0
 
     def check(self, *, grant_id: str, recipient: str, task_id: str, field_name: str,
-              nonce: str, level: str = "L0", now: Optional[float] = None) -> bool:
-        """A grant matches only if recipient, task, field, expiry, nonce and the
-        requested **level** all match (a weaker grant never covers wider)."""
+              nonce: str, alias: str, level: str = "L0", now: Optional[float] = None) -> bool:
+        """A grant matches only if recipient, task, field, **alias**, expiry,
+        nonce and the requested **level** all match (a weaker grant never covers
+        wider, and a grant for one resource never covers another)."""
+        if not isinstance(alias, str) or not alias.strip():
+            return False
         record = self._grants.get((grant_id, recipient, task_id, field_name))
         if record is None or record["revoked"]:
             return False
         if record["nonce"] != nonce or nonce in self._used_nonces:
             return False
-        if (now if now is not None else time.time()) >= record["expires_at"]:
+        if record["alias"] != alias:
             return False
-        if level not in LEVEL_RANK or LEVEL_RANK[level] > LEVEL_RANK[record["level"]]:
+        stamp = now if now is not None else time.time()
+        if stamp >= record["expires_at"]:
             return False
-        self._used_nonces.add(nonce)
-        return True
+        if LEVEL_RANK[level] > LEVEL_RANK[record["level"]]:
+            return False
+        self._used_nonces[nonce] = record["expires_at"]
+        return self._retain(nonce, stamp)
 
 
 class DisclosureGate:
@@ -231,6 +262,7 @@ class DisclosureGate:
                 return GateDecision.DENY, {}, "consent_store_unavailable"
             if not consent.check(grant_id=grant_id, recipient=request.recipient,
                                  task_id=request.task_id, field_name="excerpt", nonce=nonce,
+                                 alias=request.payload.get("alias", ""),
                                  level=request.level, now=now):
                 return GateDecision.DENY, {}, "grant_invalid"
         if self.allow_raw:

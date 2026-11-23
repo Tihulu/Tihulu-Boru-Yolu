@@ -339,9 +339,18 @@ class Broker:
                 return "worker_invalid"
             if not self.registry.valid(request.worker.worker_id, secret, now=now):
                 return "worker_invalid"
+            # The permitted scopes come from the authenticated registry record,
+            # never from the request: a worker may not widen its own scopes by
+            # declaring them, and a request that names more than it holds - or
+            # less than it needs for this alias - is refused, not ignored.
+            scopes = record.scopes
+            if set(request.worker.scopes) != set(scopes):
+                return "worker_scope"
+        else:
+            scopes = request.worker.scopes
         if request.nonce in self._nonces:
             return "nonce_replayed"
-        if request.resource_alias not in request.worker.scopes:
+        if request.resource_alias not in scopes:
             return "worker_scope"
         if not self.scopes.permits(request.resource_alias):
             return "resource_not_declared"

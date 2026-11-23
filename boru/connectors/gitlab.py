@@ -62,8 +62,10 @@ class GitLabProvider(RepositoryProvider):
         self._audit: List[Dict[str, Any]] = []
         self._calls: Dict[str, int] = {}
         self._ledger = audit
-        # The verified account identity, cached per provider instance.
-        self._identity_account: Optional[str] = None
+        # The verified identity: a fingerprint of the token that was checked,
+        # never the account string.  A rotated token has a different
+        # fingerprint, so a stale identity cannot authorize it.
+        self._identity_fingerprint: Optional[str] = None
 
     def capabilities(self) -> Tuple[Capability, ...]:
         return tuple(OPERATION_CAPABILITIES.values())
@@ -174,17 +176,35 @@ class GitLabProvider(RepositoryProvider):
         if self._ledger is not None:
             self._ledger.record("connector", grant.grant_id, reason, operation)
 
+    def _token_value(self) -> Optional[str]:
+        """The configured credential, read at request time and never stored."""
+        if not self.token_env:
+            return None
+        value = os.environ.get(self.token_env)
+        return value.strip() if value else None
+
+    @staticmethod
+    def _token_fingerprint(provider: str, token: Optional[str]) -> Optional[str]:
+        """A stable fingerprint of (provider, token), never the token itself."""
+        if not token:
+            return None
+        import hashlib
+
+        return hashlib.sha256(provider.encode("utf-8") + b"\x00" + token.encode("utf-8")).hexdigest()
+
     def _require_account_identity(self, grant: Grant) -> None:
         """Verify the account behind the token once per provider instance."""
         account = getattr(grant, "account", None)
         if not self.token_env or not isinstance(account, str) or not account.strip():
             return
-        if self._identity_account == account:
+        fingerprint = self._token_fingerprint(self.name, self._token_value())
+        if fingerprint is None or fingerprint == self._identity_fingerprint:
             return
         verified, reason = self.verify_identity(account)
         if not verified:
             raise ConnectorDenied(reason)
-        self._identity_account = account
+        # Only a token that was actually checked is remembered.
+        self._identity_fingerprint = fingerprint
 
     # -- official endpoint paths ---------------------------------------------
     def _path_for(self, operation: str, payload: Mapping[str, Any]) -> str:

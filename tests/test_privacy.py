@@ -98,9 +98,10 @@ class GateTests(unittest.TestCase):
     def test_l2_needs_a_matching_grant(self):
         gate = self.gate("SCOPED_APPROVED")
         consent = ConsentStore()
-        consent.grant(grant_id="g1", recipient="cloud", task_id="t1", field_name="excerpt",
+        consent.grant(grant_id="g1", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
                       level="L2", expires_at=time.time() + 60, nonce="n1")
-        payload = {"excerpt": "short", "grant_id": "g1", "nonce": "n1"}
+        # an L2 release names the resource it releases from
+        payload = {"excerpt": "short", "grant_id": "g1", "nonce": "n1", "alias": "demo"}
         decision, released, reason = gate.release(request("L2", ("excerpt",), payload), consent)
         self.assertEqual(GateDecision.RELEASE, decision)
         self.assertEqual({"excerpt": "short"}, released)
@@ -112,7 +113,7 @@ class GateTests(unittest.TestCase):
     def test_grant_bound_to_recipient_task_and_field(self):
         gate = self.gate("SCOPED_APPROVED")
         consent = ConsentStore()
-        consent.grant(grant_id="g2", recipient="cloud", task_id="t1", field_name="excerpt",
+        consent.grant(grant_id="g2", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
                       level="L2", expires_at=time.time() + 60, nonce="n2")
         base = {"excerpt": "short", "grant_id": "g2", "nonce": "n2"}
         for wrong in (
@@ -126,11 +127,11 @@ class GateTests(unittest.TestCase):
     def test_expired_and_revoked_grants_deny(self):
         gate = self.gate("SCOPED_APPROVED")
         consent = ConsentStore()
-        consent.grant(grant_id="g3", recipient="cloud", task_id="t1", field_name="excerpt",
+        consent.grant(grant_id="g3", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
                       level="L2", expires_at=time.time() + 1, nonce="n3")
         payload = {"excerpt": "short", "grant_id": "g3", "nonce": "n3"}
         gate.release(request("L2", ("excerpt",), payload), consent, now=time.time() + 10)
-        consent.grant(grant_id="g4", recipient="cloud", task_id="t1", field_name="excerpt",
+        consent.grant(grant_id="g4", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
                       level="L2", expires_at=time.time() + 60, nonce="n4")
         payload = {"excerpt": "short", "grant_id": "g4", "nonce": "n4"}
         consent.revoke("g4")
@@ -158,8 +159,8 @@ class GateTests(unittest.TestCase):
                  expires_at=time.time() + 1, nonce="n"),
             dict(grant_id="g", recipient="r", task_id="t", field_name="f", level="L9",
                  expires_at=time.time() + 1, nonce="n"),
-            dict(grant_id="g", recipient="r", task_id="t", field_name="f", level="L2",
-                 expires_at=time.time() + 1, nonce=5),
+            dict(grant_id="g", recipient="r", task_id="t", field_name="f", alias="demo",
+                 level="L2", expires_at=time.time() + 1, nonce=5),
         ):
             with self.assertRaises((PolicyViolation, TypeError)):
                 consent.grant(**bad)
@@ -167,7 +168,7 @@ class GateTests(unittest.TestCase):
     def test_duplicate_grant_id_refused(self):
         consent = ConsentStore()
         kwargs = dict(grant_id="dup", recipient="r", task_id="t", field_name="f",
-                      level="L2", expires_at=time.time() + 1, nonce="n")
+                      alias="demo", level="L2", expires_at=time.time() + 1, nonce="n")
         consent.grant(**kwargs)
         with self.assertRaises(PolicyViolation):
             consent.grant(**kwargs)

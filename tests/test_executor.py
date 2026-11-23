@@ -49,8 +49,8 @@ class ExecutorTests(unittest.TestCase):
         return receipt
 
     def test_probe_returns_typed_fields_only(self):
-        receipt = self.authorise("probe_path_alias", ("exists", "type"))
-        result = self.executor.acquire(receipt, fields=("exists", "type"), now=time.time())
+        receipt = self.authorise("probe_path_alias", ("exists", "type", "size"))
+        result = self.executor.acquire(receipt, fields=("exists", "type", "size"), now=time.time())
         payload = result.to_dict()
         self.assertEqual({"exists": True, "type": "dir", "size": None}, payload["fields"])
         self.assertEqual("demo", payload["resource_alias"])
@@ -72,8 +72,8 @@ class ExecutorTests(unittest.TestCase):
                          result.to_dict()["fields"])
 
     def test_probe_of_an_absent_entry_reports_not_found(self):
-        receipt = self.authorise("probe_path_alias", ("exists", "type"), target="absent.txt")
-        result = self.executor.acquire(receipt, fields=("exists", "type"), now=time.time())
+        receipt = self.authorise("probe_path_alias", ("exists", "type", "size"), target="absent.txt")
+        result = self.executor.acquire(receipt, fields=("exists", "type", "size"), now=time.time())
         self.assertEqual({"exists": False, "type": None, "size": None},
                          result.to_dict()["fields"])
 
@@ -179,10 +179,10 @@ class ExecutorTests(unittest.TestCase):
     def test_a_blocking_special_file_never_hangs_the_worker(self):
         # a FIFO inside the alias must answer immediately, not block the worker
         os.mkfifo(os.path.join(self.root, "pipe"))
-        receipt = self.authorise("probe_path_alias", ("exists",), target="pipe")
+        receipt = self.authorise("probe_path_alias", ("exists", "type", "size"), target="pipe")
         started = time.monotonic()
         result = self.executor.acquire(
-            receipt, fields=("exists",), now=time.time())
+            receipt, fields=("exists", "type", "size"), now=time.time())
         self.assertLess(time.monotonic() - started, 5.0, "the worker must not block")
         self.assertEqual({"exists": True, "type": "other", "size": None},
                          result.to_dict()["fields"])

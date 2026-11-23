@@ -58,14 +58,18 @@ class AdversarialWalkthroughTests(unittest.TestCase):
 
     def test_recipient_bound_grants_never_cross(self):
         store = ConsentStore()
-        store.grant(grant_id="g", recipient="a", task_id="t", field_name="probe", alias="demo",
+        # a grant id is globally unique: one id, one recipient
+        store.grant(grant_id="g-a", recipient="a", task_id="t", field_name="probe", alias="demo",
                     level="L0", expires_at=time.time() + 60, nonce="n1")
-        store.grant(grant_id="g", recipient="b", task_id="t", field_name="probe", alias="demo",
+        store.grant(grant_id="g-b", recipient="b", task_id="t", field_name="probe", alias="demo",
                     level="L0", expires_at=time.time() + 60, nonce="n2")
-        self.assertTrue(store.check(grant_id="g", recipient="a", task_id="t",
+        self.assertTrue(store.check(grant_id="g-a", recipient="a", task_id="t",
                                     field_name="probe", alias="demo", nonce="n1"))
-        self.assertTrue(store.check(grant_id="g", recipient="b", task_id="t",
+        self.assertTrue(store.check(grant_id="g-b", recipient="b", task_id="t",
                                     field_name="probe", alias="demo", nonce="n2"))
+        # the other recipient's grant never serves this one
+        self.assertFalse(store.check(grant_id="g-a", recipient="b", task_id="t",
+                                     field_name="probe", alias="demo", nonce="n1"))
         # an id that is ambiguous without a recipient refuses, fail closed
         self.assertFalse(store.check(grant_id="g", task_id="t", field_name="probe",
                                      alias="demo", nonce="n3"))

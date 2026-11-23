@@ -44,7 +44,7 @@ class SecurityRegressions(unittest.TestCase):
     def test_l0_owner_grant_cannot_authorize_l2_local(self):
         consent = LocalConsent()
         consent.grant(grant_id="g", recipient="cloud", task_id="t", field_name="excerpt",
-                      level="L0", expires_at=time.time()+60, nonce="n")
+                      alias="demo", level="L0", expires_at=time.time()+60, nonce="n")
         request = DisclosureRequest(task_id="t", recipient="cloud", level="L2",
                                     fields=("excerpt",),
                                     payload={"excerpt":"SYNTHETIC_PRIVATE_TEXT", "grant_id":"g", "nonce":"n"})
@@ -55,7 +55,7 @@ class SecurityRegressions(unittest.TestCase):
     def test_l0_owner_grant_cannot_authorize_l2_persistent(self):
         with PersistentConsent() as consent:
             consent.grant(grant_id="g", recipient="cloud", task_id="t", field_name="excerpt",
-                          level="L0", expires_at=time.time()+60, nonce="n")
+                          alias="demo", level="L0", expires_at=time.time()+60, nonce="n")
             request = DisclosureRequest(task_id="t", recipient="cloud", level="L2",
                                         fields=("excerpt",),
                                         payload={"excerpt":"SYNTHETIC_PRIVATE_TEXT", "grant_id":"g", "nonce":"n"})
@@ -70,7 +70,7 @@ class SecurityRegressions(unittest.TestCase):
             consent = PersistentConsent()
             try:
                 consent.grant(grant_id="g", recipient="local-worker", task_id="t",
-                              field_name="list_dir_alias", level="L0",
+                              field_name="list_dir_alias", alias=str(b), level="L0",
                               expires_at=time.time()+60, nonce="n")
                 broker = Broker(worker=WorkerIdentity("w", scopes=("A",)),
                                 scopes=ScopeAllowlist({"A":str(a), "B":str(b)}),
@@ -181,11 +181,11 @@ class SecurityRegressions(unittest.TestCase):
     def test_grant_revocation_cannot_be_erased_by_same_id_reissue(self):
         with PersistentConsent() as store:
             store.grant(grant_id="g", recipient="cloud", task_id="t", field_name="excerpt",
-                        level="L2", expires_at=time.time()+60, nonce="n1")
+                        alias="demo", level="L2", expires_at=time.time()+60, nonce="n1")
             store.revoke("g")
             with self.assertRaises((ValueError, RuntimeError)):
                 store.grant(grant_id="g",recipient="cloud",task_id="t",field_name="excerpt",
-                            level="L2",expires_at=time.time()+60,nonce="n2")
+                            alias="demo",level="L2",expires_at=time.time()+60,nonce="n2")
 
     def test_mock_provider_cannot_claim_direct_evidence(self):
         from boru.config import CoreConfig, ProviderConfig
@@ -220,7 +220,7 @@ class SecurityRegressions(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="boru-receipt-path-") as root:
             with PersistentConsent() as consent:
                 consent.grant(grant_id="g", recipient="local-worker", task_id="t",
-                              field_name="probe_path_alias", level="L0",
+                              field_name="probe_path_alias", alias=root, level="L0",
                               expires_at=time.time()+60, nonce="n")
                 worker = WorkerIdentity("w", scopes=(root,))
                 broker = Broker(worker=worker, scopes=ScopeAllowlist({root:root}),

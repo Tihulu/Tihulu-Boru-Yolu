@@ -62,7 +62,31 @@ class BrokerService:
                     connection, _ = self._socket.accept()
                 except (socket.timeout, OSError):
                     continue
-                threading.Thread(target=self._handle, args=(connection,), daemon=True).start()
+                # Capacity is acquired **before** a thread exists: a flood of
+                # connections must not be able to create unbounded transient
+                # threads that only fail at slot acquisition afterwards.
+                if self._slots is None or not self._slots.acquire(blocking=False):
+                    # Refuse on a drained request: closing a socket with unread
+                    # bytes resets the connection and the owner's client would
+                    # see a reset instead of the refusal it should read.
+                    try:
+                        # a bounded drain: enough for the request line a real
+                        # client already sent, never a wait for a silent one
+                        connection.settimeout(0.05)
+                        connection.recv(MAX_REQUEST_BYTES)
+                    except OSError:
+                        pass
+                    try:
+                        self._send(connection, {"decision": "deny", "reason": "service_busy"})
+                    except Exception:  # pragma: no cover - client may close early
+                        pass
+                    try:
+                        connection.close()
+                    except OSError:
+                        pass
+                    continue
+                threading.Thread(target=self._handle, args=(connection, self._slots),
+                                 daemon=True).start()
 
         self._thread = threading.Thread(target=serve, daemon=True)
         self._thread.start()
@@ -79,18 +103,13 @@ class BrokerService:
             pass
 
     # -- serving -------------------------------------------------------------
-    def _handle(self, connection: socket.socket) -> None:
-        if not self._slots.acquire(blocking=False):
-            self._send(connection, {"decision": "deny", "reason": "service_busy"})
-            try:
-                connection.close()
-            except OSError:
-                pass
-            return
+    def _handle(self, connection: socket.socket, slots=None) -> None:
+        """Serve one already-admitted connection, releasing its slot."""
         try:
             self._serve(connection)
         finally:
-            self._slots.release()
+            if slots is not None:
+                slots.release()
 
     def _serve(self, connection: socket.socket) -> None:
         try:

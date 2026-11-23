@@ -75,7 +75,13 @@ class PollingSync:
         self.allowlist = allowlist
         self._seen: List[str] = []
         self._seen_set: Set[str] = set()
-        for event_id in (seen or ()):
+        restored = list(seen or ()) if seen is not None else []
+        # A restored history is bounded exactly like a live one: an oversized
+        # checkpoint is refused instead of silently trusted, because the
+        # registry's bound is its memory bound.
+        if len(restored) > MAX_SEEN:
+            raise ConnectorDenied("restored history exceeds the bounded registry")
+        for event_id in restored:
             if isinstance(event_id, str) and event_id and event_id not in self._seen_set:
                 self._seen.append(event_id)
                 self._seen_set.add(event_id)
