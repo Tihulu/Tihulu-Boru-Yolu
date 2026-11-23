@@ -5,7 +5,7 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 
 - Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 - Branch under review: `p1/boru-core-vertical-slice`
-- Code head under review: `87d75d91fa562729f0516e994a9a15ad965fe393` (a later documents-only commit may add this package's final pin; the code tree is identical)
+- Code head under review: `176034a1039dceef166e47f40a3cd10e64e36dec`
 - Pull request: https://github.com/Tihulu/Tihulu-Boru-Yolu/pull/14 (draft, not merged)
 - CI (this head, success): https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/45048886502
 - Issue tracker: https://github.com/Tihulu/Tihulu-Boru-Yolu/issues
@@ -23,14 +23,14 @@ git clone https://github.com/Tihulu/Tihulu-Boru-Yolu.git
 cd Tihulu-Boru-Yolu
 git checkout p1/boru-core-vertical-slice
 python3 scripts/check_project.py     # expected: PASS (30 documents + sample policy invariants)
-python3 -m unittest discover -s tests   # expected: Ran 681 tests ... OK
+python3 -m unittest discover -s tests   # expected: Ran 701 tests ... OK
 PYTHONPATH=. python3 tests/test_review_regressions.py   # expected: Ran 20 tests ... OK
 python3 scripts/evidence.py          # expected: exit 0, overall all-PASS
 python3 -m boru doctor --state-dir local-state   # expected: overall: ok, live_acceptance: HOLD
 python3 -m boru demo                 # expected: state REVIEW, evidence_class simulated
 ~~~
 
-Observed result on the head commit: **PASS / 681 tests / exit 0** (local run of
+Observed result on the head commit: **PASS / 701 tests / exit 0** (local run of
 `check_project.py`, the full suite, `scripts/evidence.py`, `boru doctor` and
 `boru demo`); the same suite passed in CI on this head (run 45048886502). If any
 of these fail on your run, that is a finding.
@@ -171,9 +171,10 @@ provider/GitHub behaviour and clean-machine acceptance are separate gates
 2. Every medium finding fixed or explicitly accepted by the owner.
 3. Reviewer name, date and reviewed commit recorded in `harness/build-log.md`.
 
-**Current status: HOLD — a first review of `cc73940` failed with F01–F22;
-every finding recorded in the working notes is remediated on this head
-(`87d75d91fa`) and the reviewer's regression probes pass, but no independent
-re-review has been performed yet, the canonical text of F06 and F20 must be
-re-issued by the reviewer.** The head is pushed (remote `988738a`) with the
-owner's authorization; its CI run is recorded in the ledger once it finishes.
+**Current status: HOLD — a re-review of `1617709` returned FAIL/DO NOT
+APPROVE (findings F03, F06, F07, F12, F14, F15, F17, F20 and N01–N05, see
+`docs/REVIEW_FINDINGS.md` section 3-B). Every one of them has been remediated
+on this head (`176034a103`) with a named negative regression test in
+`tests/test_rereview_regressions.py`; an independent re-review of the resulting
+tree is still required before Gate 1 can pass, and the reviewer's own verdict is
+the only authority on closure.**

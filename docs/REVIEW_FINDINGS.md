@@ -40,3 +40,35 @@ two are closed.
 The reviewer's 20 regression probes (checked in as
 `tests/test_review_regressions.py`) pass 20/20 on this head; they are the
 executable half of this table, but a probe passing is not a verdict.
+
+## 3-B. Gate 1 re-review of `1617709` (23 November 2026) — FAIL / DO NOT APPROVE
+
+The re-review could not clone the repository (DNS resolution failed in its
+environment), so it read the connector source and the Actions logs rather than
+executing the suite; it says so explicitly and claims no runtime PASS. Its
+verdict was **FAIL**, with findings F03, F06, F07, F12, F14, F15 and F17 open
+(High/Medium), F20 informational, and five new findings N01–N05. F06 and F20
+are marked *reconstructed from current code*, not verbatim re-issues, because
+the original reviewer's canonical text was never available in this repository.
+
+Each finding was reproduced against this tree first, then remediated, then
+closed with a named negative regression test (`tests/test_rereview_regressions.py`).
+
+| # | Severity | Remediation | Commit |
+|---|---|---|---|
+| F03 | High | Alias mandatory and matched in both consent stores; a legacy alias-less row denies rather than matching | `176034a` |
+| F06 | High | The registry record decides the permitted scopes; a request that declares more or less than it holds is refused, not ignored | `176034a` |
+| F07 | High | The cached connector identity is a fingerprint of (provider, token); every externally connected path verifies identity and counts its usage | `176034a` |
+| F17 | High | A used nonce outlives its grant; an expired grant's nonce is dropped; past the bound the store rolls back and refuses rather than evicting a live nonce | `176034a` |
+| N01 | High | Grant timestamps must be finite, positive and ordered (a NaN expiry made every expiry comparison false) | `176034a` |
+| N03 | High | The worker returns exactly the fields the receipt names | `176034a` |
+| F12 | Medium | Schema version 3: grant_id globally unique, a version-2 store migrates and refuses an ambiguous history, a revoked id is a tombstone | `176034a` |
+| F14 | Medium | Capacity is acquired before a thread spawns; an excess connection is refused on a drained request (and through the instance method — a bare name here killed the accept loop) | `176034a` |
+| F15 | Medium | The GitHub exchange caps its HTTP error body, as the account request already did | `176034a` |
+| N02 | Medium | Workflow discovery verifies identity and charges the grant | `176034a` |
+| N04 | Medium | A dispatch with inputs and no owner-supplied declaration is refused | `176034a` |
+| N05 | Medium | A restored polling registry is bounded as it is loaded | `176034a` |
+| F20 | Informational | The review package now names the head it describes | this commit |
+
+**Still required before Gate 1 can pass:** an independent re-review of this
+tree, and the original reviewer's canonical text for F06 and F20.

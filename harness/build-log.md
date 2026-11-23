@@ -1025,3 +1025,39 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **Verification practice in force:** every push is re-verified from the
   coordinator side with `git ls-remote`; an agent report that disagrees with the
   server is discarded with the disagreement recorded (two such reports today).
+
+---
+
+### 2026-11-23 — Gate 1 re-review remediated: all 13 findings closed with named regression tests (head `176034a`)
+
+- **The re-review (23 November 2026, ChatGPT/GPT-6 as a source-level reviewer):**
+  could not clone the repository (DNS resolution failed in its environment) and
+  says so; it read the connector source and the Actions logs, claimed no runtime
+  PASS, and returned **FAIL / DO NOT APPROVE** on `1617709`. Findings F03, F06,
+  F07, F12, F14, F15, F17, F20 and five new findings N01–N05. F06 and F20 are
+  marked *reconstructed from current code*, not verbatim re-issues, because the
+  original reviewer's canonical text was never available in this repository.
+- **Method:** each finding was first **reproduced against this tree** (a probe
+  script whose results were read, not assumed), then fixed, then closed with a
+  named negative regression test. The probe run confirmed all thirteen.
+- **Remediation (commit `176034a`):** alias mandatory and matched in both consent
+  stores (F03); permitted scopes taken from the authenticated registry record
+  (F06); the connector identity cache is a fingerprint of (provider, token) and
+  every externally connected path verifies identity and counts usage (F07, N02);
+  a used nonce outlives its grant and past the bound the store refuses rather
+  than evicting a live one (F17); grant timestamps finite and ordered (N01); the
+  worker returns exactly the receipt-named fields (N03); schema version 3 with
+  grant_id globally unique and a migrating version-2 store (F12); capacity
+  acquired before a thread spawns (F14); the GitHub error body capped (F15); a
+  declaration-less dispatch input set refused (N04); a restored polling registry
+  bounded (N05); the review package pinned to the head it describes (F20).
+- **A defect the reviewer's own report did not contain, found while closing
+  F14:** the refusal sent through a bare `_send` instead of `self._send`, which
+  raised `NameError` under load and killed the service's accept loop — the exact
+  failure mode F14 exists to prevent. The flood test caught it because the
+  refused connection received nothing.
+- **Tests observed:** `unittest discover -s tests` **701 tests OK** (new:
+  `tests/test_rereview_regressions.py`, 20 named negative tests, two or more per
+  finding); `scripts/check_project.py` PASS. MOCK/STATIC only.
+- **Still required before Gate 1 can pass:** an independent re-review of this
+  tree, and the original reviewer's canonical text for F06 and F20.
