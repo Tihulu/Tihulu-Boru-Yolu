@@ -1109,3 +1109,20 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
   fabricated root cause ("the branch was likely rebased or force-pushed"), which the
   fetch and ancestry verification disproved. The reported failure was real; the
   explanation was not, and only the verified cause is recorded here.
+
+---
+
+### 2026-11-23 — CI green after the full-history checkout (head `d5d3932`)
+
+- **CI verified:** run `45269296922` on head `d5d3932361d049aa6ebe6aba1a22dc844c5bc66e`
+  concluded **success** (`validate`, 1m38s), reported by the authorized local agent
+  with verbatim output. The two runs before it (`45257179738`, `45263036267`) both
+  failed on the F20 pin check, and both were caused by the depth-1 checkout, not by
+  the pin.
+- **Package re-pinned:** `docs/REVIEW_PACKAGE.md` cites this head's own green run
+  instead of a much older one, and the package pin contract is documented in place.
+- **State at this head:** 701 tests OK locally (the same count the CI run reports),
+  the reviewer's 20 probes and the 20 re-review regressions both green, static
+  manifest PASS, and the two prior CI failures traced to the environment and fixed.
+- **What remains for Gate 1:** an independent re-review of this tree, and the
+  original reviewer's canonical text for F06 and F20.
