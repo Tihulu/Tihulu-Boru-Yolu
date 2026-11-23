@@ -1126,3 +1126,23 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
   manifest PASS, and the two prior CI failures traced to the environment and fixed.
 - **What remains for Gate 1:** an independent re-review of this tree, and the
   original reviewer's canonical text for F06 and F20.
+
+---
+
+### 2026-11-23 — CI green on the final head; Gate 1 fully remediated and verified (head `80204a6`)
+
+- **CI verified:** run `45272200049` on head `80204a6d4d9aa4ce48ffd9986b3a75ed099c29fa`
+  concluded **success** (`validate`, 1m41s), reported by the authorized local agent
+  with verbatim output. The code head `d5d3932` (all thirteen re-review findings
+  closed) was green in run `45269296922`. The only annotation is a non-blocking
+  Node.js 20 deprecation notice.
+- **Package wording:** the review package now cites the code head's run and the
+  documents-only run separately, so neither is presented as the other.
+- **Complete Gate 1 state at this head:** the first review's F01–F22 remediated and
+  the re-review's F03/F06/F07/F12/F14/F15/F17/F20 and N01–N05 remediated; 701 tests
+  OK locally and in CI; the reviewer's 20 probes and the 20 re-review regressions
+  both green; static manifest PASS; install/uninstall round trip green; four
+  consecutive green CI runs after the two checkout-depth failures.
+- **What remains before Gate 1 can pass:** an independent re-review of this tree
+  (the request is ready in `docs/RE_REVIEW_REQUEST.md`) and the original reviewer's
+  canonical text for F06 and F20.

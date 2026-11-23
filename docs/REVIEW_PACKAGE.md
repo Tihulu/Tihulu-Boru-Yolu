@@ -10,7 +10,9 @@ can run or a file/test you can read; nothing is asserted without a pointer.
   without changing the code tree — `tests/test_rereview_regressions.py` asserts
   the pin is HEAD or an ancestor of it)
 - Pull request: https://github.com/Tihulu/Tihulu-Boru-Yolu/pull/14 (draft, not merged)
-- CI (this head, success): https://github.com/Tihulu/Tihulu-Boru-Yolu/actions/runs/45269296922
+- CI: the code head above is green in CI (run 45269296922); later documents-only
+  commits on the same code tree are green too (run 45272200049). The run for the
+  head a reviewer checks out is the evidence that counts.
 - Issue tracker: https://github.com/Tihulu/Tihulu-Boru-Yolu/issues
 - Ledger: [harness/build-log.md](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/harness/build-log.md)
 
