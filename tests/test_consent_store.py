@@ -23,7 +23,7 @@ class PersistentConsentTests(unittest.TestCase):
     def test_grant_check_and_replay(self):
         with ConsentStore(self.path) as store:
             store.grant(grant_id="g1", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
-                       level="L2", expires_at=time.time() + 60, nonce="n1")
+                       level="L2", expires_at=time.time() + 86400, nonce="n1")
             self.assertTrue(store.check(grant_id="g1", recipient="cloud", task_id="t1",
                                         field_name="excerpt", alias="demo", nonce="n1"))
             self.assertFalse(store.check(grant_id="g1", recipient="cloud", task_id="t1",
@@ -32,7 +32,7 @@ class PersistentConsentTests(unittest.TestCase):
     def test_grants_survive_restart_and_revocation_sticks(self):
         with ConsentStore(self.path) as store:
             store.grant(grant_id="g1", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
-                       level="L2", expires_at=time.time() + 600, nonce="n1")
+                       level="L2", expires_at=time.time() + 864000, nonce="n1")
         with ConsentStore(self.path) as store:
             self.assertTrue(store.check(grant_id="g1", recipient="cloud", task_id="t1",
                                         field_name="excerpt", alias="demo", nonce="n1"))
@@ -55,7 +55,7 @@ class PersistentConsentTests(unittest.TestCase):
     def test_binding_is_recipient_task_and_field(self):
         with ConsentStore(self.path) as store:
             store.grant(grant_id="g3", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
-                       level="L2", expires_at=time.time() + 60, nonce="n3")
+                       level="L2", expires_at=time.time() + 86400, nonce="n3")
             self.assertFalse(store.check(grant_id="g3", recipient="other", task_id="t1",
                                          field_name="excerpt", alias="demo", nonce="n3"))
             self.assertFalse(store.check(grant_id="g3", recipient="cloud", task_id="t2",
@@ -66,11 +66,11 @@ class PersistentConsentTests(unittest.TestCase):
     def test_active_listing_excludes_expired_and_revoked(self):
         with ConsentStore(self.path) as store:
             store.grant(grant_id="g4", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
-                       level="L2", expires_at=time.time() + 60, nonce="n4")
+                       level="L2", expires_at=time.time() + 86400, nonce="n4")
             store.grant(grant_id="g5", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
                        level="L2", expires_at=time.time() + 1, nonce="n5")
             store.grant(grant_id="g6", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
-                       level="L2", expires_at=time.time() + 60, nonce="n6")
+                       level="L2", expires_at=time.time() + 86400, nonce="n6")
             store.revoke("g6")
             self.assertEqual(["g4", "g5"], sorted(row["grant_id"] for row in store.active()))
             self.assertEqual(["g4"], sorted(row["grant_id"] for row in store.active(now=time.time() + 10)))
@@ -78,7 +78,7 @@ class PersistentConsentTests(unittest.TestCase):
     def test_bad_grants_rejected(self):
         with ConsentStore(self.path) as store:
             base = dict(grant_id="g", recipient="cloud", task_id="t1", field_name="excerpt", alias="demo",
-                       level="L2", expires_at=time.time() + 60, nonce="n")
+                       level="L2", expires_at=time.time() + 86400, nonce="n")
             for bad in (dict(grant_id=""), dict(nonce=""), dict(expires_at="soon"),
                         dict(expires_at=time.time() - 60), dict(level="L"), dict(field_name="")):
                 with self.assertRaises((ValueError, TypeError)):
@@ -110,7 +110,7 @@ class PersistentConsentTests(unittest.TestCase):
     def test_in_memory_store_works(self):
         with ConsentStore() as store:
             store.grant(grant_id="m", recipient="cloud", task_id="t1", field_name="excerpt",
-                       alias="demo", level="L2", expires_at=time.time() + 60, nonce="n")
+                       alias="demo", level="L2", expires_at=time.time() + 86400, nonce="n")
             self.assertTrue(store.check(grant_id="m", recipient="cloud", task_id="t1",
                                         field_name="excerpt", alias="demo", nonce="n"))
 
@@ -128,7 +128,7 @@ class PersistentConsentTests(unittest.TestCase):
     def test_grant_is_bound_to_its_alias_and_level(self):
         with ConsentStore(self.path) as store:
             store.grant(grant_id="a1", recipient="cloud", task_id="t1", field_name="excerpt",
-                        alias="demo", level="L0", expires_at=time.time() + 60, nonce="na1")
+                        alias="demo", level="L0", expires_at=time.time() + 86400, nonce="na1")
             self.assertTrue(store.check(grant_id="a1", recipient="cloud", task_id="t1",
                                         field_name="excerpt", alias="demo", nonce="na1"))
             # a grant for one resource never serves another
@@ -142,12 +142,12 @@ class PersistentConsentTests(unittest.TestCase):
     def test_grant_id_is_immutable_once_issued(self):
         with ConsentStore(self.path) as store:
             store.grant(grant_id="a2", recipient="cloud", task_id="t1", field_name="excerpt",
-                        alias="demo", level="L2", expires_at=time.time() + 60, nonce="na4")
+                        alias="demo", level="L2", expires_at=time.time() + 86400, nonce="na4")
             store.revoke("a2")
             # a revocation cannot be reset by re-issuing the same grant id
             with self.assertRaises(ConfigurationError):
                 store.grant(grant_id="a2", recipient="cloud", task_id="t1", field_name="excerpt",
-                            alias="demo", level="L2", expires_at=time.time() + 60, nonce="na5")
+                            alias="demo", level="L2", expires_at=time.time() + 86400, nonce="na5")
 
     def test_an_alias_is_a_bounded_binding_not_a_judged_path(self):
         # path policy belongs to the broker/allowlist: this store only binds a
@@ -157,11 +157,11 @@ class PersistentConsentTests(unittest.TestCase):
                 with self.assertRaises(ConfigurationError):
                     store.grant(grant_id="p", recipient="cloud", task_id="t1",
                                 field_name="excerpt", alias=bad, level="L0",
-                                expires_at=time.time() + 60, nonce="np")
+                                expires_at=time.time() + 86400, nonce="np")
             # a declared absolute path is a legal binding token here
             store.grant(grant_id="p1", recipient="cloud", task_id="t1",
                         field_name="excerpt", alias="/home/EXAMPLE/data", level="L0",
-                        expires_at=time.time() + 60, nonce="np1")
+                        expires_at=time.time() + 86400, nonce="np1")
             self.assertTrue(store.check(grant_id="p1", recipient="cloud", task_id="t1",
                                         field_name="excerpt", alias="/home/EXAMPLE/data",
                                         nonce="np1"))
@@ -174,7 +174,7 @@ class PersistentConsentTests(unittest.TestCase):
             for index in range(MAX_NONCES + 32):
                 store.grant(grant_id="b{}".format(index), recipient="cloud",
                             task_id="t1", field_name="excerpt", alias="demo", level="L0",
-                            expires_at=time.time() + 60, nonce="nb{}".format(index))
+                            expires_at=time.time() + 86400, nonce="nb{}".format(index))
                 allowed = store.check(grant_id="b{}".format(index), recipient="cloud",
                                       task_id="t1", field_name="excerpt", alias="demo",
                                       nonce="nb{}".format(index))
