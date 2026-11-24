@@ -1272,3 +1272,14 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **Not touched:** the LOCAL_ONLY / LOCAL_ISOLATED / MINIMUM_NECESSARY defaults, the four independent policy axes, the typed field maps, or the HOLD gates (host-level process authentication, OS confinement, live provider/GitHub behaviour, clean-machine acceptance).
 - **Blocking owner action:** the session harness refuses `git push`, so no CI run exists for this head. Push + CI watch must be executed by the authorized local agent under the owner's authorization.
 - **Next action:** push the head through the authorized local agent, watch CI, re-pin `docs/REVIEW_PACKAGE.md` to the code head in a documents-only commit, then request a third independent review against the new exact commit. PR #14 stays draft; do not merge or release.
+
+---
+
+### 2026-11-24 — remediation pushed and CI green; Gate 1 package re-pinned (head `9b6ce53`)
+
+- **Push executed by the authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`) under the owner's session authorization: `cedb56f..9b6ce53`. Re-verified from the coordinator side with `git ls-remote` → remote head `9b6ce534c2073ddbcd9cf3ae34b08782fb9a5912`, identical to local.
+- **CI verified:** run `45504384737` on head `9b6ce534` concluded **success** (`validate`, 1m35s), re-read directly from `gh run view`. The only annotation is a non-blocking Node.js 20 deprecation notice.
+- **Local verification on this head:** `unittest discover -s tests` **727 tests OK** (new: 26 named negative tests in `tests/test_review3_regressions.py`); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; the reviewer's 20 probes and the 20 re-review regressions both green. MOCK/STATIC only.
+- **Package re-pinned:** `docs/REVIEW_PACKAGE.md` cites this code head and its own green CI run, and the reproduction commands now name the third regression file and the 727-test set.
+- **Gate 1 state:** all thirteen findings from the second re-review are remediated with named negative regression tests, locally verified and CI-green. The only remaining gate is the **independent third-review verdict**, which belongs to the reviewer.
+- **Next action:** request a third independent review against `9b6ce534`. Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval. PR #14 stays draft; nothing is merged or released.
