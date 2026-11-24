@@ -182,6 +182,10 @@ class Grant:
         required = OPERATION_CAPABILITIES[operation]
         if required not in self.capabilities:
             return False, "capability_not_granted"
+        # The grant is valid only between its own bounds: a future-issued grant
+        # is not usable just because it has not expired yet (N09).
+        if now < self.issued_at:
+            return False, "grant_not_yet_valid"
         if now >= self.expires_at:
             return False, "grant_expired"
         if calls_used >= self.max_calls:

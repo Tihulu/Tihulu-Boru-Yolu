@@ -55,7 +55,7 @@ class PropertyHostileInputTests(unittest.TestCase):
 
     def authorise(self, consent, target):
         broker = Broker(worker=self.worker, scopes=self.scopes, consent=consent,
-                        authorization_key=self.key)
+                        consent_recipient="w", authorization_key=self.key)
         request = OperationRequest(operation="probe_path_alias", resource_alias="demo",
                                    requester="owner", task_id="t", worker=self.worker,
                                    fields=("exists",), nonce="n", grant_id="g", target=target)

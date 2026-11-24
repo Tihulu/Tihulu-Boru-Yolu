@@ -74,7 +74,7 @@ class SecurityRegressions(unittest.TestCase):
                               expires_at=time.time()+60, nonce="n")
                 broker = Broker(worker=WorkerIdentity("w", scopes=("A",)),
                                 scopes=ScopeAllowlist({"A":str(a), "B":str(b)}),
-                                consent=consent)
+                                consent=consent, consent_recipient="local-worker")
                 request = OperationRequest(operation="list_dir_alias", resource_alias="B",
                                            requester="owner", task_id="t",
                                            worker=WorkerIdentity("w", scopes=("B",)),
@@ -224,7 +224,7 @@ class SecurityRegressions(unittest.TestCase):
                               expires_at=time.time()+60, nonce="n")
                 worker = WorkerIdentity("w", scopes=(root,))
                 broker = Broker(worker=worker, scopes=ScopeAllowlist({root:root}),
-                                consent=consent)
+                                consent=consent, consent_recipient="local-worker")
                 request = OperationRequest(operation="probe_path_alias", resource_alias=root,
                                            requester="owner", task_id="t", worker=worker,
                                            fields=("exists",), nonce="n", grant_id="g")

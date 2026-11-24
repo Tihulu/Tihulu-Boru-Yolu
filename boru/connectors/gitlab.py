@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -15,7 +16,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
-from .scope import check_call, check_dispatch_body
+from .scope import check_call, check_dispatch_body, check_write_body
 
 API_BASE = "https://gitlab.com"
 MAX_PAGE = 100
@@ -62,10 +63,14 @@ class GitLabProvider(RepositoryProvider):
         self._audit: List[Dict[str, Any]] = []
         self._calls: Dict[str, int] = {}
         self._ledger = audit
-        # The verified identity: a fingerprint of the token that was checked,
-        # never the account string.  A rotated token has a different
-        # fingerprint, so a stale identity cannot authorize it.
-        self._identity_fingerprint: Optional[str] = None
+        # Call accounting is shared by every path that reaches an endpoint, so
+        # a ceiling check and its reservation cannot interleave (N06).
+        self._call_lock = threading.Lock()
+        # The verified identity: the (token fingerprint, account) pair that was
+        # actually checked.  Binding the account too is what stops a second
+        # grant naming another account behind the same token from being waved
+        # through on the first account's verification (F07).
+        self._verified_identity: Optional[Tuple[str, str]] = None
 
     def capabilities(self) -> Tuple[Capability, ...]:
         return tuple(OPERATION_CAPABILITIES.values())
@@ -132,20 +137,27 @@ class GitLabProvider(RepositoryProvider):
         except ConnectorDenied as exc:
             self._deny(grant, operation, str(exc))
             raise
-        # A dispatch body is validated before any transport is constructed.
-        if operation == "dispatch_workflow":
-            try:
-                check_dispatch_body(grant, body or {})
-            except ConnectorDenied as exc:
-                self._deny(grant, operation, str(exc))
-                raise
+        # Every write body is validated against its operation contract before
+        # any transport is constructed: the reference that was checked is the
+        # reference that is sent, and a key the operation does not document
+        # never reaches the endpoint (N08).
+        try:
+            check_write_body(grant, operation, body or {}, payload or {})
+        except ConnectorDenied as exc:
+            self._deny(grant, operation, str(exc))
+            raise
         # A token proves an identity, never write or Shell authorization.
         self._require_account_identity(grant)
+        # The call slot is reserved before any transport exists, and the check
+        # and the increment are one atomic step under the provider's lock.
+        reason = self._reserve_call(grant, operation)
+        if reason:
+            self._deny(grant, operation, reason)
+            raise ConnectorDenied(reason)
         path = self._path_for(operation, slots)
         if method is None:
             method = self._MUTATING.get(operation, "GET")
         status, raw = self._exchange(method, path, body or {})
-        self._calls[grant.grant_id] = self._calls.get(grant.grant_id, 0) + 1
         reason_event = "ok" if status < 300 else "http_" + str(status)
         # A URL path never enters the audit event: the operation and status
         # describe the call without naming a repository route.
@@ -193,18 +205,50 @@ class GitLabProvider(RepositoryProvider):
         return hashlib.sha256(provider.encode("utf-8") + b"\x00" + token.encode("utf-8")).hexdigest()
 
     def _require_account_identity(self, grant: Grant) -> None:
-        """Verify the account behind the token once per provider instance."""
+        """Verify the account behind the token for this grant.
+
+        A grant names the account it was issued for, and only a credential can
+        prove the account behind a token.  The remembered identity is the
+        **(token fingerprint, account)** pair that was actually verified, so a
+        second grant naming a different account behind the same token is
+        re-verified rather than accepted on the first one's word, and a
+        configured-but-absent credential never passes the guard: there is
+        nothing that could prove the account, so the request is refused.
+        """
+        if not self.token_env:
+            # No credential channel is configured at all: an in-process or
+            # test configuration, which ``connection_state`` reports honestly
+            # as ``disconnected``.  A configured channel is never waved through.
+            return
         account = getattr(grant, "account", None)
-        if not self.token_env or not isinstance(account, str) or not account.strip():
+        if not isinstance(account, str) or not account.strip():
+            raise ConnectorDenied("grant_account_invalid")
+        token = self._token_value()
+        if token is None:
+            raise ConnectorDenied("credential_missing")
+        identity = (self._token_fingerprint(self.name, token), account.strip())
+        if identity == self._verified_identity:
             return
-        fingerprint = self._token_fingerprint(self.name, self._token_value())
-        if fingerprint is None or fingerprint == self._identity_fingerprint:
-            return
-        verified, reason = self.verify_identity(account)
+        verified, reason = self.verify_identity(account.strip())
         if not verified:
             raise ConnectorDenied(reason)
-        # Only a token that was actually checked is remembered.
-        self._identity_fingerprint = fingerprint
+        # Only an actually verified (token, account) pair is remembered.
+        self._verified_identity = identity
+
+    def _reserve_call(self, grant: Grant, operation: str) -> str:
+        """Atomically verify the grant ceiling and reserve one call slot.
+
+        The check and the increment share one lock and both happen **before**
+        any transport is built, so a burst of concurrent calls cannot pass the
+        ceiling together and discover only afterwards that it was exhausted
+        (N06).  Returns the denial reason, or ``""`` when the slot is reserved.
+        """
+        with self._call_lock:
+            allowed, reason = self.check(grant, operation)
+            if not allowed:
+                return reason
+            self._calls[grant.grant_id] = self._calls.get(grant.grant_id, 0) + 1
+            return ""
 
     # -- official endpoint paths ---------------------------------------------
     def _path_for(self, operation: str, payload: Mapping[str, Any]) -> str:

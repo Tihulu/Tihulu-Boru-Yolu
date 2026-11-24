@@ -89,7 +89,8 @@ class F06Tests(unittest.TestCase):
                         expires_at=time.time() + 60, nonce="n")
             broker = Broker(worker=WorkerIdentity("w", scopes=("A",)),
                             scopes=ScopeAllowlist({"A": root, "B": root}),
-                            consent=store, registry=registry, worker_secret=secret)
+                            consent=store, consent_recipient="w",
+                            registry=registry, worker_secret=secret)
             forged = OperationRequest(
                 operation="probe_path_alias", resource_alias="B", requester="o",
                 task_id="t", worker=WorkerIdentity("w", scopes=("B",)),   # forged
@@ -118,7 +119,8 @@ class F06Tests(unittest.TestCase):
                         expires_at=time.time() + 60, nonce="n")
             broker = Broker(worker=WorkerIdentity("w", scopes=("A",)),
                             scopes=ScopeAllowlist({"A": root}),
-                            consent=store, registry=registry, worker_secret=secret)
+                            consent=store, consent_recipient="w",
+                            registry=registry, worker_secret=secret)
             # a request that declares *more* than the registry record holds is
             # refused even when the alias itself is permitted
             wider = OperationRequest(
@@ -160,13 +162,17 @@ class F07Tests(unittest.TestCase):
         os.environ[variable] = "first-token"
         try:
             self.assertTrue(provider._require_account_identity(grant) is None)
-            fingerprint = provider._identity_fingerprint
-            # a rotated token is re-checked, and the stored fingerprint is not
+            verified = provider._verified_identity
+            # the remembered identity is the verified (token fingerprint,
+            # account) pair, so it binds the account and not the token alone
+            self.assertIsNotNone(verified)
+            self.assertEqual(grant.account, verified[1])
+            # a rotated token is re-checked, and the stored pair is not
             # updated by a failed check: a stale identity never authorizes it
             os.environ[variable] = "rotated-token"
             with self.assertRaises(ConnectorDenied):
                 provider._require_account_identity(grant)
-            self.assertEqual(fingerprint, provider._identity_fingerprint)
+            self.assertEqual(verified, provider._verified_identity)
         finally:
             os.environ.pop(variable, None)
 
@@ -263,7 +269,8 @@ class F14Tests(unittest.TestCase):
             store = ConsentStore()
             broker = Broker(worker=WorkerIdentity("w1", scopes=("demo",)),
                             scopes=ScopeAllowlist({"demo": registry_root}),
-                            consent=store, registry=registry, worker_secret=secret)
+                            consent=store, consent_recipient="w1",
+                            registry=registry, worker_secret=secret)
             service = BrokerService(broker, registry, "w1", secret)
             host, port = service.start()
             try:
@@ -378,7 +385,8 @@ class N03Tests(unittest.TestCase):
                         expires_at=time.time() + 60, nonce="n")
             broker = Broker(worker=WorkerIdentity("w", scopes=("demo",)),
                             scopes=ScopeAllowlist({"demo": root}),
-                            consent=store, authorization_key=KEY)
+                            consent=store, consent_recipient="w",
+                            authorization_key=KEY)
             request = OperationRequest(
                 operation="probe_path_alias", resource_alias="demo", requester="o",
                 task_id="t", worker=WorkerIdentity("w", scopes=("demo",)),
@@ -417,6 +425,20 @@ class N05Tests(unittest.TestCase):
         with self.assertRaises(ConnectorDenied):
             PollingSync(EventAllowlist(("push",)),
                         seen=("e{}".format(i) for i in range(MAX_SEEN + 1)))
+        # the bound is enforced while the source is consumed, not after it has
+        # been materialized: an oversized source is stopped at the refusing
+        # entry rather than drained into memory first
+        consumed = []
+
+        def counting():
+            for index in range(MAX_SEEN + 5000):
+                consumed.append(index)
+                yield "e{}".format(index)
+
+        with self.assertRaises(ConnectorDenied):
+            PollingSync(EventAllowlist(("push",)), seen=counting())
+        self.assertLess(len(consumed), MAX_SEEN + 5000)
+        self.assertGreaterEqual(len(consumed), MAX_SEEN)
         bounded = PollingSync(EventAllowlist(("push",)),
                               seen=("e{}".format(i) for i in range(MAX_SEEN)))
         self.assertEqual(MAX_SEEN, len(bounded.seen))

@@ -40,7 +40,7 @@ class ExecutorTests(unittest.TestCase):
         consent.grant(grant_id=grant, recipient="w1", task_id=task, field_name=operation,
                       alias="demo", level="L0", expires_at=time.time() + 60, nonce=nonce)
         broker = Broker(worker=self.worker, scopes=self.scopes, consent=consent,
-                        authorization_key=self.key)
+                        consent_recipient="w1", authorization_key=self.key)
         request = OperationRequest(operation=operation, resource_alias="demo", requester="owner",
                                    task_id=task, worker=self.worker, fields=fields, nonce=nonce,
                                    grant_id=grant, target=target)

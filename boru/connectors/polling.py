@@ -75,16 +75,23 @@ class PollingSync:
         self.allowlist = allowlist
         self._seen: List[str] = []
         self._seen_set: Set[str] = set()
-        restored = list(seen or ()) if seen is not None else []
         # A restored history is bounded exactly like a live one: an oversized
         # checkpoint is refused instead of silently trusted, because the
-        # registry's bound is its memory bound.
-        if len(restored) > MAX_SEEN:
-            raise ConnectorDenied("restored history exceeds the bounded registry")
-        for event_id in restored:
-            if isinstance(event_id, str) and event_id and event_id not in self._seen_set:
-                self._seen.append(event_id)
-                self._seen_set.add(event_id)
+        # registry's bound is its memory bound.  The bound is enforced **while
+        # the checkpoint is being consumed**, not after it has been fully
+        # materialized: an unbounded source is read only up to the refusal, so
+        # a 10,000-entry checkpoint is stopped at the bound instead of being
+        # drained into memory first (N05).
+        if seen is not None:
+            for event_id in seen:
+                if isinstance(event_id, str) and event_id and event_id not in self._seen_set:
+                    # The bound applies to the registry as it is filled: the
+                    # entry that would exceed it is refused as it arrives, so an
+                    # oversized source is never drained into memory first.
+                    if len(self._seen) >= MAX_SEEN:
+                        raise ConnectorDenied("restored history exceeds the bounded registry")
+                    self._seen.append(event_id)
+                    self._seen_set.add(event_id)
 
     @property
     def seen(self) -> Tuple[str, ...]:

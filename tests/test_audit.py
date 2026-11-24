@@ -172,7 +172,7 @@ class LedgerWiringTests(unittest.TestCase):
         consent = ConsentStore()
         broker = Broker(worker=WorkerIdentity("w1", scopes=("demo",)),
                         scopes=ScopeAllowlist({"demo": "/tmp/boru-scope"}), consent=consent,
-                        audit=self.ledger)
+                        consent_recipient="w1", audit=self.ledger)
         request = OperationRequest(operation="host_shell", resource_alias="demo", requester="owner",
                                    task_id="t4", worker=WorkerIdentity("w1", scopes=("demo",)),
                                    fields=(), nonce="n1", grant_id="g1")

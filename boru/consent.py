@@ -205,7 +205,7 @@ class ConsentStore:
                 (grant_id,))
 
     # -- reads ----------------------------------------------------------------
-    def check(self, *, grant_id: str, recipient: Optional[str] = None, task_id: str,
+    def check(self, *, grant_id: str, recipient: str, task_id: str,
               field_name: str, nonce: str, alias: str, level: str = "L0",
               now: Optional[float] = None) -> bool:
         """Verify a request against the stored grant, including its level.
@@ -213,41 +213,35 @@ class ConsentStore:
         ``recipient`` and ``alias`` are the caller's declaration: the broker
         passes the owner-configured consent subject and the requested resource,
         so a grant for one recipient, resource or disclosure level can never
-        serve another.  Both are mandatory here: a check that names no resource
-        is refused, because it cannot be bound to one.
+        serve another.  Both are mandatory here: a check that names no
+        recipient or no resource is refused, because it cannot be bound to
+        one.  Omitting the recipient is a bypass in itself (it would match any
+        recipient's grant), so there is no recipient-less query in this store.
         """
         if level not in LEVELS:
             return False
         for name, value, limit in (("grant_id", grant_id, 128), ("task_id", task_id, 128),
-                                   ("field_name", field_name, 64), ("nonce", nonce, 64)):
+                                    ("field_name", field_name, 64), ("nonce", nonce, 64)):
             try:
                 _identifier(value, limit, name)
             except Exception:
                 return False
-        if recipient is not None:
-            try:
-                _identifier(recipient, 64, "recipient")
-            except Exception:
-                return False
+        # The recipient is mandatory: every grant is bound to one, so a check
+        # that omits it can never match (it would match any recipient's grant).
+        try:
+            _identifier(recipient, 64, "recipient")
+        except Exception:
+            return False
         try:
             _binding(alias, MAX_ALIAS_LENGTH, "alias")
         except Exception:
             return False
         stamp = _stamp(now, "now") if now is not None else time.time()
         with self._guard or _null():
-            if recipient is None:
-                rows = self._db.execute(
-                    "SELECT recipient, level, expires_at, nonce, revoked, alias FROM grants"
-                    " WHERE grant_id = ? AND task_id = ? AND field_name = ?",
-                    (grant_id, task_id, field_name)).fetchall()
-                if len(rows) != 1:
-                    return False
-                row = rows[0]
-            else:
-                row = self._db.execute(
-                    "SELECT level, expires_at, nonce, revoked, alias FROM grants"
-                    " WHERE grant_id = ? AND recipient = ? AND task_id = ? AND field_name = ?",
-                    (grant_id, recipient, task_id, field_name)).fetchone()
+            row = self._db.execute(
+                "SELECT level, expires_at, nonce, revoked, alias FROM grants"
+                " WHERE grant_id = ? AND recipient = ? AND task_id = ? AND field_name = ?",
+                (grant_id, recipient, task_id, field_name)).fetchone()
             if row is None or row["revoked"]:
                 return False
             if row["nonce"] != nonce:
@@ -280,7 +274,15 @@ class ConsentStore:
         bound the store rolls this insert back and refuses, rather than making
         a live grant replayable.
         """
-        self._db.execute("DELETE FROM used_nonces WHERE expires_at > 0 AND expires_at < ?", (now,))
+        # A nonce's row carries the expiry of the grant that carried it, so it
+        # expires with that grant.  A row written with no expiry (the previous
+        # migration wrote ``0`` for every migrated nonce) can never expire
+        # through normal retention and would fill the bound forever: such a row
+        # is legacy state, and a replay through it is still denied by the grant
+        # lookup, so it is pruned once its recorded use is in the past.
+        self._db.execute(
+            "DELETE FROM used_nonces WHERE (expires_at > 0 AND expires_at < ?)"
+            " OR (expires_at <= 0 AND used_at < ?)", (now, now))
         count = int(self._db.execute("SELECT COUNT(*) FROM used_nonces").fetchone()[0])
         if count > MAX_NONCES:
             self._db.execute("DELETE FROM used_nonces WHERE nonce = ?", (nonce,))
@@ -352,7 +354,17 @@ CREATE TABLE used_nonces_v3 (
     expires_at REAL NOT NULL DEFAULT 0
 );
 INSERT INTO used_nonces_v3 (nonce, used_at, expires_at)
-    SELECT nonce, used_at, 0 FROM used_nonces;
+    SELECT n.nonce,
+           MIN(n.used_at),
+           CASE WHEN COUNT(g.grant_id) = 0 OR SUM(COALESCE(g.revoked, 0)) = COUNT(g.grant_id)
+                -- no live grant carries it (orphan or all revoked): a replay is
+                -- denied by the grant lookup, so the row is prunable at once
+                THEN MIN(n.used_at)
+                -- otherwise it outlives the longest-lived grant that may use it
+                ELSE MAX(g.expires_at) END
+    FROM used_nonces n
+    LEFT JOIN grants g ON g.nonce = n.nonce
+    GROUP BY n.nonce;
 DROP TABLE used_nonces;
 ALTER TABLE used_nonces_v3 RENAME TO used_nonces;
 """

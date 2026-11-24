@@ -152,8 +152,9 @@ class GitHubProviderTests(unittest.TestCase):
         self.provider._transport = record
         reader = grant(operations=("list_workflows",), nonce="w1")
         self.provider.call(reader, "list_workflows", {"repository": "owner/repo"})
-        self.provider.call(grant(operations=("get_run",), nonce="n3"), "get_run",
-                           {"repository": "owner/repo", "run_id": 42})
+        self.provider.call(grant(operations=("get_run",), nonce="n3", workflow_ids=("ci.yml",)),
+                           "get_run",
+                           {"repository": "owner/repo", "run_id": 42, "workflow": "ci.yml"})
         dispatch = grant(operations=("dispatch_workflow",), capabilities=(Capability.ACTIONS_DISPATCH,),
                          nonce="n4", workflow_ids=("ci.yml",))
         self.provider.call(dispatch, "dispatch_workflow", {"repository": "owner/repo", "workflow": "ci.yml"},
@@ -224,8 +225,10 @@ class GitLabProviderTests(unittest.TestCase):
             return (200, b'{}')
 
         self.provider._transport = record
-        reader = grant(operations=("get_run",), nonce="gl-3", repository="owner/project")
-        self.provider.call(reader, "get_run", {"repository": "owner/project", "run_id": 42})
+        reader = grant(operations=("get_run",), nonce="gl-3", repository="owner/project",
+                       workflow_ids=("ci.yml",))
+        self.provider.call(reader, "get_run",
+                           {"repository": "owner/project", "run_id": 42, "workflow": "ci.yml"})
         dispatch = grant(operations=("dispatch_workflow",), capabilities=(Capability.ACTIONS_DISPATCH,),
                          nonce="gl-4", repository="owner/project", workflow_ids=("ci.yml",))
         self.provider.call(dispatch, "dispatch_workflow",

@@ -81,6 +81,41 @@ REPO_SCOPED = {
 #: Operations that are account-wide and need a separate account-scoped design.
 ACCOUNT_SCOPED = {"list_repositories"}
 
+#: Operations addressed by a workflow name, and by a run that belongs to one.
+#: A run id alone is never sufficient: the granted workflow is what scopes it.
+WORKFLOW_OPERATIONS = {
+    "dispatch_workflow", "rerun_workflow", "cancel_run", "configure_workflow",
+    "get_run", "get_run_logs", "get_artifacts",
+}
+
+#: N08: per-operation write-body contracts.  Each entry maps an operation to
+#: (the only keys its body may carry, the keys whose value must be exactly the
+#: granted reference).  A body that carries a reference the grant did not
+#: authorize - or a key the operation does not document - is refused before any
+#: transport exists, so the value that was checked is the value that is sent.
+WRITE_BODY_CONTRACTS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
+    "create_issue": (("title", "body", "labels", "assignees", "milestone"), ()),
+    "comment_issue": (("body",), ()),
+    "update_issue": (("title", "body", "state", "labels", "assignees", "milestone"), ()),
+    "create_branch": (("ref", "sha"), ()),
+    "put_file": (("message", "content", "branch", "sha", "committer", "author"), ("branch",)),
+    "create_pull": (("title", "head", "base", "body", "draft", "maintainer_can_modify"), ("base",)),
+    "review_pull": (("body", "event", "comments"), ()),
+    "merge_pull": (("commit_title", "commit_message", "sha", "merge_method"), ()),
+    "dispatch_workflow": (("ref", "inputs"), ("ref",)),
+    "rerun_workflow": ((), ()),
+    "cancel_run": ((), ()),
+    "configure_workflow": ((), ()),
+    "create_release": (("tag_name", "target_commitish", "name", "body", "draft", "prerelease"),
+                       ("target_commitish",)),
+}
+
+#: Body values are bounded: a body is a small typed document, never a payload.
+MAX_BODY_DEPTH = 2
+MAX_BODY_KEYS = 16
+MAX_BODY_VALUE_CHARS = 512
+MAX_BODY_ITEMS = 16
+
 
 @dataclass(frozen=True)
 class RepositoryRef:
@@ -180,10 +215,13 @@ def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method
         if not str(run_id).isdigit():
             raise ConnectorDenied("unsafe_run_id")
     workflow = payload.get("workflow")
-    if workflow is not None or operation in ("rerun_workflow", "configure_workflow",
-                                             "dispatch_workflow"):
-        # A run belongs to a workflow: without a granted workflow name the
-        # operation cannot be scoped, so it is refused rather than guessed.
+    # A run belongs to a workflow: without a granted workflow name the
+    # operation cannot be scoped, so it is refused rather than guessed.  This
+    # holds for every workflow-addressed operation, the run operations
+    # included: a run id alone names nothing the grant authorized, so the run
+    # metadata is bound to the granted workflow here rather than by the
+    # endpoint's own lookup (N07).
+    if workflow is not None or operation in WORKFLOW_OPERATIONS:
         if workflow is None:
             raise ConnectorDenied("workflow_required")
         workflow = _slot(workflow, "workflow", 256, allow_slash=True)
@@ -294,3 +332,84 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
             _check_control(value, "body_value")
             if len(value) > MAX_BODY_VALUE_CHARS:
                 raise ConnectorDenied("body_too_large")
+
+
+def _check_body_value(value: Any, label: str, depth: int = 0) -> None:
+    """Reject an unbounded, structured or control-carrying body value."""
+    if depth > MAX_BODY_DEPTH:
+        raise ConnectorDenied("body_nested_too_deeply")
+    if isinstance(value, bool) or value is None:
+        return
+    if isinstance(value, int):
+        if not -(2 ** 53) <= value <= 2 ** 53:
+            raise ConnectorDenied("body_value_out_of_range")
+        return
+    if isinstance(value, str):
+        if len(value) > MAX_BODY_VALUE_CHARS:
+            raise ConnectorDenied("body_value_too_large")
+        _check_control(value, "body_value")
+        return
+    if isinstance(value, Mapping):
+        if len(value) > MAX_BODY_KEYS:
+            raise ConnectorDenied("body_too_large")
+        for key, item in value.items():
+            if not isinstance(key, str) or not key.strip() or len(key) > 64:
+                raise ConnectorDenied("unsafe_body_key")
+            _check_body_value(item, label, depth + 1)
+        return
+    if isinstance(value, (list, tuple)):
+        if len(value) > MAX_BODY_ITEMS:
+            raise ConnectorDenied("body_too_large")
+        for item in value:
+            _check_body_value(item, label, depth + 1)
+        return
+    raise ConnectorDenied("unsafe_body_value")
+
+
+def check_write_body(grant: Any, operation: str, body: Any,
+                     payload: Optional[Mapping[str, Any]] = None) -> None:
+    """Validate a write body against its operation contract (N08).
+
+    ``check_call`` validates the request's **slots** and
+    ``check_dispatch_body`` validates a dispatch body; every other write
+    operation used to transmit its body unchecked, so the reference that was
+    validated could diverge from the reference the body carried.  Each write
+    operation now has a typed contract: the only keys it may carry, and the
+    keys that must be exactly the granted reference.  The dispatch body itself
+    stays with ``check_dispatch_body``, which additionally enforces its
+    owner-declared input schema.
+    """
+    if operation == "dispatch_workflow":
+        # The dispatch body has its own schema-binding check.
+        check_dispatch_body(grant, body or {})
+        return
+    contract = WRITE_BODY_CONTRACTS.get(operation)
+    if contract is None:
+        # Not a recognized write operation: nothing to check here.
+        return
+    allowed_keys, reference_keys = contract
+    if body is None:
+        return
+    if not isinstance(body, Mapping):
+        raise ConnectorDenied("invalid_body")
+    if len(body) > MAX_BODY_KEYS:
+        raise ConnectorDenied("body_too_large")
+    unknown = sorted(set(body) - set(allowed_keys))
+    if unknown:
+        raise ConnectorDenied("body_unknown_key")
+    for key, value in body.items():
+        _check_body_value(value, key)
+    granted_reference = str(getattr(grant, "reference", "") or "")
+    for key in reference_keys:
+        if key in body and str(body[key]) != granted_reference:
+            raise ConnectorDenied("reference_not_granted")
+    if operation == "create_branch":
+        # A branch is created *from* the granted reference: the body's source
+        # sha must be the one the request declared, and the target must be a
+        # bounded refs/heads name, not a path or another reference form.
+        declared = (payload or {}).get("sha")
+        if declared is not None and str(body.get("sha", "")) != str(declared):
+            raise ConnectorDenied("reference_not_granted")
+        target = body.get("ref")
+        if not isinstance(target, str) or not target.startswith("refs/heads/"):
+            raise ConnectorDenied("unsafe_body_value")

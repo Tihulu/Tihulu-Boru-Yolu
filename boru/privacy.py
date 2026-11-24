@@ -126,7 +126,10 @@ class ConsentStore:
     """
 
     def __init__(self) -> None:
-        self._grants: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+        #: grant_id -> the grant record.  The id is **globally unique**, exactly
+        #: as in the persistent store (schema version 3): a revoked id cannot
+        #: be reissued under another task, field or recipient.
+        self._grants: Dict[str, Dict[str, Any]] = {}
         #: used nonce -> the expiry of the grant that carried it
         self._used_nonces: Dict[str, float] = {}
 
@@ -146,12 +149,14 @@ class ConsentStore:
                 raise PolicyViolation(name + " must be a bounded non-empty string")
         if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)) or not math.isfinite(expires_at):
             raise PolicyViolation("expires_at must be a finite timestamp")
-        key = (grant_id, recipient, task_id, field_name)
-        if key in self._grants:
-            # A grant id is immutable: revocation cannot be reset by reissue.
+        if grant_id in self._grants:
+            # A grant id is immutable and globally unique: revocation cannot be
+            # reset by reissuing the same id under another task or recipient.
             raise PolicyViolation("duplicate grant identifier")
-        self._grants[key] = {"level": level, "expires_at": expires_at, "nonce": nonce,
-                             "alias": alias, "revoked": False}
+        self._grants[grant_id] = {"recipient": recipient, "task_id": task_id,
+                                  "field_name": field_name, "level": level,
+                                  "expires_at": expires_at, "nonce": nonce,
+                                  "alias": alias, "revoked": False}
 
     def _retain(self, nonce: str, now: float) -> bool:
         """A used nonce outlives its grant; past the bound the store refuses.
@@ -170,10 +175,11 @@ class ConsentStore:
         return True
 
     def revoke(self, grant_id: str) -> None:
-        for key, record in self._grants.items():
-            if key[0] == grant_id:
-                record["revoked"] = True
-                record["expires_at"] = 0.0
+        """Revoke one grant id; a revoked id is a tombstone, never reusable."""
+        record = self._grants.get(grant_id)
+        if record is not None:
+            record["revoked"] = True
+            record["expires_at"] = 0.0
 
     def check(self, *, grant_id: str, recipient: str, task_id: str, field_name: str,
               nonce: str, alias: str, level: str = "L0", now: Optional[float] = None) -> bool:
@@ -182,8 +188,14 @@ class ConsentStore:
         wider, and a grant for one resource never covers another)."""
         if not isinstance(alias, str) or not alias.strip():
             return False
-        record = self._grants.get((grant_id, recipient, task_id, field_name))
+        record = self._grants.get(grant_id)
         if record is None or record["revoked"]:
+            return False
+        # Every remaining binding must match: recipient, task, field, alias.
+        # The id alone is unique but not sufficient, so a grant for one
+        # recipient, task or field can never serve another.
+        if record["recipient"] != recipient or record["task_id"] != task_id \
+                or record["field_name"] != field_name:
             return False
         if record["nonce"] != nonce or nonce in self._used_nonces:
             return False

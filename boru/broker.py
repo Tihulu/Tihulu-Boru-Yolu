@@ -10,7 +10,7 @@ Invariants enforced here (with tests in tests/test_broker.py):
   owner decision, never a remote caller's claim;
 * the consent grant must bind the recipient, task, operation, **resource
   alias**, **field** and **level**, and must be unexpired, unrevoked and
-  unused;
+  unused - and the recipient is named explicitly, never omitted;
 * the resource alias must be declared in the allowlist, and the alias is a
   name, never a path;
 * every issued receipt is signed with an authorization key the worker also
@@ -241,8 +241,13 @@ class Broker:
                 or not isinstance(receipt_ttl_seconds, (int, float)) \
                 or not math.isfinite(receipt_ttl_seconds) or not 1.0 <= receipt_ttl_seconds <= 3600:
             raise PolicyViolation("receipt_ttl_seconds must be 1..3600")
-        if consent_recipient is not None:
-            safe_identifier(consent_recipient, 64, "consent recipient")
+        # The consent recipient is the owner-configured subject every grant is
+        # bound to.  A broker that does not know it cannot authorize: without
+        # one the store would be asked to match a grant whose recipient the
+        # broker cannot name, which is the omission F03 describes.
+        if not isinstance(consent_recipient, str) or not consent_recipient.strip():
+            raise PolicyViolation("an explicit consent recipient is required")
+        safe_identifier(consent_recipient, 64, "consent recipient")
         self.receipt_ttl_seconds = float(receipt_ttl_seconds)
         self._nonces: Set[str] = set()
         self._nonce_order: List[str] = []
@@ -356,10 +361,8 @@ class Broker:
             return "resource_not_declared"
         # Consent binds recipient, task, operation, alias, field and level.
         # The recipient is the configured consent subject, never a value the
-        # request itself can choose.
-        # The recipient is the owner-declared consent subject; when none is
-        # configured the grant is bound by task, operation, alias, field and
-        # level instead.
+        # request itself can choose, and it is always present: the broker
+        # refuses to construct without one.
         try:
             allowed = self.consent.check(
                 grant_id=request.grant_id, recipient=self.consent_recipient,

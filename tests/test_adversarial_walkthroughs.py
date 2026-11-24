@@ -44,7 +44,7 @@ class AdversarialWalkthroughTests(unittest.TestCase):
 
     def authorise(self, consent, grant, task, operation, fields, target=None):
         broker = Broker(worker=self.worker, scopes=self.scopes, consent=consent,
-                        authorization_key=KEY)
+                        consent_recipient="w", authorization_key=KEY)
         request = OperationRequest(operation=operation, resource_alias="demo", requester="owner",
                                    task_id=task, worker=self.worker, fields=fields, nonce="n",
                                    grant_id=grant, target=target)
@@ -70,9 +70,13 @@ class AdversarialWalkthroughTests(unittest.TestCase):
         # the other recipient's grant never serves this one
         self.assertFalse(store.check(grant_id="g-a", recipient="b", task_id="t",
                                      field_name="probe", alias="demo", nonce="n1"))
-        # an id that is ambiguous without a recipient refuses, fail closed
-        self.assertFalse(store.check(grant_id="g", task_id="t", field_name="probe",
-                                     alias="demo", nonce="n3"))
+        # a check that cannot name its recipient never matches any grant:
+        # the recipient is mandatory, so an unnamed one refuses (F03)
+        self.assertFalse(store.check(grant_id="g", recipient="", task_id="t",
+                                     field_name="probe", alias="demo", nonce="n3"))
+        with self.assertRaises(TypeError):
+            store.check(grant_id="g-a", task_id="t", field_name="probe",
+                        alias="demo", nonce="n1")
 
     def test_nonce_cannot_be_replayed(self):
         consent = self.grant_for("t2")
@@ -131,7 +135,8 @@ class AdversarialWalkthroughTests(unittest.TestCase):
                       field_name="probe_path_alias", alias="demo", level="L0",
                       expires_at=time.time() + 60, nonce="n")
         broker = Broker(worker=WorkerIdentity("w1", scopes=("demo",)), scopes=self.scopes,
-                        consent=consent, registry=registry, worker_secret=secret)
+                        consent=consent, consent_recipient="w1", registry=registry,
+                        worker_secret=secret)
         request = OperationRequest(operation="probe_path_alias", resource_alias="demo",
                                    requester="owner", task_id="t7",
                                    worker=WorkerIdentity("w1", scopes=("demo",)),

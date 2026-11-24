@@ -21,7 +21,7 @@ class BrokerTests(unittest.TestCase):
         return Broker(
             worker=WorkerIdentity("w1", scopes=worker_scopes),
             scopes=ScopeAllowlist(aliases or {"demo": "/tmp/boru-scope"}),
-            consent=consent or store(),
+            consent=consent or store(), consent_recipient="w1",
         )
 
     def request(self, **overrides):
@@ -59,7 +59,8 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual("allow",
                          Broker(worker=WorkerIdentity("w1", scopes=("demo",)),
                                 scopes=ScopeAllowlist({"demo": "/tmp/boru-scope"}),
-                                consent=store(nonce="n9")).authorize(self.request(nonce="n9"))[0])
+                                consent=store(nonce="n9"),
+                                consent_recipient="w1").authorize(self.request(nonce="n9"))[0])
 
     def test_operation_must_be_allowlisted(self):
         broker = self.broker()
@@ -119,17 +120,20 @@ class BrokerTests(unittest.TestCase):
 
     def test_broker_requires_a_consent_store(self):
         with self.assertRaises(PolicyViolation):
-            Broker(worker=WorkerIdentity("w1"), scopes=ScopeAllowlist({"demo": "/tmp"}), consent=None)
+            Broker(worker=WorkerIdentity("w1"), scopes=ScopeAllowlist({"demo": "/tmp"}), consent=None,
+                   consent_recipient="w1")
 
     def test_scope_allowlist_rejects_escapes(self):
         for bad in (("demo", "../etc"), ("demo", "relative"), ("demo", "~/data")):
             with self.assertRaises(PolicyViolation):
                 Broker(worker=WorkerIdentity("w1", scopes=(bad[0],)),
-                       scopes=ScopeAllowlist({bad[0]: bad[1]}), consent=store())
+                       scopes=ScopeAllowlist({bad[0]: bad[1]}), consent=store(),
+                       consent_recipient="w1")
 
     def test_empty_scope_allowlist_rejected(self):
         with self.assertRaises(PolicyViolation):
-            Broker(worker=WorkerIdentity("w1"), scopes=ScopeAllowlist({}), consent=store())
+            Broker(worker=WorkerIdentity("w1"), scopes=ScopeAllowlist({}), consent=store(),
+                   consent_recipient="w1")
 
     def test_symlinked_alias_rejected(self):
         import os
@@ -142,7 +146,8 @@ class BrokerTests(unittest.TestCase):
             self.assertTrue(ScopeAllowlist({"demo": link}).validate())
             with self.assertRaises(PolicyViolation):
                 Broker(worker=WorkerIdentity("w1", scopes=("demo",)),
-                       scopes=ScopeAllowlist({"demo": link}), consent=store())
+                       scopes=ScopeAllowlist({"demo": link}), consent=store(),
+                       consent_recipient="w1")
         finally:
             import shutil
 
@@ -152,7 +157,7 @@ class BrokerTests(unittest.TestCase):
         for bad in (0, True, "60", 9999):
             with self.assertRaises(PolicyViolation):
                 Broker(worker=WorkerIdentity("w1"), scopes=ScopeAllowlist({"demo": "/tmp"}),
-                       consent=store(), receipt_ttl_seconds=bad)
+                       consent=store(), consent_recipient="w1", receipt_ttl_seconds=bad)
 
     def test_bad_worker_identity_rejected(self):
         for scopes in (("a", "a"), ("x" * 200,)):

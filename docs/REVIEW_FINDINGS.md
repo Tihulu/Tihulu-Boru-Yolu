@@ -72,3 +72,55 @@ closed with a named negative regression test (`tests/test_rereview_regressions.p
 
 **Still required before Gate 1 can pass:** an independent re-review of this
 tree, and the original reviewer's canonical text for F06 and F20.
+
+## 3-C. Gate 1 second re-review of `cedb56fb` (24 November 2026) — FAIL / DO NOT APPROVE
+
+The reviewer verified the CI run for this head independently (701 tests, 700
+passed, 1 skipped, static validation succeeded) but **could not clone the
+repository** — `github.com` did not resolve in its environment, so it inspected
+pinned source through the GitHub connector and exercised source excerpts in an
+isolated harness with synthetic inputs. It says so explicitly and claims no
+full-suite run. Its verdict was **FAIL / DO NOT APPROVE**.
+
+It accepted on static evidence: **F06, F14, F15, N01, N03, N04**.
+It marked partially remediated: **F03, F17, F20, N02**.
+It marked failed: **F07, F12, N05**.
+It issued five new findings: **N06, N07, N08, N09, N10**.
+
+Each finding below was **reproduced against this tree first** (an executable
+probe whose output was read, not assumed), then remediated, then closed with a
+named negative regression test. The mapping is complete: every finding the
+reviewer raised names the tests that assert its closure, and no test is claimed
+to cover a finding it does not exercise (N10).
+
+| # | Severity | Finding (as reported) | Reproduced? | Remediation | Named regression tests |
+|---|---|---|---|---|---|
+| F03 | High (partial) | Alias binding fixed, but the recipient could be omitted in a check | Yes — `check(recipient=None)` matched a grant bound to `alice` | The recipient is mandatory in both stores; there is no recipient-less query, and the broker refuses to construct without an explicit `consent_recipient` | `tests/test_review3_regressions.py::F03RecipientBindingTests` (3 tests) |
+| F07 | High | The identity cache bound only the token, not the verified account; a missing credential passed the guard | Yes — a second account behind one token was accepted; a configured-but-absent token passed | The remembered identity is the verified **(token fingerprint, account)** pair; a configured channel with no credential value denies `credential_missing` | `...::F07IdentityGuardTests` (2 tests, GitHub and GitLab) |
+| N02 | Medium (partial) | Discovery accounting existed but inherited the F07 guard defect | Yes — discovery accepted a mismatched account | Discovery calls the same identity guard and the same atomic reservation as every other externally connected path | `...::F07IdentityGuardTests::test_n02_discovery_inherits_the_identity_guard` |
+| F12 | Medium | The in-memory consent store allowed a revoked grant id under another task | Yes — reissue under `task_id="t2"` was granted | A grant id is globally unique in the in-memory store too, and every remaining binding (recipient, task, field) is matched | `...::F12ConsentIdentityTests` (3 tests) |
+| F17 | Medium (partial) | Migrated nonce rows with zero expiry could never expire | Yes — a zero-expiry row survived every retention pass and filled the bound | The v2→v3 migration binds each nonce to its grant's expiry (an orphan becomes prunable at once), and retention also prunes legacy no-expiry rows | `...::F17MigratedNonceTests` (2 tests) |
+| N05 | Medium | A restored polling history was fully materialized before its bound was checked | Yes — 10,000 entries consumed before the 8,192 rejection | The bound is enforced while the source is consumed: the refusing entry stops the iterator | `...::N05BoundedRestoreTests` (2 tests) |
+| N06 | High | Call ceilings were not atomic | Yes — a 20-thread race reserved 6+ calls against a 5-call ceiling | The ceiling check and the reservation are one atomic step under the provider's lock, before any transport exists | `...::N06CallCeilingTests` (2 tests, GitHub and GitLab) |
+| N07 | High | A workflow name and a run id were not verified as belonging together | Yes — `get_run` with only a `run_id` was accepted | Every workflow-addressed operation — the run operations included — requires its granted workflow, so a run is reached only through it | `...::N07RunScopeTests` (3 tests) |
+| N08 | High | A validated reference could diverge from the transmitted write body | Yes — `create_pull` sent `base=develop` on a `main` grant | Per-operation typed write-body contracts: the documented keys only, and reference-carrying keys must equal the granted reference; `check_write_body` runs before any transport | `...::N08WriteBodyTests` (5 tests, GitHub and GitLab) |
+| N09 | Medium | Future-issued grants were accepted | Yes — `issued_at = now + 86400` passed `permits()` | `permits()` enforces `issued_at <= now < expires_at` | `...::N09GrantValidityTests` (3 tests) |
+| N10 | Medium | Regression-coverage claims exceeded demonstrated coverage | Yes — the old table claimed closures for findings whose behaviour was still reachable | This section is a complete finding-to-test mapping, re-derived from the executed suite rather than from intent | `tests/test_review3_regressions.py` (26 tests) |
+
+**Recovered historical findings** (the reviewer recovered them from historical
+records; the verbatim original reports were not available for comparison):
+F06 (optional registry allowed forged worker scopes) and F20 (evidence pinned
+to a different commit). The recovered F06 reproducer — a worker with scope A,
+an allowlist containing A and B, and a request for B declaring scope B — is
+asserted denied in `tests/test_rereview_regressions.py::F06Tests`; the F20 pin
+contract is asserted in `tests/test_rereview_regressions.py::F20Tests`. Both
+remain marked *re-confirm* pending the original reviewer's canonical text.
+
+**Scope of this remediation, stated honestly:** every fix is source-level and
+unit-tested against test-owned transports. No live provider, GitHub token or
+host shell was used. Host-level process authentication, OS confinement, live
+provider behaviour and clean-machine acceptance remain separate HOLD gates and
+are not affected by this work.
+
+**Next step:** push the exact head, verify its CI, and request a third
+independent review against it.
