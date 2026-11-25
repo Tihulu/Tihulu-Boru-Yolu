@@ -18,11 +18,25 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
-from .scope import check_call, check_dispatch_body, check_write_body
+from .scope import (
+    GITHUB_WRITE_BODY_CONTRACTS, check_call, check_dispatch_body, check_write_body,
+)
 
 API_BASE = "https://api.github.com"
 #: An error body is diagnostic, never a payload: keep only a bounded prefix.
 MAX_ERROR_BODY_BYTES = 4 * 1024
+
+#: Operations that address one run of a granted workflow.  A run's ownership is
+#: established from **trusted provider metadata** - the workflow's own runs
+#: list - before the run is addressed, because a caller-declared workflow name
+#: says nothing about which run an id names (N07).
+RUN_OPERATIONS = frozenset({"get_run", "get_run_logs", "get_artifacts",
+                            "cancel_run", "rerun_workflow"})
+
+#: A verified (workflow, run) pair is remembered so one operation does not
+#: re-query the workflow's runs, and the memo is bounded: a long-lived process
+#: cannot grow it without limit.
+MAX_VERIFIED_RUNS = 64
 
 
 def _bounded_read(stream, limit: int) -> bytes:
@@ -71,6 +85,12 @@ class GitHubProvider(RepositoryProvider):
         # grant naming another account behind the same token from being waved
         # through on the first account's verification (F07).
         self._verified_identity: Optional[Tuple[str, str]] = None
+        self._identity_lock = threading.Lock()
+        # N07: (workflow, run) pairs whose ownership the provider itself
+        # confirmed, bounded.  Authorization traffic of this kind is bounded
+        # separately from the grant's repository-operation ceiling (N06).
+        self._verified_runs: Dict[Tuple[str, str], bool] = {}
+        self._run_lock = threading.Lock()
 
     # -- identity ------------------------------------------------------------
     def capabilities(self) -> Tuple[Capability, ...]:
@@ -94,13 +114,14 @@ class GitHubProvider(RepositoryProvider):
         # Discovery is an externally connected path like any other: the identity
         # behind the token is verified before the request, and the call counts
         # against the grant's ceiling.
-        self._require_account_identity(grant)
+        self._require_account_identity(grant, self._token_value())
         reason = self._reserve_call(grant, "list_workflows")
         if reason:
             self._deny(grant, "list_workflows", reason)
             raise ConnectorDenied(reason)
         status, raw = self._exchange("list_workflows", "GET",
-                                     self._path_for("list_workflows", slots), {})
+                                     self._path_for("list_workflows", slots), {},
+                                     self._token_value())
         if status >= 300:
             raise ConnectorDenied("http_" + str(status))
         from .workflows import parse_workflows
@@ -110,18 +131,23 @@ class GitHubProvider(RepositoryProvider):
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise ConnectorDenied("invalid_response")
 
-    def verify_identity(self, expected_account: str, timeout: float = 10.0) -> Tuple[bool, str]:
+    def verify_identity(self, expected_account: str, timeout: float = 10.0,
+                        token: Optional[str] = None) -> Tuple[bool, str]:
         """Verify the account behind the token against the grant's account.
 
-        A token proves an identity, never write or Shell authorization; a
-        mismatch is reported instead of silently accepted.
+        ``token`` is the credential snapshot for this request; when it is not
+        supplied it is read once here, exactly as the caller would.  A token
+        proves an identity, never write or Shell authorization; a mismatch is
+        reported instead of silently accepted.
         """
-        if not self.token_env or not os.environ.get(self.token_env):
+        if token is None:
+            token = self._token_value()
+        if not self.token_env or token is None:
             return False, "configured"
         if not expected_account or not isinstance(expected_account, str):
             return False, "grant_account_invalid"
         try:
-            status, raw = self._account_request(timeout)
+            status, raw = self._account_request(timeout, token)
         except ConnectorDenied as exc:
             return False, str(exc)
         if status != 200:
@@ -180,20 +206,35 @@ class GitHubProvider(RepositoryProvider):
         except ConnectorDenied as exc:
             self._deny(grant, operation, str(exc))
             raise
-        # Every write body is validated against its operation contract before
-        # any transport is constructed: the reference that was checked is the
-        # reference that is sent, and a key the operation does not document
-        # never reaches the endpoint (N08).
+        # Every write body is validated against this provider's operation
+        # contract before any transport is constructed: the reference that was
+        # checked is the reference that is sent, a key the operation does not
+        # document never reaches the endpoint, and a mandatory reference key
+        # cannot be omitted (N08/N11).
         try:
-            check_write_body(grant, operation, body or {}, payload or {})
+            check_write_body(grant, operation, body or {}, payload or {},
+                             GITHUB_WRITE_BODY_CONTRACTS)
         except ConnectorDenied as exc:
             self._deny(grant, operation, str(exc))
             raise
+        # The credential is read **once** for this authorized request and that
+        # exact value is the one fingerprinted, verified and transmitted: a
+        # rotation mid-request cannot make the connector send a credential
+        # that was never verified (F07).
+        token = self._token_value()
         # A token proves an identity, never write or Shell authorization: the
         # account behind it must match the grant's account before a request.
-        self._require_account_identity(grant)
-        # The call slot is reserved before any transport exists, and the check
-        # and the increment are one atomic step under the provider's lock.
+        self._require_account_identity(grant, token)
+        # A run is addressed only after the provider's own metadata confirms it
+        # belongs to the granted workflow (N07).
+        if operation in RUN_OPERATIONS:
+            self._require_run_of_workflow(grant, slots, token)
+        if operation == "create_branch":
+            self._require_branch_source(grant, payload or {}, body or {}, token)
+        # The repository-operation ceiling is reserved atomically, before the
+        # repository exchange.  Identity and ownership verification are
+        # authorization traffic with their own bounded caches, and the grant's
+        # ``max_calls`` bounds repository operations (N06).
         reason = self._reserve_call(grant, operation)
         if reason:
             self._deny(grant, operation, reason)
@@ -201,7 +242,7 @@ class GitHubProvider(RepositoryProvider):
         path = self._path_for(operation, slots)
         if method is None:
             method = self._MUTATING.get(operation, "GET")
-        status, raw = self._exchange(operation, method, path, body or {})
+        status, raw = self._exchange(operation, method, path, body or {}, token)
         self._verify_response(operation, payload or {}, raw)
         event_reason = "ok" if status < 300 else "http_" + str(status)
         # A URL path never enters the audit event: the operation and status
@@ -240,16 +281,19 @@ class GitHubProvider(RepositoryProvider):
 
         return hashlib.sha256(provider.encode("utf-8") + b"\x00" + token.encode("utf-8")).hexdigest()
 
-    def _require_account_identity(self, grant: Grant) -> None:
+    def _require_account_identity(self, grant: Grant, token: Optional[str]) -> None:
         """Verify the account behind the token for this grant.
 
         A grant names the account it was issued for, and only a credential can
-        prove the account behind a token.  The remembered identity is the
-        **(token fingerprint, account)** pair that was actually verified, so a
-        second grant naming a different account behind the same token is
-        re-verified rather than accepted on the first one's word, and a
-        configured-but-absent credential never passes the guard: there is
-        nothing that could prove the account, so the request is refused.
+        prove the account behind a token.  ``token`` is the snapshot this
+        request read once: the same value is verified here and transmitted
+        later, so a credential that was never verified cannot ride out (F07).
+        The remembered identity is the verified **(token fingerprint,
+        account)** pair, so a second grant naming a different account behind
+        the same token is re-verified rather than accepted on the first one's
+        word, and a configured-but-absent credential never passes the guard:
+        there is nothing that could prove the account, so the request is
+        refused.
         """
         if not self.token_env:
             # No credential channel is configured at all: an in-process or
@@ -259,17 +303,100 @@ class GitHubProvider(RepositoryProvider):
         account = getattr(grant, "account", None)
         if not isinstance(account, str) or not account.strip():
             raise ConnectorDenied("grant_account_invalid")
-        token = self._token_value()
         if token is None:
             raise ConnectorDenied("credential_missing")
         identity = (self._token_fingerprint(self.name, token), account.strip())
-        if identity == self._verified_identity:
-            return
-        verified, reason = self.verify_identity(account.strip())
-        if not verified:
-            raise ConnectorDenied(reason)
-        # Only an actually verified (token, account) pair is remembered.
-        self._verified_identity = identity
+        with self._identity_lock:
+            if identity == self._verified_identity:
+                return
+            verified, reason = self.verify_identity(account.strip(), token=token)
+            if not verified:
+                raise ConnectorDenied(reason)
+            # Only an actually verified (token, account) pair is remembered.
+            self._verified_identity = identity
+
+    def _require_branch_source(self, grant: Grant, payload: Mapping[str, Any],
+                               body: Mapping[str, Any], token: Optional[str]) -> None:
+        """Bind a branch creation to the granted reference's own head (N08).
+
+        A branch is created **from** the granted reference, so its source must
+        be that reference's head as the provider reports it — trusted
+        metadata, not the caller's claim — and the new branch's target must be
+        a bounded ``refs/heads`` name rather than any other reference form.
+        """
+        reference = str(getattr(grant, "reference", "") or "")
+        target = body.get("ref")
+        if not isinstance(target, str) or len(target) > 128 \
+                or any(ord(character) < 0x20 or ord(character) == 0x7F
+                       for character in target):
+            raise ConnectorDenied("unsafe_body_value")
+        prefix = "refs/heads/"
+        if not target.startswith(prefix):
+            raise ConnectorDenied("unsafe_body_value")
+        # the branch name is a single bounded, path-free segment: a traversing
+        # or multi-segment target is not a branch name
+        name = target[len(prefix):]
+        if not name or len(name) > 64 or "/" in name or name in (".", "..") \
+                or name.strip() != name:
+            raise ConnectorDenied("unsafe_body_value")
+        repository = self._repository(payload)
+        status, raw = self._exchange("get_reference_head", "GET",
+                                     "/repos/{}/git/ref/heads/{}".format(repository,
+                                                                         reference),
+                                     {}, token)
+        if status >= 300:
+            raise ConnectorDenied("reference_head_unavailable")
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ConnectorDenied("invalid_response")
+        head = data.get("object", {}).get("sha") if isinstance(data, dict) else None
+        if not isinstance(head, str) or not head:
+            raise ConnectorDenied("reference_head_unavailable")
+        declared = payload.get("sha")
+        if declared is not None and str(declared) != head:
+            raise ConnectorDenied("reference_not_granted")
+        if str(body.get("sha", "")) != head:
+            raise ConnectorDenied("reference_not_granted")
+
+    def _require_run_of_workflow(self, grant: Grant, slots: Mapping[str, Any],
+                                 token: Optional[str]) -> None:
+        """Establish from trusted metadata that this run belongs to the grant.
+
+        A caller-declared workflow name proves nothing about which run an id
+        names: the run is addressed only after the workflow's **own runs list**
+        - the official endpoint's answer, not the caller's claim - contains
+        the requested id (N07).  A verified (workflow, run) pair is remembered
+        so a repeated operation on the same run does not re-query, and the
+        memo is bounded.  Missing or malformed ownership evidence refuses.
+        """
+        workflow = str(slots.get("workflow", ""))
+        run_id = str(slots.get("run_id", ""))
+        key = (workflow, run_id)
+        with self._run_lock:
+            if self._verified_runs.get(key):
+                return
+        repository = self._repository(slots)
+        status, raw = self._exchange("list_workflow_runs", "GET",
+                                     "/repos/{}/actions/workflows/{}/runs?per_page=100".format(
+                                         repository, workflow),
+                                     {}, token)
+        if status >= 300:
+            raise ConnectorDenied("run_ownership_unavailable")
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ConnectorDenied("invalid_response")
+        runs = data.get("workflow_runs") if isinstance(data, dict) else None
+        if not isinstance(runs, list):
+            raise ConnectorDenied("run_ownership_unavailable")
+        owned = {str(entry.get("id")) for entry in runs if isinstance(entry, dict)}
+        if run_id not in owned:
+            raise ConnectorDenied("run_not_of_workflow")
+        with self._run_lock:
+            self._verified_runs[key] = True
+            while len(self._verified_runs) > MAX_VERIFIED_RUNS:
+                self._verified_runs.pop(next(iter(self._verified_runs)))
 
     def _reserve_call(self, grant: Grant, operation: str) -> str:
         """Atomically verify the grant ceiling and reserve one call slot.
@@ -343,13 +470,14 @@ class GitHubProvider(RepositoryProvider):
         return paths.get(operation, "")
 
     # -- bounded HTTP --------------------------------------------------------
-    def _account_request(self, timeout: float) -> Tuple[int, bytes]:
+    def _account_request(self, timeout: float, token: Optional[str] = None) -> Tuple[int, bytes]:
         if self._transport is not None:
             return self._transport("GET", "/user", {})
         opener = urllib.request.build_opener(_NoRedirect)
         headers = {"Accept": "application/vnd.github+json",
                    "User-Agent": "tihulu-boru-core"}
-        token = os.environ.get(self.token_env) if self.token_env else None
+        if token is None:
+            token = self._token_value()
         if token:
             headers["Authorization"] = "Bearer " + token.strip()
         request = urllib.request.Request(self.base_url + "/user", method="GET", headers=headers)
@@ -373,14 +501,16 @@ class GitHubProvider(RepositoryProvider):
 
         return RepositoryRef.parse(str(payload.get("repository", ""))).encoded()
 
-    def _exchange(self, operation: str, method: str, path: str, body: Mapping[str, Any]) -> Tuple[int, bytes]:
+    def _exchange(self, operation: str, method: str, path: str, body: Mapping[str, Any],
+                  token: Optional[str] = None) -> Tuple[int, bytes]:
         if self._transport is not None:
             return self._transport(method, path, body)
         if not self.base_url.lower().startswith("https://") and not self.allow_http_endpoints:
             raise ConnectorDenied("insecure_endpoint")
         headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
                    "User-Agent": "tihulu-boru-core"}
-        token = os.environ.get(self.token_env) if self.token_env else None
+        if token is None:
+            token = self._token_value()
         if token:
             headers["Authorization"] = "Bearer " + token.strip()
         request = urllib.request.Request(self.base_url + path, method=method,

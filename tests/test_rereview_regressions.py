@@ -161,17 +161,17 @@ class F07Tests(unittest.TestCase):
                       issued_at=time.time(), expires_at=time.time() + 60, nonce="n")
         os.environ[variable] = "first-token"
         try:
-            self.assertTrue(provider._require_account_identity(grant) is None)
+            self.assertTrue(provider._require_account_identity(grant, "first-token") is None)
             verified = provider._verified_identity
             # the remembered identity is the verified (token fingerprint,
             # account) pair, so it binds the account and not the token alone
             self.assertIsNotNone(verified)
             self.assertEqual(grant.account, verified[1])
-            # a rotated token is re-checked, and the stored pair is not
+            # a rotated credential is re-checked, and the stored pair is not
             # updated by a failed check: a stale identity never authorizes it
             os.environ[variable] = "rotated-token"
             with self.assertRaises(ConnectorDenied):
-                provider._require_account_identity(grant)
+                provider._require_account_identity(grant, "rotated-token")
             self.assertEqual(verified, provider._verified_identity)
         finally:
             os.environ.pop(variable, None)
@@ -447,33 +447,54 @@ class N05Tests(unittest.TestCase):
 class F20Tests(unittest.TestCase):
     """The review package names the head it describes."""
 
-    def test_f20_the_package_pins_the_current_head(self):
-        """The package names the head it describes.
+    #: Paths whose change never alters the reviewed code tree.  A pin may name
+    #: an earlier commit only when **every** intervening change lives here.
+    DOCUMENTATION_ONLY_PATHS = ("docs/", "harness/")
 
-        The pin may name HEAD itself or one of its ancestors: a documents-only
-        commit after the pin moves the head without changing the code tree, and
-        requiring the pin to equal HEAD would make the test fail on its own
-        fix.  A pin that names an unknown or a future commit still fails.
+    def _pin_describes_head(self, pinned: str) -> None:
+        """Assert the pin names the reviewed code, exactly or documentably.
+
+        The reviewer's remedy for F20: an exact revision match, **or** an
+        explicit demonstration that every intervening change belongs to an
+        approved documentation-only path set.  Ancestry on its own is never
+        enough - a pin that names an older code revision while production code
+        has since changed is the F20 defect itself.
+        """
+        import subprocess
+
+        def git(*args):
+            return subprocess.run(["git"] + list(args), capture_output=True, text=True)
+
+        if git("rev-parse", "HEAD").returncode != 0:
+            self.skipTest("no git history is available in this tree")
+        resolved = git("rev-parse", "--verify", pinned + "^{commit}")
+        self.assertEqual(0, resolved.returncode,
+                         "the package pins an unknown commit: " + pinned)
+        if git("rev-parse", pinned).stdout.strip() == git("rev-parse", "HEAD").stdout.strip():
+            return  # exact revision match
+        changed = git("diff", "--name-only", pinned, "HEAD")
+        self.assertEqual(0, changed.returncode, "cannot compare the pin with HEAD")
+        files = [name for name in changed.stdout.splitlines() if name.strip()]
+        self.assertTrue(files, "the pin lags HEAD but nothing changed")
+        undocumented = sorted(name for name in files
+                              if not name.startswith(self.DOCUMENTATION_ONLY_PATHS))
+        self.assertEqual([], undocumented,
+                         "the package pins " + pinned + " but production code"
+                         " changed since: " + ", ".join(undocumented))
+
+    def test_f20_the_package_pins_the_current_head(self):
+        """The package names the head it describes, as reviewed code.
+
+        Exact revision match, or an explicit documentation-only path set for
+        the intervening commits (the third review's remedy).  A pin that names
+        an unknown or a future commit fails.
         """
         import re
-        import subprocess
 
         package = open("docs/REVIEW_PACKAGE.md", "r", encoding="utf-8").read()
         match = re.search(r"head under review: `([0-9a-f]{7,40})", package)
         self.assertIsNotNone(match, "the package names no head")
-        pinned = match.group(1)
-        head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
-        if head.returncode != 0:
-            self.skipTest("no git history is available in this tree")
-        head = head.stdout.strip()
-        resolved = subprocess.run(["git", "rev-parse", "--verify", pinned + "^{commit}"],
-                                  capture_output=True, text=True)
-        self.assertEqual(0, resolved.returncode,
-                         "the package pins an unknown commit: " + pinned)
-        ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", pinned, head],
-                                  capture_output=True)
-        self.assertEqual(0, ancestor.returncode,
-                         "the package pins " + pinned + " which is not HEAD or its ancestor")
+        self._pin_describes_head(match.group(1))
 
 
 if __name__ == "__main__":

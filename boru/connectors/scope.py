@@ -88,18 +88,23 @@ WORKFLOW_OPERATIONS = {
     "get_run", "get_run_logs", "get_artifacts",
 }
 
-#: N08: per-operation write-body contracts.  Each entry maps an operation to
-#: (the only keys its body may carry, the keys whose value must be exactly the
-#: granted reference).  A body that carries a reference the grant did not
-#: authorize - or a key the operation does not document - is refused before any
-#: transport exists, so the value that was checked is the value that is sent.
-WRITE_BODY_CONTRACTS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
+#: N08/N11: per-provider, per-operation write-body contracts.  Each entry maps
+#: an operation to (the only keys its body may carry, the keys that are
+#: **mandatory and must equal the granted reference**).  A reference key is
+#: required, not merely checked when present: omitting it would let the remote
+#: API apply its own default-branch behaviour, which is the divergence N08
+#: describes.  Each provider has its own table because the official endpoints
+#: use different field names (GitHub ``head``/``base`` versus GitLab
+#: ``source_branch``/``target_branch``) — one shared table refused legitimate
+#: GitLab requests (N11).
+GITHUB_WRITE_BODY_CONTRACTS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "create_issue": (("title", "body", "labels", "assignees", "milestone"), ()),
     "comment_issue": (("body",), ()),
     "update_issue": (("title", "body", "state", "labels", "assignees", "milestone"), ()),
     "create_branch": (("ref", "sha"), ()),
     "put_file": (("message", "content", "branch", "sha", "committer", "author"), ("branch",)),
-    "create_pull": (("title", "head", "base", "body", "draft", "maintainer_can_modify"), ("base",)),
+    "create_pull": (("title", "head", "base", "body", "draft", "maintainer_can_modify"),
+                    ("base",)),
     "review_pull": (("body", "event", "comments"), ()),
     "merge_pull": (("commit_title", "commit_message", "sha", "merge_method"), ()),
     "dispatch_workflow": (("ref", "inputs"), ("ref",)),
@@ -109,6 +114,32 @@ WRITE_BODY_CONTRACTS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "create_release": (("tag_name", "target_commitish", "name", "body", "draft", "prerelease"),
                        ("target_commitish",)),
 }
+
+#: GitLab's official request shapes: merge requests use ``source_branch`` and
+#: ``target_branch``, a branch is created from a ``ref``, and a release targets
+#: a ``ref``.  The mandatory column is the destination reference each write
+#: must name, exactly as the grant authorizes it.
+GITLAB_WRITE_BODY_CONTRACTS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
+    "create_issue": (("title", "description", "labels", "assignee_ids", "milestone_id"), ()),
+    "comment_issue": (("body",), ()),
+    "update_issue": (("title", "description", "state_event", "labels", "assignee_ids",
+                      "milestone_id"), ()),
+    "create_branch": (("branch", "ref"), ("ref",)),
+    "put_file": (("branch", "content", "encoding", "commit_message"), ("branch",)),
+    "create_pull": (("title", "source_branch", "target_branch", "description",
+                     "remove_source_branch", "squash"), ("target_branch",)),
+    "review_pull": (("body",), ()),
+    "merge_pull": (("merge_request_message", "squash", "squash_commit_message"), ()),
+    "dispatch_workflow": (("ref", "inputs"), ("ref",)),
+    "rerun_workflow": ((), ()),
+    "cancel_run": ((), ()),
+    "configure_workflow": ((), ()),
+    "create_release": (("tag_name", "ref", "name", "description", "assets"),
+                       ("ref",)),
+}
+
+#: Kept for callers that want one provider's table by name.
+WRITE_BODY_CONTRACTS = GITHUB_WRITE_BODY_CONTRACTS
 
 #: Body values are bounded: a body is a small typed document, never a payload.
 MAX_BODY_DEPTH = 2
@@ -367,28 +398,46 @@ def _check_body_value(value: Any, label: str, depth: int = 0) -> None:
 
 
 def check_write_body(grant: Any, operation: str, body: Any,
-                     payload: Optional[Mapping[str, Any]] = None) -> None:
-    """Validate a write body against its operation contract (N08).
+                     payload: Optional[Mapping[str, Any]] = None,
+                     contracts: Optional[Mapping[str, Tuple[Tuple[str, ...], Tuple[str, ...]]]] = None) -> None:
+    """Validate a write body against its operation contract (N08/N11).
 
     ``check_call`` validates the request's **slots** and
     ``check_dispatch_body`` validates a dispatch body; every other write
     operation used to transmit its body unchecked, so the reference that was
-    validated could diverge from the reference the body carried.  Each write
-    operation now has a typed contract: the only keys it may carry, and the
-    keys that must be exactly the granted reference.  The dispatch body itself
-    stays with ``check_dispatch_body``, which additionally enforces its
-    owner-declared input schema.
+    validated could diverge from the reference the body carried.  Each
+    provider now has a typed contract per operation: the only keys it may
+    carry, and the reference keys that are **mandatory** and must equal the
+    granted reference.  The dispatch body itself stays with
+    ``check_dispatch_body``, which additionally enforces its owner-declared
+    input schema.
+
+    ``contracts`` selects the provider's table.  It defaults to the GitHub
+    table only so an older caller keeps the GitHub behaviour; both shipped
+    connectors pass their own table explicitly.
+
+    Operation-specific **provider** rules stay with the provider: GitHub's
+    branch creation (a bounded ``refs/heads`` target and a source sha taken
+    from the reference's own head) and GitLab's branch and merge-request
+    field names are checked by each connector against its own endpoint, so a
+    shared table can neither weaken nor misapply them.
     """
     if operation == "dispatch_workflow":
         # The dispatch body has its own schema-binding check.
         check_dispatch_body(grant, body or {})
         return
-    contract = WRITE_BODY_CONTRACTS.get(operation)
+    table = contracts if contracts is not None else GITHUB_WRITE_BODY_CONTRACTS
+    contract = table.get(operation)
     if contract is None:
         # Not a recognized write operation: nothing to check here.
         return
     allowed_keys, reference_keys = contract
     if body is None:
+        # A mandatory reference key cannot be absent: an absent one lets the
+        # remote API choose its own default branch, which is the divergence
+        # this contract exists to close.
+        if reference_keys:
+            raise ConnectorDenied("reference_required_in_body")
         return
     if not isinstance(body, Mapping):
         raise ConnectorDenied("invalid_body")
@@ -401,15 +450,7 @@ def check_write_body(grant: Any, operation: str, body: Any,
         _check_body_value(value, key)
     granted_reference = str(getattr(grant, "reference", "") or "")
     for key in reference_keys:
-        if key in body and str(body[key]) != granted_reference:
+        if key not in body:
+            raise ConnectorDenied("reference_required_in_body")
+        if str(body[key]) != granted_reference:
             raise ConnectorDenied("reference_not_granted")
-    if operation == "create_branch":
-        # A branch is created *from* the granted reference: the body's source
-        # sha must be the one the request declared, and the target must be a
-        # bounded refs/heads name, not a path or another reference form.
-        declared = (payload or {}).get("sha")
-        if declared is not None and str(body.get("sha", "")) != str(declared):
-            raise ConnectorDenied("reference_not_granted")
-        target = body.get("ref")
-        if not isinstance(target, str) or not target.startswith("refs/heads/"):
-            raise ConnectorDenied("unsafe_body_value")

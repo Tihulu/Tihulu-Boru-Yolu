@@ -25,6 +25,17 @@ MAX_EVENTS = 256
 #: ids are refused rather than silently replaying an evicted one.
 MAX_SEEN = 8192
 
+#: A restored checkpoint is inspected with a bounded budget of **entries**, not
+#: only unique ids: a duplicate-heavy source must not be drained completely to
+#: fill a registry that never grew (N05).  The budget is several times the
+#: registry bound, so a legitimate checkpoint with some duplicates still loads.
+MAX_RESTORED_ENTRIES = 4 * MAX_SEEN
+
+#: A restored id is held to the same shape as a live event id, oversized ones
+#: included: a checkpoint entry that is not a usable id is refused rather than
+#: silently dropped.
+MAX_EVENT_ID_LENGTH = 128
+
 
 @dataclass(frozen=True)
 class SyncEvent:
@@ -83,11 +94,22 @@ class PollingSync:
         # a 10,000-entry checkpoint is stopped at the bound instead of being
         # drained into memory first (N05).
         if seen is not None:
+            inspected = 0
             for event_id in seen:
+                inspected += 1
+                # The bound applies while the source is consumed, on **both**
+                # axes: the registry as it is filled, and the number of entries
+                # inspected.  A duplicate-heavy checkpoint therefore stops at
+                # the inspected budget instead of being drained completely
+                # (N05).
+                if inspected > MAX_RESTORED_ENTRIES:
+                    raise ConnectorDenied("restored history exceeds the bounded registry")
                 if isinstance(event_id, str) and event_id and event_id not in self._seen_set:
-                    # The bound applies to the registry as it is filled: the
-                    # entry that would exceed it is refused as it arrives, so an
-                    # oversized source is never drained into memory first.
+                    if len(event_id) > MAX_EVENT_ID_LENGTH:
+                        raise ConnectorDenied("restored event id is oversized")
+                    if any(ord(character) < 0x20 or ord(character) == 0x7F
+                           for character in event_id):
+                        raise ConnectorDenied("restored event id is malformed")
                     if len(self._seen) >= MAX_SEEN:
                         raise ConnectorDenied("restored history exceeds the bounded registry")
                     self._seen.append(event_id)

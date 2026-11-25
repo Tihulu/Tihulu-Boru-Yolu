@@ -16,10 +16,23 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
-from .scope import check_call, check_dispatch_body, check_write_body
+from .scope import (
+    GITLAB_WRITE_BODY_CONTRACTS, check_call, check_dispatch_body, check_write_body,
+)
 
 API_BASE = "https://gitlab.com"
 MAX_PAGE = 100
+
+#: Operations that address one pipeline.  A pipeline's ownership is established
+#: from trusted provider metadata - the pipelines of the **granted reference** -
+#: before it is addressed, because a caller-declared workflow name says nothing
+#: about which pipeline an id names (N07).
+RUN_OPERATIONS = frozenset({"get_run", "get_run_logs", "get_artifacts",
+                            "cancel_run", "rerun_workflow"})
+
+#: A verified (workflow, run) pair is remembered so one operation does not
+#: re-query, and the memo is bounded.
+MAX_VERIFIED_RUNS = 64
 #: An error body is diagnostic, never a payload: keep only a bounded prefix.
 MAX_ERROR_BODY_BYTES = 4 * 1024
 
@@ -66,6 +79,12 @@ class GitLabProvider(RepositoryProvider):
         # Call accounting is shared by every path that reaches an endpoint, so
         # a ceiling check and its reservation cannot interleave (N06).
         self._call_lock = threading.Lock()
+        self._identity_lock = threading.Lock()
+        # N07: (workflow, run) pairs whose ownership the provider itself
+        # confirmed, bounded.  Authorization traffic of this kind is bounded
+        # separately from the grant's repository-operation ceiling (N06).
+        self._verified_runs: Dict[Tuple[str, str], bool] = {}
+        self._run_lock = threading.Lock()
         # The verified identity: the (token fingerprint, account) pair that was
         # actually checked.  Binding the account too is what stops a second
         # grant naming another account behind the same token from being waved
@@ -82,14 +101,21 @@ class GitLabProvider(RepositoryProvider):
             return "configured"
         return "disconnected"
 
-    def verify_identity(self, expected_account: str, timeout: float = 10.0) -> Tuple[bool, str]:
-        """Verify the account behind the token against the grant's account."""
-        if not self.token_env or not os.environ.get(self.token_env):
+    def verify_identity(self, expected_account: str, timeout: float = 10.0,
+                        token: Optional[str] = None) -> Tuple[bool, str]:
+        """Verify the account behind the token against the grant's account.
+
+        ``token`` is the credential snapshot for this request; when it is not
+        supplied it is read once here, exactly as the caller would.
+        """
+        if token is None:
+            token = self._token_value()
+        if not self.token_env or token is None:
             return False, "configured"
         if not expected_account or not isinstance(expected_account, str):
             return False, "grant_account_invalid"
         try:
-            status, raw = self._account_request(timeout)
+            status, raw = self._account_request(timeout, token)
         except ConnectorDenied as exc:
             return False, str(exc)
         if status != 200:
@@ -137,19 +163,27 @@ class GitLabProvider(RepositoryProvider):
         except ConnectorDenied as exc:
             self._deny(grant, operation, str(exc))
             raise
-        # Every write body is validated against its operation contract before
-        # any transport is constructed: the reference that was checked is the
-        # reference that is sent, and a key the operation does not document
-        # never reaches the endpoint (N08).
+        # Every write body is validated against this provider's operation
+        # contract before any transport is constructed (N08/N11).
         try:
-            check_write_body(grant, operation, body or {}, payload or {})
+            check_write_body(grant, operation, body or {}, payload or {},
+                             GITLAB_WRITE_BODY_CONTRACTS)
         except ConnectorDenied as exc:
             self._deny(grant, operation, str(exc))
             raise
+        # The credential is read once for this authorized request, and that
+        # exact value is the one fingerprinted, verified and transmitted (F07).
+        token = self._token_value()
         # A token proves an identity, never write or Shell authorization.
-        self._require_account_identity(grant)
-        # The call slot is reserved before any transport exists, and the check
-        # and the increment are one atomic step under the provider's lock.
+        self._require_account_identity(grant, token)
+        # A pipeline is addressed only after the provider's own metadata
+        # confirms it belongs to the granted reference (N07).
+        if operation in RUN_OPERATIONS:
+            self._require_run_of_reference(grant, slots, token)
+        # The repository-operation ceiling is reserved atomically, before the
+        # repository exchange.  Identity and ownership verification are
+        # authorization traffic with their own bounded caches, and the grant's
+        # ``max_calls`` bounds repository operations (N06).
         reason = self._reserve_call(grant, operation)
         if reason:
             self._deny(grant, operation, reason)
@@ -157,7 +191,7 @@ class GitLabProvider(RepositoryProvider):
         path = self._path_for(operation, slots)
         if method is None:
             method = self._MUTATING.get(operation, "GET")
-        status, raw = self._exchange(method, path, body or {})
+        status, raw = self._exchange(method, path, body or {}, token)
         reason_event = "ok" if status < 300 else "http_" + str(status)
         # A URL path never enters the audit event: the operation and status
         # describe the call without naming a repository route.
@@ -204,16 +238,14 @@ class GitLabProvider(RepositoryProvider):
 
         return hashlib.sha256(provider.encode("utf-8") + b"\x00" + token.encode("utf-8")).hexdigest()
 
-    def _require_account_identity(self, grant: Grant) -> None:
+    def _require_account_identity(self, grant: Grant, token: Optional[str]) -> None:
         """Verify the account behind the token for this grant.
 
-        A grant names the account it was issued for, and only a credential can
-        prove the account behind a token.  The remembered identity is the
-        **(token fingerprint, account)** pair that was actually verified, so a
-        second grant naming a different account behind the same token is
-        re-verified rather than accepted on the first one's word, and a
-        configured-but-absent credential never passes the guard: there is
-        nothing that could prove the account, so the request is refused.
+        ``token`` is the snapshot this request read once: the same value is
+        verified here and transmitted later, so a credential that was never
+        verified cannot ride out (F07).  The remembered identity is the
+        verified **(token fingerprint, account)** pair, and a
+        configured-but-absent credential never passes the guard.
         """
         if not self.token_env:
             # No credential channel is configured at all: an in-process or
@@ -223,17 +255,56 @@ class GitLabProvider(RepositoryProvider):
         account = getattr(grant, "account", None)
         if not isinstance(account, str) or not account.strip():
             raise ConnectorDenied("grant_account_invalid")
-        token = self._token_value()
         if token is None:
             raise ConnectorDenied("credential_missing")
         identity = (self._token_fingerprint(self.name, token), account.strip())
-        if identity == self._verified_identity:
-            return
-        verified, reason = self.verify_identity(account.strip())
-        if not verified:
-            raise ConnectorDenied(reason)
-        # Only an actually verified (token, account) pair is remembered.
-        self._verified_identity = identity
+        with self._identity_lock:
+            if identity == self._verified_identity:
+                return
+            verified, reason = self.verify_identity(account.strip(), token=token)
+            if not verified:
+                raise ConnectorDenied(reason)
+            # Only an actually verified (token, account) pair is remembered.
+            self._verified_identity = identity
+
+    def _require_run_of_reference(self, grant: Grant, slots: Mapping[str, Any],
+                                  token: Optional[str]) -> None:
+        """Establish from trusted metadata that this pipeline belongs to the
+        grant (N07).
+
+        A caller-declared workflow name proves nothing about which pipeline an
+        id names, so the pipeline is addressed only after the pipelines of the
+        **granted reference** - the official endpoint's answer, not the
+        caller's claim - contain the requested id.  A verified pair is
+        remembered, bounded; missing or malformed evidence refuses.
+        """
+        workflow = str(slots.get("workflow", ""))
+        run_id = str(slots.get("run_id", ""))
+        key = (workflow, run_id)
+        with self._run_lock:
+            if self._verified_runs.get(key):
+                return
+        project = self._project(slots)
+        reference = str(slots.get("reference", ""))
+        status, raw = self._exchange("GET",
+                                     "/api/v4/projects/{}/pipelines?ref={}&per_page=100".format(
+                                         project, reference),
+                                     {}, token)
+        if status >= 300:
+            raise ConnectorDenied("run_ownership_unavailable")
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else []
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ConnectorDenied("invalid_response")
+        if not isinstance(data, list):
+            raise ConnectorDenied("run_ownership_unavailable")
+        owned = {str(entry.get("id")) for entry in data if isinstance(entry, dict)}
+        if run_id not in owned:
+            raise ConnectorDenied("run_not_of_workflow")
+        with self._run_lock:
+            self._verified_runs[key] = True
+            while len(self._verified_runs) > MAX_VERIFIED_RUNS:
+                self._verified_runs.pop(next(iter(self._verified_runs)))
 
     def _reserve_call(self, grant: Grant, operation: str) -> str:
         """Atomically verify the grant ceiling and reserve one call slot.
@@ -287,12 +358,13 @@ class GitLabProvider(RepositoryProvider):
         }
         return paths.get(operation, "")
 
-    def _account_request(self, timeout: float) -> Tuple[int, bytes]:
+    def _account_request(self, timeout: float, token: Optional[str] = None) -> Tuple[int, bytes]:
         if self._transport is not None:
             return self._transport("GET", "/api/v4/user", {})
         opener = urllib.request.build_opener(_NoRedirect)
         headers = {"Accept": "application/json", "User-Agent": "tihulu-boru-core"}
-        token = os.environ.get(self.token_env) if self.token_env else None
+        if token is None:
+            token = self._token_value()
         if token:
             headers["PRIVATE-TOKEN"] = token.strip()
         request = urllib.request.Request(self.base_url + "/api/v4/user", method="GET",
@@ -317,14 +389,16 @@ class GitLabProvider(RepositoryProvider):
 
         return RepositoryRef.parse(str(payload.get("repository", ""))).percent_encoded()
 
-    def _exchange(self, method: str, path: str, body: Mapping[str, Any]) -> Tuple[int, bytes]:
+    def _exchange(self, method: str, path: str, body: Mapping[str, Any],
+                  token: Optional[str] = None) -> Tuple[int, bytes]:
         if self._transport is not None:
             return self._transport(method, path, body)
         if not self.base_url.lower().startswith("https://") and not self.allow_http_endpoints:
             raise ConnectorDenied("insecure_endpoint")
         headers = {"Accept": "application/json", "Content-Type": "application/json",
                    "User-Agent": "tihulu-boru-core"}
-        token = os.environ.get(self.token_env) if self.token_env else None
+        if token is None:
+            token = self._token_value()
         if token:
             headers["PRIVATE-TOKEN"] = token.strip()
         request = urllib.request.Request(self.base_url + path, method=method,

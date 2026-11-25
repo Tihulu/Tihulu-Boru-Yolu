@@ -365,6 +365,11 @@ class N07RunScopeTests(unittest.TestCase):
         self.assertEqual("workflow_not_granted", str(raised.exception))
 
     def test_n07_the_granted_workflow_scopes_the_run(self):
+        # the workflow's own runs list confirms run 42 belongs to it, and only
+        # then is the run addressed
+        self.provider._transport = lambda method, path, body: (
+            (200, b'{"workflow_runs": [{"id": "42"}]}')
+            if path.endswith("/runs?per_page=100") else (200, b'{}'))
         payload = self.provider.call(self.subject, "get_run",
                                      {"repository": "owner/repo", "run_id": "42",
                                       "workflow": "ci.yml"})
@@ -421,11 +426,13 @@ class N08WriteBodyTests(unittest.TestCase):
                                   repository="owner/project")
         provider = GitLabProvider()
         provider._transport = lambda m, p, b: (201, b'{"iid": 1}')
+        # GitLab's own field names are the documented ones, and a target
+        # branch the grant did not authorize is refused (N11)
         with self.assertRaises(ConnectorDenied) as raised:
             provider.call(subject, "create_pull", {"repository": "owner/project"},
                           body={"title": "synthetic", "source_branch": "feature",
                                 "target_branch": "develop"})
-        self.assertEqual("body_unknown_key", str(raised.exception))
+        self.assertEqual("reference_not_granted", str(raised.exception))
 
 
 class N09GrantValidityTests(unittest.TestCase):

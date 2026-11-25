@@ -124,3 +124,46 @@ are not affected by this work.
 
 **Next step:** push the exact head, verify its CI, and request a third
 independent review against it.
+
+## 3-D. Gate 1 third review of `9b6ce534` (25 November 2026) — FAIL / DO NOT APPROVE
+
+The reviewer verified the CI run for this head independently but **could not
+clone the repository** (`Could not resolve host: github.com`), so it inspected
+pinned source retrieved by exact SHA and executed isolated source-excerpt
+probes. It states it cannot certify the 727-test count from CI metadata alone
+and that a maintainer CI run is not an independent reproduction. Both
+statements are recorded here rather than paraphrased away.
+
+It accepted on static evidence: F03, F12, F17, N09. It retained the earlier
+acceptance of F06, F14, F15, N01, N03 and N04 — those findings are not
+reopened without evidence.
+
+| # | Severity | Finding (as reported) | Reproduced? | Remediation | Named regression tests |
+|---|---|---|---|---|---|
+| N07 | High | A caller-declared workflow name was checked, but nothing established that the requested **run** belongs to that workflow: the run endpoint was built from the run id alone | Yes — the reviewer's own probe: `ci.yml` declared, run 42 of `other.yml` fetched | A run is addressed only after the **provider's own metadata** confirms ownership: the granted workflow's runs list (GitHub) or the granted reference's pipelines (GitLab). Missing or malformed evidence refuses (`run_ownership_unavailable`), a foreign run refuses (`run_not_of_workflow`), and a verified pair is remembered in a bounded memo | `tests/test_review4_regressions.py::N07RunOwnershipTests` (6 tests, both connectors) |
+| N08 | High | Reference-carrying body keys were validated only **when present**, so omitting `branch`/`target_commitish` diverged from the granted reference; `create_branch` did not bind its source sha | Yes — omitted `put_file.branch`, omitted `create_release.target_commitish`, and a diverging `create_pull.base` were all accepted | Reference keys are **mandatory** per operation (`reference_required_in_body` when absent, `reference_not_granted` when divergent). GitHub's branch creation binds its source sha to the granted reference's own head taken from provider metadata, and the target must be a bounded, path-free `refs/heads` name | `...::N08WriteBodyTests` (7 tests) |
+| F07 | High | The credential was read separately for fingerprinting, verification and the exchange, so a rotation mid-request could transmit an unverified credential | Yes — traced through the three read sites | The credential is read **once per authorized request** and that exact snapshot is fingerprinted, verified and transmitted; a rotation after verification produces a different fingerprint and forces re-verification | `...::F07CredentialSnapshotTests` (2 tests) |
+| N02 | Medium | The discovery regression exercised the generic `call()` path, not the typed discovery entry point | Yes — the old test named the generic path | The typed entry point `list_workflows_typed()` is now exercised for both the identity guard and the grant ceiling | `...::N02TypedDiscoveryTests` (2 tests) |
+| N05 | Medium | The constructor bounded unique ids but not inspected entries (13,192 duplicates fully consumed) and accepted a 1,000,000-character restored id | Yes — both probes reproduced | The checkpoint is bounded on **inspected entries** (`MAX_RESTORED_ENTRIES`) as well as unique ids, and a restored id must be bounded and well-formed: oversized or control-carrying ids are refused rather than silently dropped | `...::N05CheckpointBoundTests` (5 tests) |
+| N06 | Medium | An uncached identity verification could issue an HTTP request before the reservation, and the ceiling's scope was undefined for that traffic | Yes — the ordering was visible in the source | The scope is now **defined and documented**: `max_calls` bounds repository operations, and identity and ownership verification are authorization traffic with their own bounded caches (one identity request per verified (token, account) pair, one ownership lookup per verified (workflow, run) pair). The claim "before any transport exists" is removed from the code and the docs | `...::N06CeilingScopeTests` (2 tests) |
+| N11 | Medium (new) | One shared write-body contract used GitHub field names, so a legitimate GitLab merge request (`source_branch`/`target_branch`) was refused as an unknown key | Yes — the old test asserted the rejection as if it were correct coverage | Each provider has its **own** contract table (`GITHUB_WRITE_BODY_CONTRACTS`, `GITLAB_WRITE_BODY_CONTRACTS`) with its official field names, its own mandatory references, and positive as well as negative tests | `...::N11ProviderContractTests` (4 tests) |
+| F20 | Informational | The package pinned `176034a` while the candidate carried subsequent production code; ancestry is not code-tree equivalence | Yes — the pin lagged by seven commits | The pin contract now requires the pinned tree to equal HEAD's tree, so a documents-only re-pin passes and a production-code commit that is not re-pinned fails | `...::F20RevisionBindingTests` and `tests/test_rereview_regressions.py::F20Tests` |
+| N10 | Medium | Several closures rested on tests that did not exercise the full invariant | Yes — each named deficiency was checked against its test | Every closure in this section now rests on a **behavioural** test that drives the production entry point (the provider `call()`, the typed discovery method, the polling constructor, the consent store's own retention) and fails against the vulnerable implementation. The deficiencies the reviewer named — manual SQL instead of the retention API, the generic discovery path, untested duplicates and oversized ids, a disabled credential channel, a declared workflow rather than the run's own, omitted reference fields, and ancestry rather than equivalence — are each closed by a test that would fail before the fix | `tests/test_review4_regressions.py` (30 tests) |
+
+**Recovered historical findings:** F06 (worker-scope spoofing) and F20 (evidence
+pinned to the wrong commit) are recorded as recovered substance, not verbatim
+quotations. The recovered F06 reproducer is asserted denied in
+`tests/test_rereview_regressions.py::F06Tests`; the F20 contract above is the
+revised evidence pin. Both remain marked *re-confirm* pending the original
+reviewer's canonical text.
+
+**Scope of this remediation, stated honestly:** every fix is source-level and
+unit-tested against test-owned transports. No live provider, GitHub token or
+host shell was used. The reviewer's isolated probes were reproduced first, so
+each fix is anchored to an observed defect rather than to a reading. The
+reviewer's own execution limitation could not be closed from this repository:
+an independent clone and full-suite reproduction remain the reviewer's gate,
+and this section does not claim them.
+
+**Next step:** push the exact head, verify its CI, re-pin the review package,
+and request a fourth independent review against it.

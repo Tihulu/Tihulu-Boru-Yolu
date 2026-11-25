@@ -147,6 +147,8 @@ class GitHubProviderTests(unittest.TestCase):
 
         def record(method, path, body):
             seen.append(path)
+            if path.endswith("/runs?per_page=100"):
+                return (200, b'{"workflow_runs": [{"id": 42}]}')
             return (200, b'{}')
 
         self.provider._transport = record
@@ -222,13 +224,16 @@ class GitLabProviderTests(unittest.TestCase):
 
         def record(method, path, body):
             seen.append(path)
+            if "/pipelines?ref=main" in path:
+                return (200, b'[{"id": 42}]')
             return (200, b'{}')
 
         self.provider._transport = record
         reader = grant(operations=("get_run",), nonce="gl-3", repository="owner/project",
                        workflow_ids=("ci.yml",))
         self.provider.call(reader, "get_run",
-                           {"repository": "owner/project", "run_id": 42, "workflow": "ci.yml"})
+                           {"repository": "owner/project", "run_id": 42, "workflow": "ci.yml",
+                            "reference": "main"})
         dispatch = grant(operations=("dispatch_workflow",), capabilities=(Capability.ACTIONS_DISPATCH,),
                          nonce="gl-4", repository="owner/project", workflow_ids=("ci.yml",))
         self.provider.call(dispatch, "dispatch_workflow",
