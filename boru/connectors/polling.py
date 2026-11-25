@@ -59,7 +59,7 @@ def event_id(value: Any) -> str:
     skipped: silently dropping a malformed checkpoint entry hides corruption
     the owner should see, and a whitespace-only id is not an id.
     """
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ConnectorDenied("event_id_malformed")
     if not value or value.strip() != value or len(value) > MAX_EVENT_ID_LENGTH:
         raise ConnectorDenied("event_id_malformed")
@@ -151,7 +151,7 @@ class PollingSync:
 
     def _validate_raw_type(self, raw_type: Any) -> str:
         """Validate a raw event type BEFORE coercion (N05)."""
-        if not isinstance(raw_type, str):
+        if type(raw_type) is not str:
             raise ConnectorDenied("event_type_malformed")
         if not raw_type or raw_type.strip() != raw_type or len(raw_type) > 64:
             raise ConnectorDenied("event_type_malformed")
@@ -175,6 +175,17 @@ class PollingSync:
         with self._lock:
             return [e for e in parsed if e.event_id not in self._seen_set]
 
+    @staticmethod
+    def _copy_payload(value: Any) -> Mapping[str, Any]:
+        if not isinstance(value, Mapping):
+            raise ConnectorDenied("events_malformed")
+        copied = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 32 or type(key) is not str or key in copied:
+                raise ConnectorDenied("events_malformed")
+            copied[key] = item
+        return copied
+
     def _normalize_raw(self, raw_events: Any) -> List[SyncEvent]:
         """Internal normalize without idempotency filtering."""
         if not isinstance(raw_events, list):
@@ -183,7 +194,9 @@ class PollingSync:
             raise ConnectorDenied("events_too_many")
 
         parsed: List[SyncEvent] = []
-        for entry in raw_events:
+        for index, entry in enumerate(raw_events):
+            if index >= MAX_EVENTS:
+                raise ConnectorDenied("events_too_many")
             if not isinstance(entry, Mapping):
                 raise ConnectorDenied("events_malformed")
             unknown = sorted(set(entry) - {"id", "type", "payload"})
@@ -201,7 +214,7 @@ class PollingSync:
             event = SyncEvent(
                 event_id=validated_id,
                 event_type=validated_type,
-                payload=dict(entry.get("payload") or {})
+                payload=self._copy_payload(entry.get("payload", {}))
             )
             if event.validate():
                 raise ConnectorDenied("events_malformed")
@@ -225,12 +238,8 @@ class PollingSync:
                 raise ConnectorDenied("event_malformed")
             identifier = event_id(event.event_id)
             kind = self._validate_raw_type(event.event_type)
-            if not isinstance(event.payload, Mapping) or len(event.payload) > 32:
-                raise ConnectorDenied("events_malformed")
-            # Detach top-level payload from its caller before staging.
-            payload = dict(event.payload)
-            if len(payload) > 32:
-                raise ConnectorDenied("events_malformed")
+            # Bound actual entries inspected, not a caller's claimed length.
+            payload = self._copy_payload(event.payload)
             if not self.allowlist.permits(kind):
                 raise ConnectorDenied("event_type_not_allowed")
             staged.append(SyncEvent(identifier, kind, payload))

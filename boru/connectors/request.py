@@ -59,7 +59,13 @@ def freeze_mapping(value: Any) -> Mapping[str, Any]:
         return MappingProxyType({})
     if not isinstance(value, Mapping):
         raise ConnectorDenied("invalid_body")
-    return freeze(value)
+    try:
+        return freeze(value)
+    except ConnectorDenied:
+        raise
+    except (TypeError, ValueError, KeyError, RuntimeError):
+        # A changing or malformed Mapping cannot reach the transport.
+        raise ConnectorDenied("invalid_body") from None
 
 
 def wire_body(value: Any) -> Any:

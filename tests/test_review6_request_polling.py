@@ -1,6 +1,8 @@
 """Review six remediation: actual connector boundaries, mock transport only."""
+import json
 import time
 import unittest
+from unittest import mock
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from boru.connectors.base import Capability, Grant
@@ -63,6 +65,40 @@ class RequestTests(unittest.TestCase):
                     self.assertEqual(1, body.reads)
                     self.assertEqual([{"labels":labels}], received)
 
+    def test_branch_authorizes_exact_captured_sha_after_callback(self):
+        good, bad = "a"*40, "b"*40
+        sent = []
+        body = {"ref":"refs/heads/feature", "sha":bad}
+        def transport(method, path, payload):
+            sent.append((method, path, payload))
+            if method == "GET":
+                return 200, json.dumps({"object":{"sha":good}}).encode()
+            return 200, b"{}"
+        provider = GitHubProvider(transport=transport)
+        def mutate(*args):
+            body["sha"] = good
+        with mock.patch.object(provider, "_require_account_identity", side_effect=mutate):
+            with self.assertRaisesRegex(ConnectorDenied, "reference_not_granted"):
+                provider.call(grant("create_branch", Capability.CODE_PR_WRITE), "create_branch",
+                              {"repository":"owner/repo","reference":"main"}, body=body)
+        self.assertEqual(["GET"], [method for method, _, _ in sent])
+
+    def test_failed_branch_source_lookups_charge_budget(self):
+        sent = []
+        def transport(method, path, body):
+            sent.append((method,path))
+            return 404, b"{}"
+        provider = GitHubProvider(transport=transport)
+        with mock.patch("boru.connectors.github.MAX_AUTHORIZATION_REQUESTS", 2):
+            for _ in range(2):
+                with self.assertRaisesRegex(ConnectorDenied, "reference_head_unavailable"):
+                    provider.call(grant("create_branch", Capability.CODE_PR_WRITE), "create_branch",
+                                  {"repository":"owner/repo"}, body={"ref":"refs/heads/f","sha":"a"*40})
+            with self.assertRaisesRegex(ConnectorDenied, "authorization_traffic_exhausted"):
+                provider.call(grant("create_branch", Capability.CODE_PR_WRITE), "create_branch",
+                              {"repository":"owner/repo"}, body={"ref":"refs/heads/f","sha":"a"*40})
+        self.assertEqual(2, len(sent))
+
 
 class PollingAtomicityTests(unittest.TestCase):
     def test_capacity_failure_preserves_registry_and_retry(self):
@@ -97,6 +133,14 @@ class PollingAtomicityTests(unittest.TestCase):
             results = list(pool.map(submit, ["a","b"]))
         self.assertEqual([0,1], sorted(results))
         self.assertEqual(MAX_SEEN, len(sync.seen))
+
+    def test_malformed_payload_is_not_silently_coerced(self):
+        sync = PollingSync(EventAllowlist(["push"]))
+        for payload in (None, [], [("key", "value")], "invalid"):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ConnectorDenied):
+                    sync.normalize([{"id":"a","type":"push","payload":payload}])
+        self.assertEqual((), sync.seen)
 
     def test_duplicate_batch_counts_unique_new_ids(self):
         sync = PollingSync(EventAllowlist(["push"]), seen=(str(i) for i in range(MAX_SEEN-1)))
