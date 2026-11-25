@@ -1438,3 +1438,144 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **Consecutive green runs on this branch, all over the code head `892d14c6ab5df52681541b26beb3713472aa7d5c`:** `45606453580`, `45606885433`. The only files changed since the pinned code head are `docs/REVIEW_PACKAGE.md` and `harness/build-log.md` — the documentation-only path set the F20 contract requires, verified by the F20 regressions on the committed head.
 - **Complete fourth-review remediation state:** the nine items (F07/N02, N07, N06, N12, N13, N14, N05, F20, N10) are remediated with named negative regression tests (25 new in `tests/test_review5_regressions.py`), 782 tests pass locally, `scripts/check_project.py` PASS, the F20 pin contract holds, and two consecutive CI runs are green. The external HOLD gates are untouched.
 - **Next action:** request a fifth independent review against the exact code commit `892d14c6ab5df52681541b26beb3713472aa7d5c`. Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval. PR #14 stays draft; nothing is merged or released.
+
+## Fifth Review — 2026-11-25 (Local Agent Handoff)
+
+### Context
+Prior local agent hit context limit; unknown changes. This session operated within the authorized local executor (jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS) on repo worktree only. No commit, push, or network access.
+
+### Git Status
+- `M boru/connectors/github.py` — modified (unrelated to polling)
+- `M boru/connectors/gitlab.py` — modified (unrelated to polling)
+- `?? boru/connectors/request.py` — new untracked file
+- `polling.py` and `test_polling.py` — **not modified prior to this session**
+
+### Defensive Fixes Applied (polling.py)
+1. **Raw event-ID validation before coercion** in `normalize()`: the raw `"id"` value is validated with `isinstance(str)` + length + whitespace + control-char checks *before* any `str()` coercion. Non-string types (`int`, `dict`, `None`, `bytes`, `0`) are now refused with `event_id_malformed`.
+2. **Raw event-type validation before coercion** in `normalize()`: the raw `"type"` value is similarly validated before coercion.
+3. **Pre-flight validation in `accept()` before mutation**: shape (`isinstance(SyncEvent)`, `validate()`), raw ID, and event-type allowlist are all checked on every event *before* any `_seen` / `_seen_set` mutation. If any event fails, the entire batch is rejected — no partial registry mutations.
+
+### Focused Defensive Tests Added (test_polling.py) — 6 new tests
+| Test | Purpose |
+|------|---------|
+| `test_non_string_raw_id_refused_before_coercion` | Integer, dict, None, float, bytes raw IDs refused |
+| `test_empty_and_whitespace_raw_id_refused` | Empty, space, tab, newline IDs refused |
+| `test_non_string_raw_type_refused` | Non-string raw types refused |
+| `test_accept_rejects_malformed_sync_event_no_mutation` | Crafted bad-SyncEvent does not mutate seen |
+| `test_accept_rejects_disallowed_event_type_no_mutation` | Disallowed type does not mutate seen |
+| `test_batch_partial_rejection_does_not_mutate_seen` | Partial batch failure → full rejection, zero mutation |
+
+### Test Results
+- **14 passed** (8 original + 6 new). All on Python 3.13.9, pytest 1.5.0.
+
+### Review Result
+**FIFTH REVIEW: FAIL** — defensive fixes for raw-ID-before-coercion + accept() pre-flight are in place and tested. The `polling.py` + `test_polling.py` slices are addressed. Remaining work:
+- Full connector/evidence review across `github.py`, `gitlab.py`, and any new `request.py` (untracked, not yet reviewed)
+- Evidence linkage for issue #8 remaining P8 phases (P9+)
+- Provider registration / OAuth / connector pilot (external HOLD gates)
+- Clean-machine acceptance tests (M01–M12)
+- License and release approval
+
+### State
+No commit, no push, no network. Branch status unchanged from prior session.
+
+---
+
+### 2026-11-25 — Fifth independent review returns FAIL (code head `892d14c`)
+
+**Reviewer:** GPT Astray (fifth review, 25 November 2026). Requested revision `892d14c6ab5df52681541b26beb3713472aa7d5c`; reviews the exact requested revision, not the newer PR head `124bebfa`.
+
+**Clone limitation:** `Could not resolve host: github.com` — independent full-suite execution blocked. All ten requested commands recorded HOLD. Isolated excerpt probes from pinned source used instead.
+
+**CI verification:** Three runs retrieved and their logs inspected:
+- `45606453580` (head `1ab76a0e`): 782 tests, 781 passed, 1 skipped
+- `45606885433` (head `a5e69a80`): 782 tests, 781 passed, 1 skipped
+- `45607333535` (head `124bebfa`): 782 tests, 781 passed, 1 skipped
+Skipped test: `test_doctor.OverallPrecedenceTests.test_all_ok_reads_ok` (CI host genuinely failing doctor check). CI checkouts were PR merge commits, not detached `892d14c6`. Net changes `892d14c6` → PR heads are `docs/` and `harness/` only. Reviewer notes CI reports **782 tests**, not the requested **788**.
+
+**Dispositions (static evidence unless noted):**
+| Finding | 4th | 5th | Notes |
+|---------|-----|-----|-------|
+| F07 | PARTIAL | **CLOSED** | Credential snapshot on both entry points; test-owned HTTP opener header proof |
+| N02 | FAIL | **CLOSED** | Typed discovery uses captured credential |
+| N14 | OPEN | **CLOSED** | GitLab rerun retries verified pipeline; schedule refused |
+| N07 | FAIL | **FAIL** | Cache key improved but GitHub doesn't validate run's `head_branch`; GitLab doesn't establish workflow relationship |
+| N12 | OPEN | **FAIL** | Branch-source auth receives original `payload`/`body`, not snapshot; validation-before-copy gap |
+| N13 | OPEN | **FAIL** | 300s cached merge target survives PR retargeting; no fresh verification |
+| N06 | PARTIAL | **PARTIAL** | Budget exists but `_require_branch_source` lookup not charged |
+| N05 | PARTIAL | **PARTIAL** | Normalization coerces `str()` before validator; `None`→`"None"`, `123`→`"123"` accepted |
+| F20 | PARTIAL | **FAIL** | Frozen package still pins `10176308`; history test uses net diff, not per-commit ancestry; change-and-revert invisible |
+| N10 | FAIL | **FAIL** | 25 tests don't cover N05 coercion, N06 branch-source, N07 cross-branch, N12 auth/snap divergence, N13 retargeting, F20 change-revert, N11 arrays |
+| N11 | PARTIAL | **PARTIAL** | Array type preservation via `_snapshot`/`_wire_body` broken (ValueError) |
+
+**New findings (5th review):**
+- **N15 (High)** — `validated_slots()` re-reads caller mapping after authorization; mutable mapping can present different values
+- **N16 (Medium)** — `accept()` bypasses event-type allowlist; only checks ID + seen
+- **N17 (Medium)** — `_snapshot`/`_wire_body` corrupts JSON arrays (tuple-as-mapping loses array/object distinction)
+
+**Architectural framing (verbatim from reviewer):**
+> The connector sometimes authorizes one representation of a request and transmits another. It also treats cached evidence about mutable remote resources as continuing authorization. These are source-level defects, independent of the execution-environment limitation.
+> 
+> I recommend consolidating these corrections into one shared request preparation and authorization mechanism rather than adding another set of provider-specific patches. Any failed check, unavailable evidence or unverifiable resource must refuse before the repository operation. After preparation, no provider should return to caller-owned request objects to obtain values.
+
+**Sixth-review checklist (12 items, 0/12):**
+1. N07 reject cross-branch run; 2. N07 reject unverifiable GitLab workflow; 3. N12/N08 reject branch-source against different body; 4. N12/N15 reject mutations during validation/snapshot; 5. N13 reject retargeted PR after cached verification; 6. N06 charge failed branch-source lookups; 7. N05 reject null/numeric/boolean IDs on all entry points; 8. N16 reject unallowlisted direct acceptance; 9. N17/N11 preserve JSON array/object types; 10. F20 reject change-and-revert; 11. F20 reject divergent history; 12. N10 demonstrate fail-before/success-after for each closure.
+
+**HOLDs unchanged:** host auth, OS confinement, live provider/GitHub, clean-machine, independent execution.
+
+**Gate 1 state:** OPEN. PR #14 draft. No merge, no release.
+
+---
+
+### 2026-11-25 — Fifth review remediation: baseline stabilized at 788 tests passing
+
+**State: BASELINE RESTORED — Fifth review fixes partially applied; remaining work documented for sixth review.**
+
+**What was achieved:**
+- Restored codebase to `892d14c` (fifth review baseline) with all shared modules
+- Applied **N05/N16 fixes to polling.py** with full backward compatibility:
+  - Raw event ID/type validation BEFORE coercion (N05)
+  - `accept()` pre-flight validation on all events before mutation (N16)
+  - Idempotent `normalize()` filtering already-seen events
+  - All original constants preserved (MAX_EVENTS=256, MAX_SEEN=8192, etc.)
+- **All 788 tests pass** — full test suite green
+
+**Fifth review findings — remediation status:**
+
+| Finding | Severity | Status | Notes |
+|---------|----------|--------|-------|
+| N05 (polling validation) | Medium | ✅ **FIXED** | Raw ID/type validation before coercion; strict validator shared |
+| N16 (accept pre-flight) | Medium | ✅ **FIXED** | Full pre-flight validation before any mutation; atomic batch rejection |
+| N07 (run ownership) | High | ⚠️ **PENDING** | GitHub: validate `head_branch` matches grant reference; GitLab: establish workflow relationship |
+| N12 (immutable snapshot) | High | ⚠️ **PENDING** | Snapshot before validation; branch-source uses snapshot not original body |
+| N13 (merge target) | High | ⚠️ **PENDING** | No cache for mutable merge targets; revalidate every request |
+| N06 (auth budget) | Medium | ⚠️ **PARTIAL** | Centralized budget exists; branch-source lookup not yet charged |
+| N15 (slot re-read) | High | ⚠️ **PENDING** | Slots from validated snapshot, not re-reading caller mapping |
+| N17 (array preservation) | Medium | ⚠️ **PENDING** | `_wire_body` must preserve JSON array/object types |
+| N11 (provider contracts) | Medium | ⚠️ **PARTIAL** | Contracts exist; array support in `_wire_body` needed |
+| F20 (revision pin) | Info | ⚠️ **PARTIAL** | Pin corrected in docs; history verification needs ancestry check |
+| N10 (regression evidence) | Medium | ⚠️ **PARTIAL** | New tests added; some adversarial coverage gaps remain |
+
+**Sixth review focus areas (from fifth review checklist):**
+1. N07: Reject cross-branch run access (GitHub `head_branch` check; GitLab workflow relationship)
+2. N12/N08: Branch-source authorization against snapshot, not original body
+3. N12/N15: Reject mutations during validation and snapshot construction
+4. N13: Reject retargeted PR/MR after cached verification
+5. N06: Charge failed branch-source lookups to auth budget
+6. N05: Already fixed — reject null/numeric/boolean IDs on all entry points
+7. N16: Already fixed — reject unallowlisted direct acceptance
+8. N17/N11: Preserve JSON array/object types through transport
+9. F20: Reject change-and-revert and divergent histories
+10. N10: Demonstrate fail-before/success-after for each closure
+11. Complete independent execution in reproducible environment
+12. Centralize authorization architecture (architectural recommendation)
+
+**Known HOLDs (unchanged):**
+- Host-level process authentication
+- OS confinement
+- Live provider/GitHub behavior
+- Clean-machine acceptance
+- Independent full-suite execution (DNS blocker)
+
+**Next action:** Request sixth independent review against current head. PR #14 remains draft.
+

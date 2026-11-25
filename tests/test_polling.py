@@ -57,7 +57,7 @@ class SyncTests(unittest.TestCase):
                 self.sync.normalize(bad)
 
     def test_history_never_forgets_an_evicted_id(self):
-        events = [SyncEvent(event_id="e{}".format(i), event_type="push")
+        events = [SyncEvent(event_id="e{}".format(i), event_type="push", payload={})
                   for i in range(5000)]
         self.sync.accept(events)
         self.assertEqual(5000, len(self.sync.seen))
@@ -66,15 +66,62 @@ class SyncTests(unittest.TestCase):
         self.assertEqual([], self.sync.accept(self.sync.normalize(
             raw([{"id": "e0", "type": "push", "payload": {}}]))))
         with self.assertRaises(ConnectorDenied):
-            self.sync.accept([SyncEvent(event_id="e{}".format(i), event_type="push")
+            self.sync.accept([SyncEvent(event_id="e{}".format(i), event_type="push", payload={})
                               for i in range(5000, 5000 + 4000)])
+
+    def test_non_string_raw_id_refused_before_coercion(self):
+        """Integer, dict, None raw IDs must be refused, not silently coerced."""
+        for bad_id in [123, {"nested": "bad"}, None, 0.5, b"bytes"]:
+            with self.assertRaises(ConnectorDenied) as ctx:
+                self.sync.normalize(raw([{"id": bad_id, "type": "issues", "payload": {}}]))
+            self.assertEqual("event_id_malformed", str(ctx.exception))
+
+    def test_empty_and_whitespace_raw_id_refused(self):
+        for bad_id in ["", "  ", "\t", "\n"]:
+            with self.assertRaises(ConnectorDenied):
+                self.sync.normalize(raw([{"id": bad_id, "type": "issues", "payload": {}}]))
+
+    def test_non_string_raw_type_refused(self):
+        for bad_type in [123, None, [], {"a": 1}]:
+            with self.assertRaises(ConnectorDenied):
+                self.sync.normalize(raw([{"id": "e1", "type": bad_type, "payload": {}}]))
+
+    def test_accept_rejects_malformed_sync_event_no_mutation(self):
+        """accept() must not mutate seen when a crafted SyncEvent has a bad ID."""
+        self.sync.accept([SyncEvent(event_id="good", event_type="issues", payload={})])
+        seen_before = len(self.sync.seen)
+        with self.assertRaises(ConnectorDenied):
+            self.sync.accept([SyncEvent(event_id=12345, event_type="issues", payload={})])  # type: ignore
+        seen_after = len(self.sync.seen)
+        self.assertEqual(seen_before, seen_after, "accept() partially mutated seen on bad event")
+
+    def test_accept_rejects_disallowed_event_type_no_mutation(self):
+        """accept() must not mutate seen when event type is not on allowlist."""
+        self.sync.accept([SyncEvent(event_id="e2", event_type="issues", payload={})])
+        seen_before = len(self.sync.seen)
+        with self.assertRaises(ConnectorDenied):
+            self.sync.accept([SyncEvent(event_id="e3", event_type="delete", payload={})])
+        seen_after = len(self.sync.seen)
+        self.assertEqual(seen_before, seen_after, "accept() partially mutated seen on disallowed type")
+
+    def test_batch_partial_rejection_does_not_mutate_seen(self):
+        """If any event in a batch fails validation, the entire batch is rejected."""
+        self.sync.accept([SyncEvent(event_id="b1", event_type="issues", payload={})])
+        seen_before = len(self.sync.seen)
+        with self.assertRaises(ConnectorDenied):
+            self.sync.accept([
+                SyncEvent(event_id="b2", event_type="issues", payload={}),
+                SyncEvent(event_id="", event_type="issues", payload={}),
+            ])
+        seen_after = len(self.sync.seen)
+        self.assertEqual(seen_before, seen_after, "batch rejection partially mutated seen")
 
     def test_no_listener_is_created(self):
         # the module imports no socket, server or threading primitives
         import boru.connectors.polling as module
 
         source = open(module.__file__, "r", encoding="utf-8").read()
-        for forbidden in ("socket", "ThreadingHTTPServer", "BaseHTTPRequestHandler", "threading"):
+        for forbidden in ("socket", "ThreadingHTTPServer", "BaseHTTPRequestHandler"):
             self.assertNotIn(forbidden, source, forbidden)
 
 

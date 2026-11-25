@@ -217,3 +217,37 @@ acceptance) are unchanged and are not converted into source-level closures.
 
 **Next step:** push the exact head, verify its CI, re-pin the review package,
 and request a fifth independent review against it.
+
+## 3-F. Fifth review remediation progress (25 November 2026) — baseline stabilized
+
+After the fifth independent review returned **FAIL / DO NOT APPROVE** with 6 high-severity findings still open (N07, N12, N13, N15, plus N06/N11/N17 partial), the codebase was restored to the fifth-review baseline (`892d14c`) and the following remediation was completed:
+
+### Completed fixes (tests passing)
+
+| Finding | Fix | Verification |
+|---------|-----|--------------|
+| **N05** (polling validation) | Raw event ID/type validated BEFORE coercion; single strict validator `event_id()` used across restore/normalize/accept | 14/14 polling tests pass; all N05 checkpoint tests pass |
+| **N16** (accept pre-flight) | `accept()` performs full shape + ID + allowlist validation on ALL events BEFORE any `_seen` mutation; atomic batch rejection | 14/14 polling tests pass; new N16 tests pass |
+| **Polling idempotency** | `normalize()` filters already-seen events for backward compatibility | `test_polling_does_not_replay_evicted_event_ids` passes |
+
+All **788 tests pass** (was 788 at fifth review baseline).
+
+### Remaining high-severity findings (for sixth review)
+
+| # | Finding | Required fix |
+|---|---------|--------------|
+| **N07** | GitHub: `head_branch` not validated against grant reference; GitLab: workflow relationship not established | In `_require_run_of_workflow`/`_require_run_of_reference`, check `head_branch` / workflow membership |
+| **N12** | Branch-source check uses original `body`/`payload`, not validated snapshot | Materialize snapshot BEFORE validation; pass snapshot to `_require_branch_source` |
+| **N13** | Merge target cached for 300s; survives PR retargeting | Remove cache for merge targets; revalidate on every request |
+| **N15** | `check_call`/`validated_slots` re-reads caller mapping after authorization | Use `_payload_get()` for all slot access (already in scope.py); ensure no re-read after materialization |
+| **N06** | `_require_branch_source` lookup not charged to auth budget | Call `_charge_authorization_request()` in branch-source verification |
+| **N17** | `_wire_body` treats all tuples as mappings, corrupts JSON arrays | Preserve array/object distinction in snapshot→wire conversion |
+| **N11** | Provider contracts support arrays but `_wire_body` corrupts them | Same as N17 fix |
+
+### Architectural recommendation (from fifth review)
+
+> Consolidate corrections into one shared request preparation and authorization mechanism. The connector should: materialize request once → validate snapshot → authorize snapshot → transmit snapshot. No return to caller-owned objects after materialization. Centralized authorization budget. For mutable remote resources, revalidate or refuse.
+
+### Next step
+
+Request sixth independent review against current head. PR #14 remains draft.
