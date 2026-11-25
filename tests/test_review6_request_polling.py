@@ -58,7 +58,7 @@ class RequestTests(unittest.TestCase):
                         return 200, b"{}"
                     provider = provider_type(transport=transport)
                     body = FlippingMapping("labels", labels, ["changed"])
-                    provider.call(grant("create_issue", Capability.REPO_WRITE), "create_issue",
+                    provider.call(grant("create_issue", Capability.ISSUE_WRITE), "create_issue",
                                   {"repository":"owner/repo"}, body=body)
                     self.assertEqual(1, body.reads)
                     self.assertEqual([{"labels":labels}], received)
