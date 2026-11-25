@@ -1326,3 +1326,15 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **Not touched:** the LOCAL_ONLY / LOCAL_ISOLATED / MINIMUM_NECESSARY defaults, the four independent policy axes, the typed field maps, the historical regression files, or the external HOLD gates (host-level process authentication, OS confinement, live provider/GitHub behaviour, clean-machine acceptance). No existing negative regression was weakened to make a run green.
 - **Blocking owner action:** the session harness refuses `git push`. Push + CI watch must be executed by the authorized local agent under the owner's authorization; the code head and its documents-only re-pin are pushed **together** so CI runs once on the final head.
 - **Next action:** push the two heads together, verify the push with `git ls-remote` from the coordinator side, watch CI, then request a fourth independent review against the new exact code commit. PR #14 stays draft; nothing is merged or released.
+
+---
+
+### 2026-11-25 — third-review remediation pushed and CI green (code head `1017630`, head `43b24df`, run `45516186275`)
+
+- **Push executed by the authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`) under the owner's session authorization, code head and documents-only re-pin pushed together: `c83010c..43b24df`. Re-verified from the coordinator side with `git ls-remote` → remote head `43b24df5919092dce8248f457970e4866085850a`, identical to local.
+- **CI verified:** run `45516186275` on head `43b24df5` concluded **success** (`validate`, 1m41s), re-read directly from `gh run view`. The only annotation is a non-blocking Node.js 20 deprecation notice.
+- **Code head under review:** `10176308733e1dd9940560bcec259b43e738a500` — the commit that carries the remediation; `43b24df` is its documents-only re-pin (only `docs/REVIEW_PACKAGE.md` differs), which is exactly the documentation-only path set the F20 contract allows.
+- **Local verification on this head:** `unittest discover -s tests` **757 tests OK**; `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; the reviewer's 20 probes, the 20 re-review regressions, the 26 third-review regressions and the 30 fourth-review regressions all green. MOCK/STATIC only.
+- **Gate 1 state:** all nine items from the third review are remediated with named negative regression tests, locally verified and CI-green. The only remaining gate is the **independent fourth-review verdict**, which belongs to the reviewer.
+- **Not reopened and not weakened:** F03/F12/F17/N09 static closures, the retained F06/F14/F15/N01/N03/N04 acceptances, the historical regression files, and the external HOLD gates.
+- **Next action:** request a fourth independent review against the exact code commit `10176308733e1dd9940560bcec259b43e738a500`. Gates 2–5 remain owner actions. PR #14 stays draft; nothing is merged or released.
