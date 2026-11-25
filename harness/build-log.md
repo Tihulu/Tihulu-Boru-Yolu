@@ -1349,3 +1349,13 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **Verified local state on this head:** `unittest discover -s tests` **757 tests OK**; the F20 pin contract passes on the committed head (the only files changed since the pin are `docs/REVIEW_PACKAGE.md` and `harness/build-log.md`); `scripts/check_project.py` PASS.
 - **Gate 1 state:** the third review's nine items are remediated, locally verified and CI-green on two consecutive runs. The remaining gate is the independent fourth-review verdict.
 - **Next action:** request a fourth independent review against the exact code commit `10176308733e1dd9940560bcec259b43e738a500`. Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval. PR #14 stays draft; nothing is merged or released.
+
+---
+
+### 2026-11-25 — ledger head confirmed green in CI (head `742c78b`, run `45532324296`)
+
+- **Push executed by the authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`) under the owner's session authorization: `97c572f..742c78b`. Re-verified from the coordinator side with `git ls-remote` → remote head `742c78bc71fc1d46dafba30cb7df63c75c172768`, identical to local.
+- **CI verified:** run `45532324296` on head `742c78bc` concluded **success** (`validate`, 1m32s), re-read directly from `gh run view`.
+- **Consecutive green runs on this branch, all over the code head `10176308733e1dd9940560bcec259b43e738a500`:** `45516186275`, `45530891495`, `45532324296`. The only files changed since the pinned code head are `docs/REVIEW_PACKAGE.md` and `harness/build-log.md` — the documentation-only path set the F20 contract requires, verified by the F20 regression on the committed head.
+- **Gate 1 state:** the third review's nine items (N07, N08, F07, N02, N05, N06, N11, F20, N10) are remediated with named negative regression tests, locally verified (757 tests) and CI-green. The remaining gate is the independent fourth-review verdict.
+- **Next action:** request a fourth independent review against the exact code commit `10176308733e1dd9940560bcec259b43e738a500`. Gates 2–5 remain owner actions. PR #14 stays draft; nothing is merged or released.
