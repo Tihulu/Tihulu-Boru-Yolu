@@ -5,14 +5,15 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 
 - Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 - Branch under review: `p1/boru-core-vertical-slice`
-- Code head under review: `9b6ce534c2073ddbcd9cf3ae34b08782fb9a5912`
-  (the head this package describes; a later documents-only commit moves the head
-  without changing the code tree — `tests/test_rereview_regressions.py` asserts
-  the pin is HEAD or an ancestor of it)
+- Code head under review: `10176308733e1dd9940560bcec259b43e738a500`
+  (the head this package describes; the pin must name this revision exactly, or
+  every intervening change must live under `docs/` or `harness/` — the F20
+  contract in `tests/test_rereview_regressions.py` asserts exactly that, and
+  ancestry alone is not accepted)
 - Pull request: https://github.com/Tihulu/Tihulu-Boru-Yolu/pull/14 (draft, not merged)
-- CI: the code head above is green in CI (run 45504384737); earlier code heads on
-  the same branch are green too (45272200049, 45328150077). The run for the head
-  a reviewer checks out is the evidence that counts.
+- CI: the code head above is green in CI (the run recorded for it in
+  `harness/build-log.md`); the run for the head a reviewer checks out is the
+  evidence that counts.
 - Issue tracker: https://github.com/Tihulu/Tihulu-Boru-Yolu/issues
 - Ledger: [harness/build-log.md](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/harness/build-log.md)
 
@@ -28,19 +29,20 @@ git clone https://github.com/Tihulu/Tihulu-Boru-Yolu.git
 cd Tihulu-Boru-Yolu
 git checkout p1/boru-core-vertical-slice
 python3 scripts/check_project.py     # expected: PASS (30 documents + sample policy invariants)
-python3 -m unittest discover -s tests   # expected: Ran 727 tests ... OK
+python3 -m unittest discover -s tests   # expected: Ran 757 tests ... OK
 PYTHONPATH=. python3 tests/test_review_regressions.py   # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_rereview_regressions.py  # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_review3_regressions.py   # expected: Ran 26 tests ... OK
+PYTHONPATH=. python3 tests/test_review4_regressions.py   # expected: Ran 30 tests ... OK
 python3 scripts/evidence.py          # expected: exit 0, overall all-PASS
 python3 -m boru doctor --state-dir local-state   # expected: overall: ok, live_acceptance: HOLD
 python3 -m boru demo                 # expected: state REVIEW, evidence_class simulated
 ~~~
 
-Observed result on the head commit: **PASS / 727 tests / exit 0** (local run of
+Observed result on the head commit: **PASS / 757 tests / exit 0** (local run of
 `check_project.py`, the full suite, `scripts/evidence.py`, `boru doctor` and
-`boru demo`); the same suite passed in CI on this head (run 45504384737). If any
-of these fail on your run, that is a finding.
+`boru demo`); the same suite passed in CI on this head (the run recorded for it
+in `harness/build-log.md`). If any of these fail on your run, that is a finding.
 
 ## 2. What to review, in order
 
