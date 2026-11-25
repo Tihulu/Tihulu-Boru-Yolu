@@ -17,8 +17,9 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Tuple
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
 from .scope import (
-    GITLAB_WRITE_BODY_CONTRACTS, check_call, check_dispatch_body, check_write_body,
+    GITLAB_WRITE_BODY_CONTRACTS, check_call,
 )
+from .request import prepare, wire_body
 
 API_BASE = "https://gitlab.com"
 MAX_PAGE = 100
@@ -46,27 +47,6 @@ RUN_OWNERSHIP_TTL_SECONDS = 300.0
 MAX_SNAPSHOT_DEPTH = 3
 #: An error body is diagnostic, never a payload: keep only a bounded prefix.
 MAX_ERROR_BODY_BYTES = 4 * 1024
-
-
-def _snapshot(value: Any, depth: int = 0) -> Any:
-    """A bounded, immutable copy of a validated request body (N12)."""
-    if depth > MAX_SNAPSHOT_DEPTH:
-        raise ConnectorDenied("body_nested_too_deeply")
-    if isinstance(value, Mapping):
-        return tuple((key, _snapshot(item, depth + 1))
-                     for key, item in sorted(value.items(), key=lambda pair: str(pair[0])))
-    if isinstance(value, (list, tuple)):
-        return tuple(_snapshot(item, depth + 1) for item in value)
-    return value
-
-
-def _wire_body(snapshot: Any) -> Any:
-    """The wire form of a validated body snapshot."""
-    if isinstance(snapshot, tuple) and not snapshot:
-        return {}
-    if isinstance(snapshot, tuple):
-        return {str(key): _wire_body(item) for key, item in snapshot}
-    return snapshot
 
 
 def _bounded_read(stream, limit: int) -> bytes:
@@ -199,24 +179,13 @@ class GitLabProvider(RepositoryProvider):
         if path:
             raise ConnectorDenied("path_override_refused")
         try:
-            # The slots returned here are the only values used to build the
-            # request: what was checked is what is sent.
-            slots = check_call(grant, operation, payload or {}, method=method, path=path,
-                               default_method=self._MUTATING.get(operation, "GET"))
+            prepared = prepare(grant, operation, payload, body, method=method,
+                               path=path, default_method=self._MUTATING.get(operation, "GET"),
+                               contracts=GITLAB_WRITE_BODY_CONTRACTS)
         except ConnectorDenied as exc:
             self._deny(grant, operation, str(exc))
             raise
-        # Every write body is validated against this provider's operation
-        # contract before any transport is constructed (N08/N11).
-        try:
-            check_write_body(grant, operation, body or {}, payload or {},
-                             GITLAB_WRITE_BODY_CONTRACTS)
-        except ConnectorDenied as exc:
-            self._deny(grant, operation, str(exc))
-            raise
-        # N12: the validated body becomes an immutable snapshot here, before any
-        # authorization request runs, and that exact snapshot is transmitted.
-        snapshot = _snapshot(body) if body is not None else None
+        slots = prepared.slots
         # The credential is read once for this authorized request, and that
         # exact value is the one fingerprinted, verified and transmitted (F07).
         token = self._token_value()
@@ -241,7 +210,7 @@ class GitLabProvider(RepositoryProvider):
         path = self._path_for(operation, slots)
         if method is None:
             method = self._MUTATING.get(operation, "GET")
-        status, raw = self._exchange(method, path, _wire_body(snapshot) or {}, token)
+        status, raw = self._exchange(method, path, wire_body(prepared.body), token)
         reason_event = "ok" if status < 300 else "http_" + str(status)
         # A URL path never enters the audit event: the operation and status
         # describe the call without naming a repository route.

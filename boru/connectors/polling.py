@@ -25,6 +25,7 @@ mutation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import Any, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..errors import ConnectorDenied
@@ -114,6 +115,7 @@ class PollingSync:
 
     def __init__(self, allowlist: EventAllowlist, seen: Optional[Iterable[str]] = None) -> None:
         self.allowlist = allowlist
+        self._lock = Lock()
         self._seen: List[str] = []
         self._seen_set: Set[str] = set()
         # A restored history is bounded exactly like a live one: an oversized
@@ -144,19 +146,8 @@ class PollingSync:
                 self._seen.append(identifier)
                 self._seen_set.add(identifier)
 
-    @property
-    def seen(self) -> Tuple[str, ...]:
-        return tuple(self._seen)
-
     def _validate_raw_id(self, raw_id: Any) -> str:
-        """Validate a raw event ID BEFORE coercion (N05)."""
-        if not isinstance(raw_id, str):
-            raise ConnectorDenied("event_id_malformed")
-        if not raw_id or raw_id.strip() != raw_id or len(raw_id) > MAX_EVENT_ID_LENGTH:
-            raise ConnectorDenied("event_id_malformed")
-        if any(ord(c) < 0x20 or ord(c) == 0x7F for c in raw_id):
-            raise ConnectorDenied("event_id_malformed")
-        return raw_id
+        return event_id(raw_id)
 
     def _validate_raw_type(self, raw_type: Any) -> str:
         """Validate a raw event type BEFORE coercion (N05)."""
@@ -167,47 +158,6 @@ class PollingSync:
         if any(ord(c) < 0x20 or ord(c) == 0x7F for c in raw_type):
             raise ConnectorDenied("event_type_malformed")
         return raw_type.strip()
-
-    def normalize(self, raw_events: Any) -> List[SyncEvent]:
-        """Parse a provider payload into typed, allowlisted events.
-
-        N05 FIX: Raw event IDs and types are validated BEFORE coercion so
-        non-string values (int, dict, None, bytes, bool) are refused rather
-        than silently turned into string representations.
-        """
-        if not isinstance(raw_events, list):
-            raise ConnectorDenied("events_malformed")
-        if len(raw_events) > MAX_EVENTS:
-            raise ConnectorDenied("events_too_many")
-
-        parsed: List[SyncEvent] = []
-        for entry in raw_events:
-            if not isinstance(entry, Mapping):
-                raise ConnectorDenied("events_malformed")
-            unknown = sorted(set(entry) - {"id", "type", "payload"})
-            if unknown:
-                raise ConnectorDenied("events_malformed")
-
-            # N05: Validate raw ID BEFORE coercion
-            raw_id = entry.get("id")
-            validated_id = self._validate_raw_id(raw_id)
-
-            # N05: Validate raw event_type BEFORE coercion
-            raw_type = entry.get("type")
-            validated_type = self._validate_raw_type(raw_type)
-
-            event = SyncEvent(
-                event_id=validated_id,
-                event_type=validated_type,
-                payload=dict(entry.get("payload") or {})
-            )
-            if event.validate():
-                raise ConnectorDenied("events_malformed")
-            # Allowlist check in normalize (N16): refuse undeclared types early
-            if not self.allowlist.permits(event.event_type):
-                raise ConnectorDenied("event_type_not_allowed")
-            parsed.append(event)
-        return parsed
 
     # For backward compatibility with tests expecting idempotent normalize
     # This filters out already-seen events (N05 idempotency)
@@ -222,7 +172,8 @@ class PollingSync:
         """
         parsed = self._normalize_raw(raw_events)
         # Filter out already-seen events for idempotency (N05)
-        return [e for e in parsed if e.event_id not in self._seen_set]
+        with self._lock:
+            return [e for e in parsed if e.event_id not in self._seen_set]
 
     def _normalize_raw(self, raw_events: Any) -> List[SyncEvent]:
         """Internal normalize without idempotency filtering."""
@@ -261,62 +212,43 @@ class PollingSync:
         return parsed
 
     def accept(self, events: Sequence[SyncEvent]) -> List[SyncEvent]:
-        """Mark events as processed and return the newly accepted ones.
+        """Validate once, deduplicate and commit the whole batch or none.
 
-        N16 FIX: Full pre-flight validation (shape, ID, allowlist) runs on
-        EVERY event BEFORE any mutation to the seen registry. Batch rejection
-        is atomic — if any event fails, the entire batch is rejected without
-        partial mutation.
+        Direct callers historically submit more than MAX_EVENTS; bound this
+        path by the restored-entry budget, not the provider page limit.
         """
-        # PRE-FLIGHT: validate all events before ANY mutation
-        for event in events:
-            # Shape check
-            if not isinstance(event, SyncEvent):
+        staged: List[SyncEvent] = []
+        for index, event in enumerate(events):
+            if index >= MAX_RESTORED_ENTRIES:
+                raise ConnectorDenied("events_too_many")
+            if type(event) is not SyncEvent:
                 raise ConnectorDenied("event_malformed")
-            if event.validate():
+            identifier = event_id(event.event_id)
+            kind = self._validate_raw_type(event.event_type)
+            if not isinstance(event.payload, Mapping) or len(event.payload) > 32:
                 raise ConnectorDenied("events_malformed")
-            # Raw ID validation before any coercion/mutation
-            self._validate_raw_id(event.event_id)
-            # Event-type allowlist check before mutation
-            if not self.allowlist.permits(event.event_type):
+            # Detach top-level payload from its caller before staging.
+            payload = dict(event.payload)
+            if len(payload) > 32:
+                raise ConnectorDenied("events_malformed")
+            if not self.allowlist.permits(kind):
                 raise ConnectorDenied("event_type_not_allowed")
-
-        # ALL PASSED: now mutate and collect
-        fresh: List[SyncEvent] = []
-        for event in events:
-            if event.event_id in self._seen_set:
-                continue
-            self._remember(event.event_id)
-            fresh.append(event)
-        return fresh
-
-    def _remember(self, event_id: str) -> None:
-        """Record one processed id; a full registry refuses, never forgets."""
-        if len(self._seen) >= MAX_SEEN:
-            raise ConnectorDenied("seen_registry_full")
-        self._seen.append(event_id)
-        self._seen_set.add(event_id)
+            staged.append(SyncEvent(identifier, kind, payload))
+        with self._lock:
+            fresh: List[SyncEvent] = []
+            identifiers: Set[str] = set()
+            for event in staged:
+                if event.event_id in self._seen_set or event.event_id in identifiers:
+                    continue
+                identifiers.add(event.event_id)
+                fresh.append(event)
+            if len(self._seen) + len(fresh) > MAX_SEEN:
+                raise ConnectorDenied("seen_registry_full")
+            self._seen.extend(event.event_id for event in fresh)
+            self._seen_set.update(identifiers)
+            return fresh
 
     @property
     def seen(self) -> Tuple[str, ...]:
-        return tuple(self._seen)
-
-
-# --- Single-event-ID validator shared across all paths (N05) ---------------
-
-def event_id(value: Any) -> str:
-    """The one event-id validator this module uses (N05).
-
-    Restoration, normalization and acceptance all funnel through here, so an
-    id that is not a usable identifier - not a string, empty, whitespace-only,
-    oversized or carrying a control character - is **refused** rather than
-    skipped: silently dropping a malformed checkpoint entry hides corruption
-    the owner should see, and a whitespace-only id is not an id.
-    """
-    if not isinstance(value, str):
-        raise ConnectorDenied("event_id_malformed")
-    if not value or value.strip() != value or len(value) > MAX_EVENT_ID_LENGTH:
-        raise ConnectorDenied("event_id_malformed")
-    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
-        raise ConnectorDenied("event_id_malformed")
-    return value
+        with self._lock:
+            return tuple(self._seen)
