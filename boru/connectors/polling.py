@@ -37,6 +37,24 @@ MAX_RESTORED_ENTRIES = 4 * MAX_SEEN
 MAX_EVENT_ID_LENGTH = 128
 
 
+def event_id(value: Any) -> str:
+    """The one event-id validator this module uses (N05).
+
+    Restoration, normalization and acceptance all funnel through here, so an
+    id that is not a usable identifier - not a string, empty, whitespace-only,
+    oversized or carrying a control character - is **refused** rather than
+    skipped: silently dropping a malformed checkpoint entry hides corruption
+    the owner should see, and a whitespace-only id is not an id.
+    """
+    if not isinstance(value, str):
+        raise ConnectorDenied("event_id_malformed")
+    if not value or value.strip() != value or len(value) > MAX_EVENT_ID_LENGTH:
+        raise ConnectorDenied("event_id_malformed")
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ConnectorDenied("event_id_malformed")
+    return value
+
+
 @dataclass(frozen=True)
 class SyncEvent:
     """One observed event, typed and bounded."""
@@ -95,7 +113,7 @@ class PollingSync:
         # drained into memory first (N05).
         if seen is not None:
             inspected = 0
-            for event_id in seen:
+            for candidate in seen:
                 inspected += 1
                 # The bound applies while the source is consumed, on **both**
                 # axes: the registry as it is filled, and the number of entries
@@ -104,16 +122,15 @@ class PollingSync:
                 # (N05).
                 if inspected > MAX_RESTORED_ENTRIES:
                     raise ConnectorDenied("restored history exceeds the bounded registry")
-                if isinstance(event_id, str) and event_id and event_id not in self._seen_set:
-                    if len(event_id) > MAX_EVENT_ID_LENGTH:
-                        raise ConnectorDenied("restored event id is oversized")
-                    if any(ord(character) < 0x20 or ord(character) == 0x7F
-                           for character in event_id):
-                        raise ConnectorDenied("restored event id is malformed")
-                    if len(self._seen) >= MAX_SEEN:
-                        raise ConnectorDenied("restored history exceeds the bounded registry")
-                    self._seen.append(event_id)
-                    self._seen_set.add(event_id)
+                # One validator for every entry: a malformed checkpoint entry
+                # refuses instead of being silently skipped (N05).
+                identifier = event_id(candidate)
+                if identifier in self._seen_set:
+                    continue
+                if len(self._seen) >= MAX_SEEN:
+                    raise ConnectorDenied("restored history exceeds the bounded registry")
+                self._seen.append(identifier)
+                self._seen_set.add(identifier)
 
     @property
     def seen(self) -> Tuple[str, ...]:
@@ -138,6 +155,7 @@ class PollingSync:
                 raise ConnectorDenied("events_malformed")
             if not self.allowlist.permits(event.event_type):
                 raise ConnectorDenied("event_type_not_allowed")
+            event_id(event.event_id)
             if event.event_id in self._seen_set:
                 continue  # already processed: idempotent, never rework
             parsed.append(event)
@@ -147,6 +165,7 @@ class PollingSync:
         """Mark events as processed and return the newly accepted ones."""
         fresh: List[SyncEvent] = []
         for event in events:
+            event_id(event.event_id)
             if event.event_id in self._seen_set:
                 continue
             self._remember(event.event_id)

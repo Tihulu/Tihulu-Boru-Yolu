@@ -167,3 +167,53 @@ and this section does not claim them.
 
 **Next step:** push the exact head, verify its CI, re-pin the review package,
 and request a fourth independent review against it.
+
+## 3-E. Gate 1 fourth review of `10176308733e1dd9940560bcec259b43e738a500` (25 November 2026) — FAIL / DO NOT APPROVE
+
+The reviewer states it reviews the **requested revision** rather than the newer
+PR head, and that the current head differs from it only under `docs/` and
+`harness/`. It retrieved the metadata of all four supplied CI runs, compared
+their revisions, and retrieved the actual validation job log: **757 reported,
+756 passed, 1 skipped** (`test_doctor.OverallPrecedenceTests.test_all_ok_reads_ok`,
+skipped because the CI host had a genuinely failing doctor check). It states a
+maintainer CI run is not a security acceptance, and that the CI checkout was a
+PR merge commit rather than a detached checkout of the candidate.
+
+Its execution limitation is recorded verbatim in substance: a clone failed with
+`Could not resolve host: github.com`, so it retrieved the requested revision's
+source and recursive tree through the GitHub connection and executed isolated
+probes from transcribed excerpts. Every requested command is recorded HOLD.
+
+Its architectural framing is the contract this remediation implements:
+authorization must be bound to the **exact credential, resource and immutable
+request that ultimately reaches the transport**, and that invariant is fixed
+centrally rather than per manifestation.
+
+| # | Severity | Finding (as reported) | Reproduced? | Remediation | Named regression tests |
+|---|---|---|---|---|---|
+| F07 / N02 | High | The generic `call()` path took one credential snapshot, but `list_workflows_typed()` read the credential twice (`_require_account_identity(grant, self._token_value())` then `_exchange(..., self._token_value())`); the reviewer's probe verified `first` and transmitted `rotated` | Yes — the two read sites were visible and a probe confirmed the divergence | Both entry points now read the credential **once** and transmit that exact snapshot. The proof is asserted against the **authorization header a test-owned HTTP opener sees**, not against an injected transport that reads the environment itself (the reviewer's own critique of the previous test) | `tests/test_review5_regressions.py::F07CredentialSnapshotTests` (3 tests) |
+| N07 | High | The ownership cache key `(workflow, run_id)` omitted repository, granted reference, verified account and credential identity; the reviewer's probe showed a second authorization for `develop` served from the `main` lookup; GitLab derived the reference from caller slots with an empty-string fallback | Yes — the cache key and the slot-derived reference were both confirmed | The memo is keyed by the **complete authorization context** (provider, repository, **granted** reference, account, credential fingerprint, workflow, run id), the reference comes from the grant rather than the slots, evidence expires after a bounded window, lookups run under one lock so concurrent requests coalesce, and the lookup is charged against an authorization budget | `...::N07OwnershipContextTests` (6 tests: cross-repository, cross-reference, credential rotation, grant-bound reference, empty caller slot) |
+| N06 | Medium | A bounded cache bounds stored entries, not authorization requests; rejected authorization is neither cached nor charged; concurrent ownership lookups could repeat; the `_reserve_call` docstrings still claimed "before any transport is built" | Yes — the docstrings still carried the old claim and no request budget existed | `_charge_authorization_request()` bounds authorization traffic **as requests** in both providers; the docstrings now state precisely that `max_calls` bounds repository operations and authorization traffic is separately bounded; ownership lookups coalesce under one lock | `...::N06AuthorizationTrafficTests` (2 tests, incl. the ceiling and 6-thread coalescing) |
+| N12 | High (new) | Both providers validated the caller's mutable body, authorized, then transmitted that same body: a mutation during authorization would diverge from what was checked | Yes — the control flow was confirmed and a hostile-mutation probe is now a regression test | The validated body is copied into a bounded immutable snapshot **before** any authorization request, and that exact snapshot is wire-encoded and transmitted; a caller mutating the original mapping cannot change what is sent | `...::N12BodySnapshotTests` (2 tests, incl. the mutation-during-verification case) |
+| N13 | High (new) | `merge_pull` was addressed by numeric id with no check that the pull request targets the granted reference | Yes — no target verification existed in the inspected source | The merge is preceded by a trusted-metadata lookup of the pull/merge request's own target reference; a mismatch refuses `reference_not_granted` before the merge exchange, and missing metadata refuses `merge_target_unavailable` | `...::N13MergeTargetTests` (4 tests, both providers) |
+| N14 | High (new) | GitLab `rerun_workflow` verified a pipeline's ownership and then addressed `/pipeline_schedules/{workflow}/play`: the resource checked was not the resource acted upon | Yes — the path and the preceding ownership check were both confirmed | A rerun retries the **verified pipeline** (`/pipelines/{id}/retry`). Schedule configuration is a resource no ownership check can verify here, so `configure_workflow` refuses `resource_not_verifiable` rather than acting on an unchecked target | `...::N14ResourceMismatchTests` (2 tests) |
+| N05 | Medium | Duplicate and oversized cases were fixed, but malformed entries were silently skipped: `[None, 123, "", "   "]` was accepted and `"   "` retained | Yes — the probe reproduced exactly that | One validator (`event_id`) is used across restoration, normalization and acceptance: non-string, empty, whitespace-only, oversized and control-carrying ids all refuse rather than being skipped | `...::N05StrictValidationTests` (4 tests) |
+| F20 | Informational | The frozen candidate's package still pinned `9b6ce534`, and the net-tree `git diff` does not prove every intervening commit was documentation-only | Yes — the reviewer compared the frozen package against the candidate | The pin is re-pinned to this remediation head, and the negative-history requirement is met with **fixtures in temporary git repositories**: a documentation-only intervening change passes the documented contract and a production-code one fails it | `...::F20RevisionContractTests` (3 tests, incl. both fixtures) |
+| N10 | Medium | The previous rotation test never rotated during the request, used a transport that receives no credential, and read the environment itself | Yes — that exact critique was confirmed | Every closure in this section drives the production boundary — the authorization header a test-owned opener sees, the polling constructor, git history in temporary repositories, a body mutated inside an authorization callback — and each test fails against the vulnerable implementation | `tests/test_review5_regressions.py` (25 tests) |
+
+**Accepted without change by this remediation:** F03, F06, F12, F14, F15, F17,
+N01, N03, N04, N09 (static closures and retained acceptances), plus the
+accepted parts of N08 (mandatory reference checks, PR destination binding,
+branch-source sha verification) and N11 (provider-specific contracts).
+
+**Scope of this remediation, stated honestly:** every fix is source-level and
+unit-tested against test-owned transports and a test-owned HTTP opener. No live
+provider, GitHub token or host shell was used. The reviewer's execution
+limitation could not be closed from this repository: an independent clone and
+full-suite reproduction remain the reviewer's gate, and this section does not
+claim them. The environmental and live acceptance HOLDs (host-level process
+authentication, OS confinement, live provider/GitHub behaviour, clean-machine
+acceptance) are unchanged and are not converted into source-level closures.
+
+**Next step:** push the exact head, verify its CI, re-pin the review package,
+and request a fifth independent review against it.

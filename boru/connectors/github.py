@@ -38,6 +38,47 @@ RUN_OPERATIONS = frozenset({"get_run", "get_run_logs", "get_artifacts",
 #: cannot grow it without limit.
 MAX_VERIFIED_RUNS = 64
 
+#: N06: authorization traffic (identity verification and ownership lookups) is
+#: bounded **as requests**, not only as stored entries: past this ceiling the
+#: connector refuses rather than issuing unbounded authorization requests.
+MAX_AUTHORIZATION_REQUESTS = 512
+
+#: N06: a verified ownership entry is evidence for a bounded time only; past
+#: the window the ownership is re-established, so a credential rotation or a
+#: changed grant cannot ride on stale evidence.
+RUN_OWNERSHIP_TTL_SECONDS = 300.0
+
+#: N12: a validated write body is copied before authorization and that exact
+#: snapshot is what reaches the transport.
+MAX_SNAPSHOT_DEPTH = 3
+
+
+def _snapshot(value: Any, depth: int = 0) -> Any:
+    """A bounded, immutable copy of a validated request body (N12).
+
+    The value that was validated is the value that reaches the transport, so
+    the body is copied **before** any authorization request and that exact
+    snapshot is transmitted: a caller mutating the original mapping during
+    authorization cannot change what is sent.
+    """
+    if depth > MAX_SNAPSHOT_DEPTH:
+        raise ConnectorDenied("body_nested_too_deeply")
+    if isinstance(value, Mapping):
+        return tuple((key, _snapshot(item, depth + 1))
+                     for key, item in sorted(value.items(), key=lambda pair: str(pair[0])))
+    if isinstance(value, (list, tuple)):
+        return tuple(_snapshot(item, depth + 1) for item in value)
+    return value
+
+
+def _wire_body(snapshot: Any) -> Any:
+    """The wire form of a validated body snapshot."""
+    if isinstance(snapshot, tuple) and not snapshot:
+        return {}
+    if isinstance(snapshot, tuple):
+        return {str(key): _wire_body(item) for key, item in snapshot}
+    return snapshot
+
 
 def _bounded_read(stream, limit: int) -> bytes:
     """Read at most ``limit`` bytes from an HTTP error body."""
@@ -86,10 +127,16 @@ class GitHubProvider(RepositoryProvider):
         # through on the first account's verification (F07).
         self._verified_identity: Optional[Tuple[str, str]] = None
         self._identity_lock = threading.Lock()
-        # N07: (workflow, run) pairs whose ownership the provider itself
-        # confirmed, bounded.  Authorization traffic of this kind is bounded
-        # separately from the grant's repository-operation ceiling (N06).
-        self._verified_runs: Dict[Tuple[str, str], bool] = {}
+        # N06: a bounded count of the authorization requests this instance has
+        # made, so a flood of identity mismatches or foreign runs cannot issue
+        # unbounded authorization traffic.
+        self._authorization_requests = 0
+        # N07: (authorization context) -> the time ownership was confirmed.
+        # The key carries the **whole** context — repository, granted
+        # reference, verified account, credential fingerprint, workflow and
+        # run id — so an entry verified under one context can never authorize
+        # the same run under another.
+        self._verified_runs: Dict[Tuple[str, str, str, str, str, str, str], float] = {}
         self._run_lock = threading.Lock()
 
     # -- identity ------------------------------------------------------------
@@ -113,15 +160,17 @@ class GitHubProvider(RepositoryProvider):
                            default_method="GET")
         # Discovery is an externally connected path like any other: the identity
         # behind the token is verified before the request, and the call counts
-        # against the grant's ceiling.
-        self._require_account_identity(grant, self._token_value())
+        # against the grant's ceiling.  The credential is read **once** and that
+        # exact snapshot is verified and transmitted (F07/N02).
+        token = self._token_value()
+        self._require_account_identity(grant, token)
         reason = self._reserve_call(grant, "list_workflows")
         if reason:
             self._deny(grant, "list_workflows", reason)
             raise ConnectorDenied(reason)
         status, raw = self._exchange("list_workflows", "GET",
                                      self._path_for("list_workflows", slots), {},
-                                     self._token_value())
+                                     token)
         if status >= 300:
             raise ConnectorDenied("http_" + str(status))
         from .workflows import parse_workflows
@@ -217,6 +266,11 @@ class GitHubProvider(RepositoryProvider):
         except ConnectorDenied as exc:
             self._deny(grant, operation, str(exc))
             raise
+        # N12: the validated body becomes an immutable snapshot **here**, before
+        # any authorization request runs, and that exact snapshot is what is
+        # transmitted.  A caller mutating the original mapping afterwards
+        # cannot change what was checked into what is sent.
+        snapshot = _snapshot(body) if body is not None else None
         # The credential is read **once** for this authorized request and that
         # exact value is the one fingerprinted, verified and transmitted: a
         # rotation mid-request cannot make the connector send a credential
@@ -231,9 +285,13 @@ class GitHubProvider(RepositoryProvider):
             self._require_run_of_workflow(grant, slots, token)
         if operation == "create_branch":
             self._require_branch_source(grant, payload or {}, body or {}, token)
+        # A merge is addressed only after the provider's own metadata confirms
+        # the pull request targets the granted reference (N13).
+        if operation == "merge_pull":
+            self._require_merge_target(grant, slots, token)
         # The repository-operation ceiling is reserved atomically, before the
         # repository exchange.  Identity and ownership verification are
-        # authorization traffic with their own bounded caches, and the grant's
+        # authorization traffic with their own bounded budget, and the grant's
         # ``max_calls`` bounds repository operations (N06).
         reason = self._reserve_call(grant, operation)
         if reason:
@@ -242,7 +300,8 @@ class GitHubProvider(RepositoryProvider):
         path = self._path_for(operation, slots)
         if method is None:
             method = self._MUTATING.get(operation, "GET")
-        status, raw = self._exchange(operation, method, path, body or {}, token)
+        status, raw = self._exchange(operation, method, path, _wire_body(snapshot) or {},
+                                     token)
         self._verify_response(operation, payload or {}, raw)
         event_reason = "ok" if status < 300 else "http_" + str(status)
         # A URL path never enters the audit event: the operation and status
@@ -309,6 +368,7 @@ class GitHubProvider(RepositoryProvider):
         with self._identity_lock:
             if identity == self._verified_identity:
                 return
+            self._charge_authorization_request()
             verified, reason = self.verify_identity(account.strip(), token=token)
             if not verified:
                 raise ConnectorDenied(reason)
@@ -359,6 +419,22 @@ class GitHubProvider(RepositoryProvider):
         if str(body.get("sha", "")) != head:
             raise ConnectorDenied("reference_not_granted")
 
+    def _authorization_context(self, grant: Grant, workflow: str, run_id: str,
+                               token: Optional[str]) -> Tuple[str, ...]:
+        """The complete context an ownership decision belongs to (N07).
+
+        A verified run is evidence **for this grant, on this repository, under
+        this reference, for this account, with this credential**: the cache key
+        carries all of it, so an entry established under one context can never
+        authorize the same run id under another.  The reference comes from the
+        grant, never from the caller's slots.
+        """
+        return (self.name, str(getattr(grant, "repository", "")),
+                str(getattr(grant, "reference", "")),
+                str(getattr(grant, "account", "")),
+                self._token_fingerprint(self.name, token) or "",
+                workflow, run_id)
+
     def _require_run_of_workflow(self, grant: Grant, slots: Mapping[str, Any],
                                  token: Optional[str]) -> None:
         """Establish from trusted metadata that this run belongs to the grant.
@@ -366,45 +442,107 @@ class GitHubProvider(RepositoryProvider):
         A caller-declared workflow name proves nothing about which run an id
         names: the run is addressed only after the workflow's **own runs list**
         - the official endpoint's answer, not the caller's claim - contains
-        the requested id (N07).  A verified (workflow, run) pair is remembered
-        so a repeated operation on the same run does not re-query, and the
-        memo is bounded.  Missing or malformed ownership evidence refuses.
+        the requested id (N07).  Evidence is remembered per complete
+        authorization context, for a bounded time, so a repeated operation on
+        the same run does not re-query while a different context always does.
+        Concurrent lookups of the same context are coalesced under the lock.
+        Missing or malformed evidence refuses.
         """
         workflow = str(slots.get("workflow", ""))
         run_id = str(slots.get("run_id", ""))
-        key = (workflow, run_id)
+        key = self._authorization_context(grant, workflow, run_id, token)
+        stamp = time.time()
         with self._run_lock:
-            if self._verified_runs.get(key):
+            verified_at = self._verified_runs.get(key)
+            if verified_at is not None and stamp - verified_at < RUN_OWNERSHIP_TTL_SECONDS:
                 return
-        repository = self._repository(slots)
-        status, raw = self._exchange("list_workflow_runs", "GET",
-                                     "/repos/{}/actions/workflows/{}/runs?per_page=100".format(
-                                         repository, workflow),
-                                     {}, token)
-        if status >= 300:
-            raise ConnectorDenied("run_ownership_unavailable")
-        try:
-            data = json.loads(raw.decode("utf-8")) if raw else {}
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ConnectorDenied("invalid_response")
-        runs = data.get("workflow_runs") if isinstance(data, dict) else None
-        if not isinstance(runs, list):
-            raise ConnectorDenied("run_ownership_unavailable")
-        owned = {str(entry.get("id")) for entry in runs if isinstance(entry, dict)}
-        if run_id not in owned:
-            raise ConnectorDenied("run_not_of_workflow")
-        with self._run_lock:
-            self._verified_runs[key] = True
+            # The lookup runs under the lock, so a concurrent request for the
+            # same context waits and then sees the entry rather than issuing a
+            # duplicate authorization request (N06).
+            self._charge_authorization_request()
+            repository = self._repository(slots)
+            status, raw = self._exchange(
+                "list_workflow_runs", "GET",
+                "/repos/{}/actions/workflows/{}/runs?per_page=100".format(repository,
+                                                                         workflow),
+                {}, token)
+            if status >= 300:
+                raise ConnectorDenied("run_ownership_unavailable")
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise ConnectorDenied("invalid_response")
+            runs = data.get("workflow_runs") if isinstance(data, dict) else None
+            if not isinstance(runs, list):
+                raise ConnectorDenied("run_ownership_unavailable")
+            owned = {str(entry.get("id")) for entry in runs if isinstance(entry, dict)}
+            if run_id not in owned:
+                raise ConnectorDenied("run_not_of_workflow")
+            self._verified_runs[key] = time.time()
             while len(self._verified_runs) > MAX_VERIFIED_RUNS:
                 self._verified_runs.pop(next(iter(self._verified_runs)))
+
+    def _require_merge_target(self, grant: Grant, slots: Mapping[str, Any],
+                              token: Optional[str]) -> None:
+        """Bind a merge to the pull request's own target reference (N13).
+
+        A grant binds a repository and a reference, but a merge is addressed
+        by a numeric id: without this check a pull request targeting another
+        branch could be merged under a grant that never authorized it.  The
+        destination is therefore read from trusted provider metadata - the
+        pull request's own ``base`` - before any merge is issued.
+        """
+        repository = self._repository(slots)
+        issue = str(slots.get("issue", ""))
+        granted_reference = str(getattr(grant, "reference", "") or "")
+        context = ("merge_target", self.name, str(getattr(grant, "repository", "")),
+                   granted_reference, str(getattr(grant, "account", "")),
+                   self._token_fingerprint(self.name, token) or "", issue)
+        stamp = time.time()
+        with self._run_lock:
+            verified_at = self._verified_runs.get(context)
+            if verified_at is not None and stamp - verified_at < RUN_OWNERSHIP_TTL_SECONDS:
+                return
+            self._charge_authorization_request()
+            status, raw = self._exchange("get_pull", "GET",
+                                         "/repos/{}/pulls/{}".format(repository, issue),
+                                         {}, token)
+            if status >= 300:
+                raise ConnectorDenied("merge_target_unavailable")
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise ConnectorDenied("invalid_response")
+            base = data.get("base") if isinstance(data, dict) else None
+            target = base.get("ref") if isinstance(base, dict) else None
+            if not isinstance(target, str) or not target:
+                raise ConnectorDenied("merge_target_unavailable")
+            if target != granted_reference:
+                raise ConnectorDenied("reference_not_granted")
+            self._verified_runs[context] = time.time()
+            while len(self._verified_runs) > MAX_VERIFIED_RUNS:
+                self._verified_runs.pop(next(iter(self._verified_runs)))
+
+    def _charge_authorization_request(self) -> None:
+        """Count one authorization request against the instance's bound (N06).
+
+        A bounded cache bounds stored entries, not requests: a flood of identity
+        mismatches or foreign runs would otherwise issue unbounded
+        authorization traffic.  Returns nothing; refuses with a typed reason.
+        """
+        with self._call_lock:
+            self._authorization_requests += 1
+            if self._authorization_requests > MAX_AUTHORIZATION_REQUESTS:
+                raise ConnectorDenied("authorization_traffic_exhausted")
 
     def _reserve_call(self, grant: Grant, operation: str) -> str:
         """Atomically verify the grant ceiling and reserve one call slot.
 
-        The check and the increment share one lock and both happen **before**
-        any transport is built, so a burst of concurrent calls cannot pass the
-        ceiling together and discover only afterwards that it was exhausted
-        (N06).  Returns the denial reason, or ``""`` when the slot is reserved.
+        The check and the increment share one lock, so a burst of concurrent
+        calls cannot pass the ceiling together and discover only afterwards
+        that it was exhausted.  This reserves a **repository operation**:
+        identity and ownership verification are authorization traffic, bounded
+        separately by ``_charge_authorization_request`` (N06).
         """
         with self._call_lock:
             allowed, reason = self.check(grant, operation)
