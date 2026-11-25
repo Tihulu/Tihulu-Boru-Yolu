@@ -1417,3 +1417,14 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **Not touched:** the LOCAL_ONLY / LOCAL_ISOLATED / MINIMUM_NECESSARY defaults, the four independent policy axes, the typed field maps, the historical regression files, or the external HOLD gates.
 - **Blocking owner action:** the session harness refuses `git push`. Push + CI watch must be executed by the authorized local agent under the owner's authorization; the code head and its documents-only re-pin are pushed **together** so CI runs once on the final head.
 - **Next action:** push the two heads together, verify with `git ls-remote` from the coordinator side, watch CI, then request a fifth independent review against the new exact code commit. PR #14 stays draft; nothing is merged or released.
+
+---
+
+### 2026-11-25 — fourth-review remediation pushed and CI green (code head `892d14c`, head `1ab76a0`, run `45606453580`)
+
+- **Push executed by the authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`) under the owner's session authorization, code head and documents-only re-pin pushed together: `a1318e5..1ab76a0`. Re-verified from the coordinator side with `git ls-remote` → remote head `1ab76a0e144f7bef51db514ae3c42aed997c3821`, identical to local.
+- **CI verified:** run `45606453580` on head `1ab76a0e` concluded **success** (`validate`, 1m37s), re-read directly from `gh run view`. The only annotation is a non-blocking Node.js 20 deprecation notice.
+- **Code head under review:** `892d14c6ab5df52681541b26beb3713472aa7d5c` — the commit that carries the remediation; `1ab76a0` is its documents-only re-pin (only `docs/REVIEW_PACKAGE.md` differs), which is exactly the documentation-only path set the F20 contract allows.
+- **Local verification on this head:** `unittest discover -s tests` **782 tests OK**; `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; the reviewer's 20 probes, the 20 re-review regressions, the 26 third-review, the 30 fourth-review and the 25 fifth-review regressions all green. MOCK/STATIC only.
+- **Gate 1 state:** all nine items from the fourth review are remediated with named negative regression tests, locally verified and CI-green. The remaining gate is the independent fifth-review verdict.
+- **Next action:** request a fifth independent review against the exact code commit `892d14c6ab5df52681541b26beb3713472aa7d5c`. Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval. PR #14 stays draft; nothing is merged or released.
