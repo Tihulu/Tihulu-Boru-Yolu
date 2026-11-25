@@ -1338,3 +1338,14 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **Gate 1 state:** all nine items from the third review are remediated with named negative regression tests, locally verified and CI-green. The only remaining gate is the **independent fourth-review verdict**, which belongs to the reviewer.
 - **Not reopened and not weakened:** F03/F12/F17/N09 static closures, the retained F06/F14/F15/N01/N03/N04 acceptances, the historical regression files, and the external HOLD gates.
 - **Next action:** request a fourth independent review against the exact code commit `10176308733e1dd9940560bcec259b43e738a500`. Gates 2–5 remain owner actions. PR #14 stays draft; nothing is merged or released.
+
+---
+
+### 2026-11-25 — ledger head pushed and CI green (head `97c572f`, run `45530891495`)
+
+- **Push executed by the authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`) under the owner's session authorization: `43b24df..97c572f`. Re-verified from the coordinator side with `git ls-remote` → remote head `97c572f4f3f4c8a9b4eeb204706f9f59f4d82446`, identical to local.
+- **CI verified:** run `45530891495` on head `97c572f4` concluded **success** (`validate`, 1m31s), re-read directly from `gh run view`.
+- **Consecutive green runs on this branch:** `45516186275` (code head `1017630`'s re-pin) and `45530891495` (the ledger head). Both are documents-only trees over the code head `10176308733e1dd9940560bcec259b43e738a500`, which the F20 contract's documentation-only path set covers.
+- **Verified local state on this head:** `unittest discover -s tests` **757 tests OK**; the F20 pin contract passes on the committed head (the only files changed since the pin are `docs/REVIEW_PACKAGE.md` and `harness/build-log.md`); `scripts/check_project.py` PASS.
+- **Gate 1 state:** the third review's nine items are remediated, locally verified and CI-green on two consecutive runs. The remaining gate is the independent fourth-review verdict.
+- **Next action:** request a fourth independent review against the exact code commit `10176308733e1dd9940560bcec259b43e738a500`. Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval. PR #14 stays draft; nothing is merged or released.
