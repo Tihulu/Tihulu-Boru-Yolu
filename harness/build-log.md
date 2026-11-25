@@ -1428,3 +1428,13 @@ re-pinned to this head's own green CI run; and the Gate 2 pre-flight
 - **Local verification on this head:** `unittest discover -s tests` **782 tests OK**; `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; the reviewer's 20 probes, the 20 re-review regressions, the 26 third-review, the 30 fourth-review and the 25 fifth-review regressions all green. MOCK/STATIC only.
 - **Gate 1 state:** all nine items from the fourth review are remediated with named negative regression tests, locally verified and CI-green. The remaining gate is the independent fifth-review verdict.
 - **Next action:** request a fifth independent review against the exact code commit `892d14c6ab5df52681541b26beb3713472aa7d5c`. Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval. PR #14 stays draft; nothing is merged or released.
+
+---
+
+### 2026-11-25 — ledger head pushed and confirmed green (head `a5e69a8`, run `45606885433`)
+
+- **Push executed by the authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`) under the owner's session authorization: `1ab76a0..a5e69a8`. Re-verified from the coordinator side with `git ls-remote` → remote head `a5e69a806ee9d9024c735cf990ed60a2b40f13fd`, identical to local; working tree clean.
+- **CI verified:** run `45606885433` on head `a5e69a80` concluded **success** (`validate`, 1m34s), re-read directly from `gh run view`.
+- **Consecutive green runs on this branch, all over the code head `892d14c6ab5df52681541b26beb3713472aa7d5c`:** `45606453580`, `45606885433`. The only files changed since the pinned code head are `docs/REVIEW_PACKAGE.md` and `harness/build-log.md` — the documentation-only path set the F20 contract requires, verified by the F20 regressions on the committed head.
+- **Complete fourth-review remediation state:** the nine items (F07/N02, N07, N06, N12, N13, N14, N05, F20, N10) are remediated with named negative regression tests (25 new in `tests/test_review5_regressions.py`), 782 tests pass locally, `scripts/check_project.py` PASS, the F20 pin contract holds, and two consecutive CI runs are green. The external HOLD gates are untouched.
+- **Next action:** request a fifth independent review against the exact code commit `892d14c6ab5df52681541b26beb3713472aa7d5c`. Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval. PR #14 stays draft; nothing is merged or released.
