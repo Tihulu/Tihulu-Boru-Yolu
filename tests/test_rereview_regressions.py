@@ -445,56 +445,15 @@ class N05Tests(unittest.TestCase):
 
 
 class F20Tests(unittest.TestCase):
-    """The review package names the head it describes."""
-
-    #: Paths whose change never alters the reviewed code tree.  A pin may name
-    #: an earlier commit only when **every** intervening change lives here.
-    DOCUMENTATION_ONLY_PATHS = ("docs/", "harness/")
-
-    def _pin_describes_head(self, pinned: str) -> None:
-        """Assert the pin names the reviewed code, exactly or documentably.
-
-        The reviewer's remedy for F20: an exact revision match, **or** an
-        explicit demonstration that every intervening change belongs to an
-        approved documentation-only path set.  Ancestry on its own is never
-        enough - a pin that names an older code revision while production code
-        has since changed is the F20 defect itself.
-        """
-        import subprocess
-
-        def git(*args):
-            return subprocess.run(["git"] + list(args), capture_output=True, text=True)
-
-        if git("rev-parse", "HEAD").returncode != 0:
-            self.skipTest("no git history is available in this tree")
-        resolved = git("rev-parse", "--verify", pinned + "^{commit}")
-        self.assertEqual(0, resolved.returncode,
-                         "the package pins an unknown commit: " + pinned)
-        if git("rev-parse", pinned).stdout.strip() == git("rev-parse", "HEAD").stdout.strip():
-            return  # exact revision match
-        changed = git("diff", "--name-only", pinned, "HEAD")
-        self.assertEqual(0, changed.returncode, "cannot compare the pin with HEAD")
-        files = [name for name in changed.stdout.splitlines() if name.strip()]
-        self.assertTrue(files, "the pin lags HEAD but nothing changed")
-        undocumented = sorted(name for name in files
-                              if not name.startswith(self.DOCUMENTATION_ONLY_PATHS))
-        self.assertEqual([], undocumented,
-                         "the package pins " + pinned + " but production code"
-                         " changed since: " + ", ".join(undocumented))
+    """Verify the review package through the shared history verifier."""
 
     def test_f20_the_package_pins_the_current_head(self):
-        """The package names the head it describes, as reviewed code.
+        from scripts.review_revision import verify_package
+        import subprocess
 
-        Exact revision match, or an explicit documentation-only path set for
-        the intervening commits (the third review's remedy).  A pin that names
-        an unknown or a future commit fails.
-        """
-        import re
-
-        package = open("docs/REVIEW_PACKAGE.md", "r", encoding="utf-8").read()
-        match = re.search(r"head under review: `([0-9a-f]{7,40})", package)
-        self.assertIsNotNone(match, "the package names no head")
-        self._pin_describes_head(match.group(1))
+        if subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True).returncode:
+            self.skipTest("no git history is available in this tree")
+        verify_package(".")
 
 
 if __name__ == "__main__":

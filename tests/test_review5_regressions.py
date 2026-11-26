@@ -527,91 +527,70 @@ class N14ResourceMismatchTests(unittest.TestCase):
 
 
 class F20RevisionContractTests(unittest.TestCase):
-    """F20: the pin honours the documented revision contract."""
-
-    DOCUMENTATION_ONLY_PATHS = ("docs/", "harness/")
+    """Exercise the actual verifier against independently created histories."""
 
     def test_f20_the_documented_head_carries_docs_only_changes(self):
-        import re
+        from scripts.review_revision import verify_package
+        import subprocess
 
-        package = open("docs/REVIEW_PACKAGE.md", "r", encoding="utf-8").read()
-        match = re.search(r"head under review: `([0-9a-f]{7,40})", package)
-        self.assertIsNotNone(match, "the package names no head")
-
-        def git(*args):
-            return subprocess.run(["git"] + list(args), capture_output=True, text=True)
-
-        if git("rev-parse", "HEAD").returncode != 0:
+        if subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True).returncode:
             self.skipTest("no git history is available in this tree")
-        pinned = match.group(1)
-        self.assertEqual(0, git("rev-parse", "--verify", pinned + "^{commit}").returncode,
-                         "the package pins an unknown commit")
-        changed = git("diff", "--name-only", pinned, "HEAD")
-        self.assertEqual(0, changed.returncode, "cannot compare the pin with HEAD")
-        files = [name for name in changed.stdout.splitlines() if name.strip()]
-        undocumented = sorted(name for name in files
-                             if not name.startswith(self.DOCUMENTATION_ONLY_PATHS))
-        self.assertEqual([], undocumented,
-                         "the package pin lags production code: "
-                         + ", ".join(undocumented))
+        verify_package(".")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = self.tmp.name
+        self.git("init", "-q")
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def commit(self, name, content):
+        target = os.path.join(self.root, name)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                 "commit", "-q", "-m", name)
+        return self.git("rev-parse", "HEAD")
+
+    def verify(self, pin):
+        from scripts.review_revision import verify_revision
+        verify_revision(self.root, pin)
 
     def test_f20_a_production_code_change_since_the_pin_fails(self):
-        # the negative fixture: the same history shape with a code change must
-        # be rejected, which is what the frozen-revision F20 defect was
-        with tempfile.TemporaryDirectory() as root:
-            subprocess.run(["git", "init", "-q", root], check=True)
-            environment = dict(os.environ, GIT_DIR=os.path.join(root, ".git"),
-                               GIT_WORK_TREE=root)
-
-            def git(*args):
-                return subprocess.run(["git"] + list(args), cwd=root, capture_output=True,
-                                      text=True, check=True)
-
-            def commit(name, content):
-                target = os.path.join(root, name)
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                with open(target, "w", encoding="utf-8") as handle:
-                    handle.write(content)
-                git("add", "-A")
-                git("-c", "user.email=t@example.invalid", "-c", "user.name=t",
-                    "commit", "-q", "-m", name)
-                return git("rev-parse", "HEAD").stdout.strip()
-
-            pin = commit("docs/first.md", "first")
-            head = commit("boru/connectors/github.py", "code")
-            changed = subprocess.run(["git", "diff", "--name-only", pin, head],
-                                     cwd=root, capture_output=True, text=True,
-                                     env=environment, check=True)
-            files = [name for name in changed.stdout.splitlines() if name.strip()]
-            undocumented = sorted(name for name in files
-                                  if not name.startswith(self.DOCUMENTATION_ONLY_PATHS))
-            self.assertEqual(["boru/connectors/github.py"], undocumented)
+        pin = self.commit("docs/first.md", "first")
+        self.commit("boru/connectors/github.py", "code")
+        with self.assertRaises(ValueError):
+            self.verify(pin)
 
     def test_f20_a_documentation_only_change_since_the_pin_passes(self):
-        with tempfile.TemporaryDirectory() as root:
-            subprocess.run(["git", "init", "-q", root], check=True)
+        pin = self.commit("docs/first.md", "first")
+        self.commit("docs/second.md", "second")
+        self.verify(pin)
 
-            def git(*args):
-                return subprocess.run(["git"] + list(args), cwd=root, capture_output=True,
-                                      text=True, check=True)
+    def test_f20_change_and_revert_fails(self):
+        pin = self.commit("boru/code.py", "original")
+        self.commit("boru/code.py", "changed")
+        self.commit("boru/code.py", "original")
+        self.commit("docs/after.md", "docs")
+        with self.assertRaises(ValueError):
+            self.verify(pin)
 
-            def commit(name, content):
-                target = os.path.join(root, name)
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                with open(target, "w", encoding="utf-8") as handle:
-                    handle.write(content)
-                git("add", "-A")
-                git("-c", "user.email=t@example.invalid", "-c", "user.name=t",
-                    "commit", "-q", "-m", name)
-                return git("rev-parse", "HEAD").stdout.strip()
+    def test_f20_divergent_history_fails(self):
+        base = self.commit("docs/base.md", "base")
+        pin = self.commit("docs/pin.md", "pin")
+        self.git("checkout", "--detach", base)
+        self.commit("docs/other.md", "other")
+        with self.assertRaises(ValueError):
+            self.verify(pin)
 
-            pin = commit("docs/first.md", "first")
-            head = commit("docs/second.md", "second")
-            changed = git("diff", "--name-only", pin, head)
-            files = [name for name in changed.stdout.splitlines() if name.strip()]
-            undocumented = sorted(name for name in files
-                                  if not name.startswith(self.DOCUMENTATION_ONLY_PATHS))
-            self.assertEqual([], undocumented)
+    def test_f20_exact_revision_passes(self):
+        pin = self.commit("boru/code.py", "original")
+        self.verify(pin)
 
 
 if __name__ == "__main__":
