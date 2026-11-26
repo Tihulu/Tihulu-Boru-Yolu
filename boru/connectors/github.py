@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
+from .request import freeze_mapping, wire_body
 from .scope import (
     GITHUB_WRITE_BODY_CONTRACTS, check_call, check_dispatch_body, check_write_body,
 )
@@ -47,38 +48,6 @@ MAX_AUTHORIZATION_REQUESTS = 512
 #: the window the ownership is re-established, so a credential rotation or a
 #: changed grant cannot ride on stale evidence.
 RUN_OWNERSHIP_TTL_SECONDS = 300.0
-
-#: N12: a validated write body is copied before authorization and that exact
-#: snapshot is what reaches the transport.
-MAX_SNAPSHOT_DEPTH = 3
-
-
-def _snapshot(value: Any, depth: int = 0) -> Any:
-    """A bounded, immutable copy of a validated request body (N12).
-
-    The value that was validated is the value that reaches the transport, so
-    the body is copied **before** any authorization request and that exact
-    snapshot is transmitted: a caller mutating the original mapping during
-    authorization cannot change what is sent.
-    """
-    if depth > MAX_SNAPSHOT_DEPTH:
-        raise ConnectorDenied("body_nested_too_deeply")
-    if isinstance(value, Mapping):
-        return tuple((key, _snapshot(item, depth + 1))
-                     for key, item in sorted(value.items(), key=lambda pair: str(pair[0])))
-    if isinstance(value, (list, tuple)):
-        return tuple(_snapshot(item, depth + 1) for item in value)
-    return value
-
-
-def _wire_body(snapshot: Any) -> Any:
-    """The wire form of a validated body snapshot."""
-    if isinstance(snapshot, tuple) and not snapshot:
-        return {}
-    if isinstance(snapshot, tuple):
-        return {str(key): _wire_body(item) for key, item in snapshot}
-    return snapshot
-
 
 def _bounded_read(stream, limit: int) -> bytes:
     """Read at most ``limit`` bytes from an HTTP error body."""
@@ -156,7 +125,7 @@ class GitHubProvider(RepositoryProvider):
         allowed, reason = self.check(grant, "list_workflows")
         if not allowed:
             raise ConnectorDenied(reason)
-        slots = check_call(grant, "list_workflows", payload or {}, method=None, path="",
+        slots = check_call(grant, "list_workflows", payload, method=None, path="",
                            default_method="GET")
         # Discovery is an externally connected path like any other: the identity
         # behind the token is verified before the request, and the call counts
@@ -250,7 +219,7 @@ class GitHubProvider(RepositoryProvider):
         try:
             # The slots returned here are the only values used to build the
             # request: what was checked is what is sent.
-            slots = check_call(grant, operation, payload or {}, method=method, path=path,
+            slots = check_call(grant, operation, payload, method=method, path=path,
                                default_method=self._MUTATING.get(operation, "GET"))
         except ConnectorDenied as exc:
             self._deny(grant, operation, str(exc))
@@ -261,16 +230,12 @@ class GitHubProvider(RepositoryProvider):
         # document never reaches the endpoint, and a mandatory reference key
         # cannot be omitted (N08/N11).
         try:
-            check_write_body(grant, operation, body or {}, payload or {},
+            snapshot = freeze_mapping(body)
+            check_write_body(grant, operation, snapshot, slots,
                              GITHUB_WRITE_BODY_CONTRACTS)
         except ConnectorDenied as exc:
             self._deny(grant, operation, str(exc))
             raise
-        # N12: the validated body becomes an immutable snapshot **here**, before
-        # any authorization request runs, and that exact snapshot is what is
-        # transmitted.  A caller mutating the original mapping afterwards
-        # cannot change what was checked into what is sent.
-        snapshot = _snapshot(body) if body is not None else None
         # The credential is read **once** for this authorized request and that
         # exact value is the one fingerprinted, verified and transmitted: a
         # rotation mid-request cannot make the connector send a credential
@@ -284,7 +249,7 @@ class GitHubProvider(RepositoryProvider):
         if operation in RUN_OPERATIONS:
             self._require_run_of_workflow(grant, slots, token)
         if operation == "create_branch":
-            self._require_branch_source(grant, payload or {}, body or {}, token)
+            self._require_branch_source(grant, slots, snapshot, token)
         # A merge is addressed only after the provider's own metadata confirms
         # the pull request targets the granted reference (N13).
         if operation == "merge_pull":
@@ -300,9 +265,9 @@ class GitHubProvider(RepositoryProvider):
         path = self._path_for(operation, slots)
         if method is None:
             method = self._MUTATING.get(operation, "GET")
-        status, raw = self._exchange(operation, method, path, _wire_body(snapshot) or {},
+        status, raw = self._exchange(operation, method, path, wire_body(snapshot),
                                      token)
-        self._verify_response(operation, payload or {}, raw)
+        self._verify_response(operation, slots, raw)
         event_reason = "ok" if status < 300 else "http_" + str(status)
         # A URL path never enters the audit event: the operation and status
         # describe the call without naming a repository route.
@@ -400,6 +365,7 @@ class GitHubProvider(RepositoryProvider):
                 or name.strip() != name:
             raise ConnectorDenied("unsafe_body_value")
         repository = self._repository(payload)
+        self._charge_authorization_request()
         status, raw = self._exchange("get_reference_head", "GET",
                                      "/repos/{}/git/ref/heads/{}".format(repository,
                                                                          reference),
@@ -495,14 +461,7 @@ class GitHubProvider(RepositoryProvider):
         repository = self._repository(slots)
         issue = str(slots.get("issue", ""))
         granted_reference = str(getattr(grant, "reference", "") or "")
-        context = ("merge_target", self.name, str(getattr(grant, "repository", "")),
-                   granted_reference, str(getattr(grant, "account", "")),
-                   self._token_fingerprint(self.name, token) or "", issue)
-        stamp = time.time()
         with self._run_lock:
-            verified_at = self._verified_runs.get(context)
-            if verified_at is not None and stamp - verified_at < RUN_OWNERSHIP_TTL_SECONDS:
-                return
             self._charge_authorization_request()
             status, raw = self._exchange("get_pull", "GET",
                                          "/repos/{}/pulls/{}".format(repository, issue),
@@ -519,9 +478,6 @@ class GitHubProvider(RepositoryProvider):
                 raise ConnectorDenied("merge_target_unavailable")
             if target != granted_reference:
                 raise ConnectorDenied("reference_not_granted")
-            self._verified_runs[context] = time.time()
-            while len(self._verified_runs) > MAX_VERIFIED_RUNS:
-                self._verified_runs.pop(next(iter(self._verified_runs)))
 
     def _charge_authorization_request(self) -> None:
         """Count one authorization request against the instance's bound (N06).
