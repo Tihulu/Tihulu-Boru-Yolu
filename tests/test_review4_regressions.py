@@ -63,7 +63,7 @@ class N07RunOwnershipTests(unittest.TestCase):
             self.paths.append(path)
             if "/actions/workflows/" in path and path.endswith("/runs?per_page=100"):
                 return 200, json.dumps({"total_count": len(runs),
-                                        "workflow_runs": [{"id": number} for number in runs]}).encode()
+                                        "workflow_runs": [{"id": number, "head_branch": "main"} for number in runs]}).encode()
             return 200, b"{}"
 
         provider = GitHubProvider(transport=transport)
@@ -148,10 +148,12 @@ class N07RunOwnershipTests(unittest.TestCase):
         provider = GitLabProvider(transport=transport)
         subject = connector_grant(operations=("get_run",), workflow_ids=("ci.yml",),
                                   repository="owner/project")
-        payload = provider.call(subject, "get_run",
-                                {"repository": "owner/project", "run_id": "42",
-                                 "workflow": "ci.yml", "reference": "main"})
-        self.assertEqual({}, payload)
+        # Even a pipeline on the granted branch cannot prove named workflow membership.
+        with self.assertRaisesRegex(ConnectorDenied, "workflow_relationship_unverifiable"):
+            provider.call(subject, "get_run",
+                          {"repository": "owner/project", "run_id": "42",
+                           "workflow": "ci.yml", "reference": "main"})
+        self.assertNotIn("/api/v4/projects/owner%2Fproject/pipelines/42", self.paths)
 
 
 class N08WriteBodyTests(unittest.TestCase):
@@ -495,44 +497,15 @@ class N11ProviderContractTests(unittest.TestCase):
 
 
 class F20RevisionBindingTests(unittest.TestCase):
-    """F20: the review package describes the code a reviewer checks out."""
-
-    DOCUMENTATION_ONLY_PATHS = ("docs/", "harness/")
+    """Verify the review package through the shared history verifier."""
 
     def test_f20_the_pin_names_the_reviewed_code(self):
-        """Exact revision match, or documentation-only intervening changes.
-
-        The third review's remedy: the package must identify the revision the
-        reviewer checks out, and where it names an earlier commit, every
-        intervening change must belong to an approved documentation-only path
-        set.  Ancestry alone is not evidence.
-        """
-        import re
+        from scripts.review_revision import verify_package
         import subprocess
 
-        package = open("docs/REVIEW_PACKAGE.md", "r", encoding="utf-8").read()
-        match = re.search(r"head under review: `([0-9a-f]{7,40})", package)
-        self.assertIsNotNone(match, "the package names no head")
-        pinned = match.group(1)
-
-        def git(*args):
-            return subprocess.run(["git"] + list(args), capture_output=True, text=True)
-
-        if git("rev-parse", "HEAD").returncode != 0:
+        if subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True).returncode:
             self.skipTest("no git history is available in this tree")
-        self.assertEqual(0, git("rev-parse", "--verify", pinned + "^{commit}").returncode,
-                         "the package pins an unknown commit: " + pinned)
-        if git("rev-parse", pinned).stdout.strip() == git("rev-parse", "HEAD").stdout.strip():
-            return  # exact revision match
-        changed = git("diff", "--name-only", pinned, "HEAD")
-        self.assertEqual(0, changed.returncode, "cannot compare the pin with HEAD")
-        files = [name for name in changed.stdout.splitlines() if name.strip()]
-        self.assertTrue(files, "the pin lags HEAD but nothing changed")
-        undocumented = sorted(name for name in files
-                              if not name.startswith(self.DOCUMENTATION_ONLY_PATHS))
-        self.assertEqual([], undocumented,
-                         "the package pins " + pinned + " but production code"
-                         " changed since: " + ", ".join(undocumented))
+        verify_package(".")
 
 
 if __name__ == "__main__":

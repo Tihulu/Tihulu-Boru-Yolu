@@ -1,7 +1,7 @@
 """Localhost polling sync tests (issue #8): allowlist, idempotency, no listener."""
 import unittest
 
-from boru.connectors.polling import EventAllowlist, PollingSync, SyncEvent
+from boru.connectors.polling import MAX_SEEN, EventAllowlist, PollingSync, SyncEvent
 from boru.errors import ConnectorDenied
 
 
@@ -115,6 +115,30 @@ class SyncTests(unittest.TestCase):
             ])
         seen_after = len(self.sync.seen)
         self.assertEqual(seen_before, seen_after, "batch rejection partially mutated seen")
+
+    def test_batch_capacity_rejection_is_atomic(self):
+        sync = PollingSync(EventAllowlist(("push",)),
+                           seen=(str(i) for i in range(MAX_SEEN - 1)))
+        before = sync.seen
+        with self.assertRaisesRegex(ConnectorDenied, "seen_registry_full"):
+            sync.accept([SyncEvent("new-a", "push"), SyncEvent("new-b", "push")])
+        self.assertEqual(before, sync.seen)
+        self.assertEqual(["new-a"], [e.event_id for e in sync.accept(
+            [SyncEvent("new-a", "push"), SyncEvent("new-a", "push")])])
+
+    def test_accept_reads_batch_only_once(self):
+        class ChangingBatch:
+            def __init__(self):
+                self.reads = 0
+
+            def __iter__(self):
+                self.reads += 1
+                return iter([SyncEvent("allowed", "push")] if self.reads == 1
+                            else [SyncEvent("unallowed", "delete")])
+
+        batch = ChangingBatch()
+        self.assertEqual(["allowed"], [e.event_id for e in self.sync.accept(batch)])
+        self.assertEqual(1, batch.reads)
 
     def test_no_listener_is_created(self):
         # the module imports no socket, server or threading primitives

@@ -148,7 +148,7 @@ class GitHubProviderTests(unittest.TestCase):
         def record(method, path, body):
             seen.append(path)
             if path.endswith("/runs?per_page=100"):
-                return (200, b'{"workflow_runs": [{"id": 42}]}')
+                return (200, b'{"workflow_runs": [{"id": 42, "head_branch": "main"}]}')
             return (200, b'{}')
 
         self.provider._transport = record
@@ -231,14 +231,15 @@ class GitLabProviderTests(unittest.TestCase):
         self.provider._transport = record
         reader = grant(operations=("get_run",), nonce="gl-3", repository="owner/project",
                        workflow_ids=("ci.yml",))
-        self.provider.call(reader, "get_run",
-                           {"repository": "owner/project", "run_id": 42, "workflow": "ci.yml",
-                            "reference": "main"})
+        with self.assertRaisesRegex(ConnectorDenied, "workflow_relationship_unverifiable"):
+            self.provider.call(reader, "get_run",
+                               {"repository": "owner/project", "run_id": 42, "workflow": "ci.yml",
+                                "reference": "main"})
         dispatch = grant(operations=("dispatch_workflow",), capabilities=(Capability.ACTIONS_DISPATCH,),
                          nonce="gl-4", repository="owner/project", workflow_ids=("ci.yml",))
         self.provider.call(dispatch, "dispatch_workflow",
                            {"repository": "owner/project", "workflow": "ci.yml"}, body={"ref": "main"})
-        self.assertIn("/api/v4/projects/owner%2Fproject/pipelines/42", seen)
+        self.assertNotIn("/api/v4/projects/owner%2Fproject/pipelines/42", seen)
         self.assertIn("/api/v4/projects/owner%2Fproject/pipeline", seen)
         self.assertNotIn("/api/v4/projects", repr(self.provider.audit()))
 

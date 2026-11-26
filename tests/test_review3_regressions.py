@@ -368,7 +368,7 @@ class N07RunScopeTests(unittest.TestCase):
         # the workflow's own runs list confirms run 42 belongs to it, and only
         # then is the run addressed
         self.provider._transport = lambda method, path, body: (
-            (200, b'{"workflow_runs": [{"id": "42"}]}')
+            (200, b'{"workflow_runs": [{"id": "42", "head_branch": "main"}]}')
             if path.endswith("/runs?per_page=100") else (200, b'{}'))
         payload = self.provider.call(self.subject, "get_run",
                                      {"repository": "owner/repo", "run_id": "42",

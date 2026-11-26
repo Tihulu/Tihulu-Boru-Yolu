@@ -251,3 +251,37 @@ All **788 tests pass** (was 788 at fifth review baseline).
 ### Next step
 
 Request sixth independent review against current head. PR #14 remains draft.
+
+
+## Sixth-review remediation candidate (2026-11-26)
+
+This is a development successor, not an independent PASS. The frozen sixth
+review candidate `785a60a` and PR #14 are preserved. The supplied green CI
+45683837558 was for the newer head `7dabbdc`; CI 45683303692 on the sixth
+candidate's merge checkout failed three F20 checks.
+
+Implemented in the separate branch `p1/gate1-review6-remediation`:
+
+- N12/N15/N17/N11: one bounded private typed materialization for connector
+  mappings, with immutable objects/arrays distinguished and branch-source
+  authorization and response checking restricted to prepared values.
+- N06: charge GitHub branch-source authorization lookups before exchange.
+- N07: require GitHub run metadata to match the granted branch; deny GitLab
+  pipeline operations when named workflow membership cannot be established.
+  Historical positive fixtures for GitLab branch-only authorization now
+  explicitly exercise the stricter refusal policy. This deliberately restricts
+  those pipeline operations; it does not claim live GitLab compatibility.
+- N13: remove mutable merge-target authorization caching. The remote race
+  between metadata lookup and merge remains unresolved; no strict
+  target-atomic merge guarantee is claimed.
+- N18: preflight distinct fresh IDs and available capacity under a lock;
+  accept consumes the input batch once; consolidate duplicate polling validators.
+- F20: shared ancestry/per-commit path verifier, rejecting nonlinear history
+  in the docs-only exception. CI checks out the exact PR head with full history
+  and no persisted checkout credentials.
+- Add focused negative regression cases. No fail-before/success-after matrix
+  or independent full-suite execution is claimed yet (N10 remains open).
+
+Code pin: `67c475e0c62cae2dc38ee13deceb1385c5f06635`. Candidate CI and independent
+acceptance remain pending. Host authentication, OS confinement, live provider
+behavior and clean-machine acceptance remain HOLD. No merge or release.

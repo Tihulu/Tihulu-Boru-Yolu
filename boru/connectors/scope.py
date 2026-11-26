@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from ..errors import ConnectorDenied
+from .request import freeze_mapping
 
 #: Characters that must not appear inside any slot (URL-escape or control risk).
 FORBIDDEN_CHARS = ("?", "#", "\\", " ", "\t", "\n", "\r", "%", "@", ":", "&", "=", "\"")
@@ -210,7 +211,7 @@ def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method
         raise ConnectorDenied("method_override_refused")
     if any(character.isspace() for character in str(default_method or "")):
         raise ConnectorDenied("invalid_method")
-    payload = payload or {}
+    payload = freeze_mapping(payload)
     if operation in REPO_SCOPED:
         repository = _slot(payload.get("repository"), "repository", 256, allow_slash=True)
         if repository.count("/") != 1:
