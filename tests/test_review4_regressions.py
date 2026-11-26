@@ -63,7 +63,7 @@ class N07RunOwnershipTests(unittest.TestCase):
             self.paths.append(path)
             if "/actions/workflows/" in path and path.endswith("/runs?per_page=100"):
                 return 200, json.dumps({"total_count": len(runs),
-                                        "workflow_runs": [{"id": number} for number in runs]}).encode()
+                                        "workflow_runs": [{"id": number, "head_branch": "main"} for number in runs]}).encode()
             return 200, b"{}"
 
         provider = GitHubProvider(transport=transport)
@@ -148,10 +148,12 @@ class N07RunOwnershipTests(unittest.TestCase):
         provider = GitLabProvider(transport=transport)
         subject = connector_grant(operations=("get_run",), workflow_ids=("ci.yml",),
                                   repository="owner/project")
-        payload = provider.call(subject, "get_run",
-                                {"repository": "owner/project", "run_id": "42",
-                                 "workflow": "ci.yml", "reference": "main"})
-        self.assertEqual({}, payload)
+        # Even a pipeline on the granted branch cannot prove named workflow membership.
+        with self.assertRaisesRegex(ConnectorDenied, "workflow_relationship_unverifiable"):
+            provider.call(subject, "get_run",
+                          {"repository": "owner/project", "run_id": "42",
+                           "workflow": "ci.yml", "reference": "main"})
+        self.assertNotIn("/api/v4/projects/owner%2Fproject/pipelines/42", self.paths)
 
 
 class N08WriteBodyTests(unittest.TestCase):

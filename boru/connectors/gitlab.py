@@ -311,28 +311,17 @@ class GitLabProvider(RepositoryProvider):
 
     def _require_run_of_reference(self, grant: Grant, slots: Mapping[str, Any],
                                   token: Optional[str]) -> None:
-        """Establish from trusted metadata that this pipeline belongs to the
-        grant (N07).
+        """Refuse pipelines without authoritative workflow membership (N07).
 
-        A caller-declared workflow name proves nothing about which pipeline an
-        id names, so the pipeline is addressed only after the pipelines of the
-        **granted reference** - the official endpoint's answer, not the
-        caller's claim - contain the requested id.  Evidence is remembered per
-        complete authorization context for a bounded time, and concurrent
-        lookups of the same context are coalesced under the lock (N06).
-        Missing or malformed evidence refuses.
+        A reference-scoped listing can exclude a foreign pipeline but cannot
+        establish its membership in an owner-granted named workflow. Never
+        use branch membership alone to authorize a run operation.
         """
-        workflow = str(slots.get("workflow", ""))
         run_id = str(slots.get("run_id", ""))
         granted_reference = str(getattr(grant, "reference", "") or "")
         if not granted_reference:
             raise ConnectorDenied("reference_required")
-        key = self._authorization_context(grant, workflow, run_id, token)
-        stamp = time.time()
         with self._run_lock:
-            verified_at = self._verified_runs.get(key)
-            if verified_at is not None and stamp - verified_at < RUN_OWNERSHIP_TTL_SECONDS:
-                return
             self._charge_authorization_request()
             project = self._project(slots)
             status, raw = self._exchange(
@@ -351,9 +340,10 @@ class GitLabProvider(RepositoryProvider):
             owned = {str(entry.get("id")) for entry in data if isinstance(entry, dict)}
             if run_id not in owned:
                 raise ConnectorDenied("run_not_of_workflow")
-            self._verified_runs[key] = time.time()
-            while len(self._verified_runs) > MAX_VERIFIED_RUNS:
-                self._verified_runs.pop(next(iter(self._verified_runs)))
+            # A branch-scoped pipeline listing cannot attest the granted
+            # workflow identity. Do not address the pipeline until a real
+            # provider relationship or a separate grant type is available.
+            raise ConnectorDenied("workflow_relationship_unverifiable")
 
     def _require_merge_target(self, grant: Grant, slots: Mapping[str, Any],
                               token: Optional[str]) -> None:

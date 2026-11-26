@@ -441,9 +441,15 @@ class GitHubProvider(RepositoryProvider):
             runs = data.get("workflow_runs") if isinstance(data, dict) else None
             if not isinstance(runs, list):
                 raise ConnectorDenied("run_ownership_unavailable")
-            owned = {str(entry.get("id")) for entry in runs if isinstance(entry, dict)}
-            if run_id not in owned:
+            matches = [entry for entry in runs if isinstance(entry, dict)
+                       and type(entry.get("id")) in (str, int)
+                       and str(entry["id"]) == run_id]
+            if not matches:
                 raise ConnectorDenied("run_not_of_workflow")
+            if len(matches) != 1 or not isinstance(matches[0].get("head_branch"), str):
+                raise ConnectorDenied("run_ownership_unavailable")
+            if matches[0]["head_branch"] != grant.reference:
+                raise ConnectorDenied("reference_not_granted")
             self._verified_runs[key] = time.time()
             while len(self._verified_runs) > MAX_VERIFIED_RUNS:
                 self._verified_runs.pop(next(iter(self._verified_runs)))

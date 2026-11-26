@@ -191,7 +191,7 @@ class N07OwnershipContextTests(unittest.TestCase):
         return GitHubProvider(transport=transport)
 
     def test_n07_ownership_does_not_cross_repositories(self):
-        provider = self._github({"first": [{"id": "42"}], "second": []})
+        provider = self._github({"first": [{"id": "42", "head_branch": "main"}], "second": []})
         first = connector_grant(repository="first/repo", operations=("get_run",),
                                 workflow_ids=("ci.yml",), nonce="a")
         second = connector_grant(repository="second/repo", operations=("get_run",),
@@ -222,9 +222,10 @@ class N07OwnershipContextTests(unittest.TestCase):
         develop = connector_grant(repository="owner/project", reference="develop",
                                   operations=("get_run",), workflow_ids=("ci.yml",),
                                   nonce="d")
-        provider.call(main, "get_run",
-                      {"repository": "owner/project", "run_id": "42", "workflow": "ci.yml",
-                       "reference": "main"})
+        with self.assertRaisesRegex(ConnectorDenied, "workflow_relationship_unverifiable"):
+            provider.call(main, "get_run",
+                          {"repository": "owner/project", "run_id": "42", "workflow": "ci.yml",
+                           "reference": "main"})
         with self.assertRaises(ConnectorDenied) as raised:
             provider.call(develop, "get_run",
                           {"repository": "owner/project", "run_id": "42",
@@ -242,7 +243,7 @@ class N07OwnershipContextTests(unittest.TestCase):
                 return 200, json.dumps({"login": "owner"}).encode()
             if path.endswith("/runs?per_page=100"):
                 lookups.append(path)
-                return 200, json.dumps({"workflow_runs": [{"id": "42"}]}).encode()
+                return 200, json.dumps({"workflow_runs": [{"id": "42", "head_branch": "main"}]}).encode()
             return 200, b"{}"
 
         provider = GitHubProvider(token_env="BORU_R5D_TOKEN", transport=transport)
@@ -273,12 +274,10 @@ class N07OwnershipContextTests(unittest.TestCase):
         provider = self._gitlab_reporting_the_grants_pipelines()
         subject = connector_grant(repository="owner/project", reference="main",
                                   operations=("get_run",), workflow_ids=("ci.yml",))
-        payload = provider.call(subject, "get_run",
-                                {"repository": "owner/project", "run_id": "42",
-                                 "workflow": "ci.yml"})
-        # the ownership lookup used the grant's reference, so the run itself
-        # was reached
-        self.assertEqual([], payload)
+        with self.assertRaisesRegex(ConnectorDenied, "workflow_relationship_unverifiable"):
+            provider.call(subject, "get_run",
+                          {"repository": "owner/project", "run_id": "42",
+                           "workflow": "ci.yml"})
 
     def test_n07_an_empty_caller_slot_does_not_weaken_the_lookup(self):
         # a payload that names an empty reference cannot serve as ownership
@@ -326,7 +325,7 @@ class N06AuthorizationTrafficTests(unittest.TestCase):
                 with lock:
                     lookups.append(path)
                 time.sleep(0.05)
-                return 200, json.dumps({"workflow_runs": [{"id": "42"}]}).encode()
+                return 200, json.dumps({"workflow_runs": [{"id": "42", "head_branch": "main"}]}).encode()
             return 200, b"{}"
 
         provider = GitHubProvider(transport=transport)
@@ -502,13 +501,16 @@ class N14ResourceMismatchTests(unittest.TestCase):
 
     def test_n14_a_rerun_retries_the_verified_pipeline(self):
         self._transport()
-        payload = self.provider.call(self.subject, "rerun_workflow",
-                                     {"repository": "owner/project", "run_id": "42",
-                                      "workflow": "ci.yml", "reference": "main"})
-        self.assertEqual({}, payload)
-        # the pipeline whose ownership was verified is the one retried
-        self.assertIn(("POST", "/api/v4/projects/owner%2Fproject/pipelines/42/retry"),
-                      self.paths)
+        # Preserve the intended official route but block actual execution
+        # while named workflow ownership is not verifiable.
+        slots = {"repository": "owner/project", "run_id": "42",
+                 "workflow": "ci.yml", "reference": "main"}
+        self.assertEqual("/api/v4/projects/owner%2Fproject/pipelines/42/retry",
+                         self.provider._path_for("rerun_workflow", slots))
+        with self.assertRaisesRegex(ConnectorDenied, "workflow_relationship_unverifiable"):
+            self.provider.call(self.subject, "rerun_workflow", slots)
+        self.assertNotIn(("POST", "/api/v4/projects/owner%2Fproject/pipelines/42/retry"),
+                         self.paths)
         # and no schedule was addressed
         self.assertNotIn(
             ("POST", "/api/v4/projects/owner%2Fproject/pipeline_schedules/ci.yml/play"),
