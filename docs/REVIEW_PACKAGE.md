@@ -5,7 +5,7 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 
 - Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 - Branch under review: `p1/boru-core-vertical-slice`
-- Code head under review: `0b56f5a1edfd04f607cb91b9e4af87cda569c29b`
+- Code head under review: `70e10eef4e8c5a4d9b52d7ab5e93482d21d78865`
   (the head this package describes; the pin must name this revision exactly, or
   every intervening change must live under `docs/` or `harness/` — the F20
   contract in `tests/test_rereview_regressions.py` asserts exactly that, and
@@ -29,13 +29,13 @@ git clone https://github.com/Tihulu/Tihulu-Boru-Yolu.git
 cd Tihulu-Boru-Yolu
 git checkout p1/boru-core-vertical-slice
 python3 scripts/check_project.py     # expected: PASS (30 documents + sample policy invariants)
-python3 -m unittest discover -s tests   # expected: Ran 854 tests ... OK
+python3 -m unittest discover -s tests   # expected: Ran 858 tests ... OK
 PYTHONPATH=. python3 tests/test_review_regressions.py   # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_rereview_regressions.py  # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_review3_regressions.py   # expected: Ran 26 tests ... OK
 PYTHONPATH=. python3 tests/test_review4_regressions.py   # expected: Ran 30 tests ... OK
 PYTHONPATH=. python3 tests/test_review5_regressions.py   # expected: Ran 28 tests ... OK (3 new N10 tests)
-PYTHONPATH=. python3 tests/test_harness.py                 # expected: Ran 54 tests ... OK
+PYTHONPATH=. python3 tests/test_harness.py                 # expected: Ran 58 tests ... OK
 PYTHONPATH=. python3 tests/test_property_hostile_inputs.py   # expected: Ran 9 tests ... OK
 python3 scripts/evidence.py          # expected: exit 0, overall all-PASS
 python3 -m boru doctor --state-dir local-state   # expected: overall: ok, live_acceptance: HOLD
@@ -44,7 +44,7 @@ python3 -m boru harness verify --json   # expected: {"checked": 0, "ok": true, "
 python3 -m boru harness review             # expected: no task awaits review; {"accepted": 0, "rejected": 0}
 ~~~
 
-Observed result on the head commit: **PASS / 854 tests / exit 0** (local run of
+Observed result on the head commit: **PASS / 858 tests / exit 0** (local run of
 `check_project.py`, the full suite, `scripts/evidence.py`, `boru doctor` and
 `boru demo`); the same suite passed in CI on this head (the run recorded for it
 in `harness/build-log.md`). If any of these fail on your run, that is a finding.
