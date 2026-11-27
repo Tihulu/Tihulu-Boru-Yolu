@@ -429,9 +429,17 @@ def _harness(args) -> int:
             print(("ALLOW" if allowed else "DENY " + str(reason or "denied")))
         return 0 if allowed else 1
 
-    # action == "view": a single bounded, secret-free frame.
+    # action == "view": a single bounded, secret-free frame backed by real
+    # Boru Core state. Read-only: it opens the store/ledger the owner names,
+    # reads bounded public state, and performs no dispatch, provider call or
+    # review. A missing or unreadable state directory degrades to an empty view
+    # rather than failing, so the console never blocks an operator.
     from .harness import tui
-    view = tui.snapshot()
+    try:
+        with _open_core(_load_config(args.config), args.state_dir) as core:
+            view = tui.snapshot_from_core(core)
+    except Exception:
+        view = tui.snapshot()
     if args.json:
         print(json.dumps(view.as_dict(), ensure_ascii=True))
     else:

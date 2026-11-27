@@ -51,8 +51,13 @@ stated in `boru/dashboard.py`.
    existing sandbox decision path ahead of any future execution path.
 2. `boru/harness/tui.py` — a **read-only** live observability console over a
    pure, testable snapshot function (OpenHawk HawkEye / LEO `leo tui`
-   pattern). It renders the four axes, worker/agent leases, authorization and
-   call budgets, queue depth, the rejection ledger tail, and a doctor summary.
+   pattern). `snapshot_from_core(core)` wires it to a real `BoruCore` and reads
+   only bounded public state: the four axes from `core.policy`, providers by
+   kind and ordinal only (never an endpoint, key-name or model id), task and
+   review-queue depths from `core.store`, and the rejection ledger tail as
+   reasons only. It performs no dispatch, no provider call and no review, and a
+   missing/unreadable state directory degrades to an empty view rather than
+   blocking an operator.
 
 ## Consequences
 

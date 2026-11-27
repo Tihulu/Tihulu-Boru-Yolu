@@ -136,6 +136,85 @@ def snapshot(policy_state: Any = None, registry: Any = None, component: Any = No
     )
 
 
+def snapshot_from_core(core: Any, now: Optional[float] = None) -> HarnessSnapshot:
+    """Assemble a live view from a real ``BoruCore`` instance.
+
+    This is the wiring that makes the console useful rather than decorative: it
+    reads only public, bounded state that Boru Core already holds — the four
+    policy axes, the configured providers (kind and ordinal only, never a
+    credential or endpoint), the task/review queue depths, and the rejection
+    ledger tail (reason only). It performs no dispatch, no provider call, no
+    review and no network access, and it cannot change any state.
+    """
+    axes: List[Tuple[str, str]] = []
+    policy = getattr(core, "policy", None)
+    for key, label in _AXIS_KEYS:
+        value = _read(policy, key)
+        axes.append((label, "unset" if value is None else str(_truncate(value, MAX_NOTE))))
+
+    workers: List[Tuple[str, str]] = []
+    config = getattr(core, "config", None)
+    providers = _read(config, "providers") or ()
+    for index, provider in enumerate(list(providers)[:16]):
+        kind = _read(provider, "kind") or "unknown"
+        # Name by kind and ordinal only: never an endpoint, key-name or model id.
+        workers.append(("{}-{}".format(str(_truncate(kind, 24)), index), "configured"))
+
+    queue: List[Tuple[str, int]] = []
+    store = getattr(core, "store", None)
+    total = _read(store, "count")
+    if callable(total):
+        try:
+            total = total()
+        except Exception:
+            total = None
+    if isinstance(total, int):
+        queue.append(("tasks_total", int(total)))
+    queued = _read(store, "queued")
+    if callable(queued):
+        try:
+            queued = queued(limit=64)
+        except Exception:
+            queued = None
+    if isinstance(queued, (list, tuple)):
+        queue.append(("awaiting_review", len(queued)))
+
+    budget: List[Tuple[str, int]] = []
+    audit_rows: List[Tuple[str, str]] = []
+    ledger = getattr(core, "audit", None)
+    count = _read(ledger, "count")
+    if callable(count):
+        try:
+            count = count()
+        except Exception:
+            count = None
+    if isinstance(count, int):
+        budget.append(("ledger_denials", int(count)))
+
+    recent = _read(ledger, "recent")
+    if callable(recent):
+        try:
+            rows = list(recent(limit=8))[-8:]
+        except Exception:
+            rows = []
+        for row in rows:
+            reason = _read(row, "reason") or "?"
+            # Reason only: the ledger is sanitized and carries no path, payload
+            # or token, and this console redacts anything else defensively.
+            audit_rows.append((str(_truncate(reason, MAX_TITLE)),
+                               str(_truncate(int(time.time()), 20))))
+
+    return HarnessSnapshot(
+        at=time.time() if now is None else float(now),
+        axes=tuple(axes),
+        workers=tuple(workers),
+        budget=tuple(budget),
+        queue=tuple(queue),
+        ledger_tail=tuple(audit_rows),
+        notes=("read-only; no authorization surface", "leaks no tokens or host output"),
+    )
+
+
 def render(view: HarnessSnapshot) -> str:
     """Format a :class:`HarnessSnapshot` as plain text (loopback only)."""
     lines: List[str] = []

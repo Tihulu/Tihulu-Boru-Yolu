@@ -147,5 +147,72 @@ class HarnessObservabilityTests(unittest.TestCase):
         self.assertIn("optimization", text)
 
 
+class HarnessCoreWiringTests(unittest.TestCase):
+    """The console is wired to real Boru Core state, read-only and secret-free."""
+
+    def _core(self):
+        from boru.config import default_config
+        from boru.core import BoruCore
+        return BoruCore(default_config())
+
+    def test_axes_come_from_the_real_default_policy(self):
+        from boru.harness import tui
+        view = tui.snapshot_from_core(self._core())
+        labels = dict(view.axes)
+        # The four independent defaults must be rendered as they really are.
+        self.assertEqual("AUTO", labels["optimization"])
+        self.assertEqual("LOCAL_ONLY", labels["inference"])
+        self.assertEqual("LOCAL_ISOLATED", labels["execution"])
+        self.assertEqual("MINIMUM_NECESSARY", labels["disclosure"])
+
+    def test_providers_are_named_by_kind_and_ordinal_only(self):
+        from boru.harness import tui
+        view = tui.snapshot_from_core(self._core())
+        self.assertTrue(view.workers, "a configured provider must be listed")
+        for name, state in view.workers:
+            self.assertRegex(name, r"^(mock|jan|cloud)-\d+$")
+            self.assertEqual("configured", state)
+        rendered = tui.render(view)
+        # No endpoint, key-name, model id or token ever reaches the console.
+        for forbidden in ("127.0.0.1", "http", "API_KEY", "Bearer", "sk-"):
+            self.assertNotIn(forbidden, rendered)
+
+    def test_budget_and_queue_report_bounded_public_state(self):
+        from boru.harness import tui
+        view = tui.snapshot_from_core(self._core())
+        budget = dict(view.budget)
+        queue = dict(view.queue)
+        self.assertIn("ledger_denials", budget)
+        self.assertIn("tasks_total", queue)
+        self.assertIn("awaiting_review", queue)
+        for value in list(budget.values()) + list(queue.values()):
+            self.assertIsInstance(value, int)
+            self.assertGreaterEqual(value, 0)
+
+    def test_ledger_tail_carries_reasons_only(self):
+        from boru.harness import tui
+        from boru.audit import RejectionLedger
+        core = self._core()
+        core.audit.record("policy", "task-x", "sandbox_unavailable", "run_synthetic_command")
+        view = tui.snapshot_from_core(core)
+        self.assertIn("sandbox_unavailable", [reason for reason, _ in view.ledger_tail])
+        rendered = tui.render(view)
+        self.assertNotIn("task-x", rendered)
+        self.assertNotIn("run_synthetic_command", rendered)
+
+    def test_snapshot_from_core_makes_no_provider_call_and_no_mutation(self):
+        from boru.harness import tui
+        core = self._core()
+        before_total = core.store.count()
+        before_denials = core.audit.count()
+        view = tui.snapshot_from_core(core)
+        # Reading the view changed nothing: no task, no ledger row, no queue entry.
+        self.assertEqual(before_total, core.store.count())
+        self.assertEqual(before_denials, core.audit.count())
+        self.assertEqual(0, dict(view.queue)["awaiting_review"])
+        self.assertEqual(0, dict(view.queue)["tasks_total"])
+        self.assertEqual(0, dict(view.budget)["ledger_denials"])
+
+
 if __name__ == "__main__":
     unittest.main()

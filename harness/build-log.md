@@ -1892,3 +1892,33 @@ external agent framework — each behind its own ADR and acceptance gate.
   * Run `45973056785` (head `fe21059`): **1 failure** — `test_the_package_records_a_head_commit`, because the pin was written as the abbreviated `6bac14c` and the contract requires a full 40-char SHA. Fixed by pinning the full SHA `6bac14c7e9bec59f5da31fb3ef44198a905fd39f`.
 - **Gate 1 state:** remains CLOSED — PASS. The harness slice is additive, optional, disabled by default, and introduces no new authorization surface; no HOLD gate was touched. PR #14 stays draft; nothing is merged or released.
 - **Next action:** none required for Gate 1. Future harness slices (CoW snapshot/undo, interactive live approval console, claim verification, optional executor adapter) each need their own ADR and acceptance gate.
+
+---
+
+### 2026-11-27 — Harness wired to real Boru Core state (observability no longer decorative)
+
+The first harness slice shipped `snapshot()`, but the CLI rendered it with no
+arguments, so `boru harness view` printed four `unset` axes and an empty worker
+list — decorative rather than useful. This closes that gap without widening any
+surface.
+
+- `boru/harness/tui.py::snapshot_from_core(core)` reads **only bounded public
+  state** Boru Core already holds: the four axes from `core.policy`; provider
+  entries rendered by **kind and ordinal only** (`mock-0`, `jan-1`) so no
+  endpoint, key-name or model id can reach the console; `core.store.count()` and
+  `core.store.queued()` for task/awaiting-review depths; and the
+  `core.audit.recent()` tail as **reasons only** (the ledger is already
+  sanitized, and the console redacts anything else defensively).
+- `boru/cli.py` `harness view` now opens the core the owner names and renders the
+  live frame; any failure degrades to an empty view so the console never blocks
+  an operator.
+- Proved read-only by test: taking a snapshot changes no task count, no ledger
+  row and no queue entry; and no endpoint/`API_KEY`/`Bearer`/`sk-` fragment
+  appears in the rendered output.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **820 tests OK**
+(815 + 5 new in `tests/test_harness.py::HarnessCoreWiringTests`);
+`scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean;
+`boru harness view --once` prints the real defaults (AUTO / LOCAL_ONLY /
+LOCAL_ISOLATED / MINIMUM_NECESSARY, `mock-0 configured`, queue and ledger
+counts). MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
