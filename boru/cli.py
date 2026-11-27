@@ -137,6 +137,17 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_shorthands(disconnect)
     disconnect.add_argument("--vault-dir", required=True)
     disconnect.add_argument("--handle", required=True)
+    harness = sub.add_parser("harness", help="optional read-only observability and the command deny floor")
+    _add_common_shorthands(harness)
+    harness.add_argument("action", choices=("view", "policy-check"),
+                         help="view: read-only observability frame; policy-check: deny-floor decision")
+    harness.add_argument("--command-string", default=None,
+                         help="command string for policy-check (never executed)")
+    harness.add_argument("--once", action="store_true",
+                         help="view: render a single frame and exit")
+    harness.add_argument("--deny", action="append", default=None,
+                         help="extra owner deny pattern (repeatable)")
+    harness.add_argument("--json", action="store_true")
     return parser
 
 
@@ -390,6 +401,44 @@ def _resources(args) -> int:
     return EXIT_OK
 
 
+def _harness(args) -> int:
+    """Optional harness entry: read-only observability, or a deny-floor decision.
+
+    Neither action is an authorization decision: ``view`` renders state Boru
+    Core already holds and releases nothing; ``policy-check`` reports the
+    fail-closed command floor without executing anything (ADR 0005).
+    """
+    if args.action == "policy-check":
+        from .harness import shell_policy
+        command = getattr(args, "command_string", None)
+        if not command:
+            print(json.dumps({"error": "command_required"}, ensure_ascii=True))
+            return 2
+        try:
+            allowed, reason = shell_policy.command_allowed(
+                command, deny_patterns=tuple(args.deny or ()))
+        except PolicyViolation as exc:
+            payload = {"allowed": False, "reason": str(exc)}
+            print(json.dumps(payload, ensure_ascii=True) if args.json else
+                  "DENY " + str(exc))
+            return 1
+        payload = {"allowed": allowed, "reason": reason}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=True))
+        else:
+            print(("ALLOW" if allowed else "DENY " + str(reason or "denied")))
+        return 0 if allowed else 1
+
+    # action == "view": a single bounded, secret-free frame.
+    from .harness import tui
+    view = tui.snapshot()
+    if args.json:
+        print(json.dumps(view.as_dict(), ensure_ascii=True))
+    else:
+        print(tui.render(view))
+    return 0
+
+
 _HANDLERS = {
     "demo": _run_demo,
     "run": _run_task,
@@ -405,6 +454,7 @@ _HANDLERS = {
     "audit": _audit,
     "plan": _plan,
     "queue": _queue,
+    "harness": _harness,
 }
 
 

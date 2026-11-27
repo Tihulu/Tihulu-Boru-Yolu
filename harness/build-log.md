@@ -1815,3 +1815,66 @@ Skipped test: `test_doctor.OverallPrecedenceTests.test_all_ok_reads_ok` (CI host
 
 **Next actions (owner):** Gates 2–5 — provider registration/OAuth, disposable-repo pilot, clean-machine M01–M12, license/release approval.
 
+
+---
+
+### 2026-11-27 — Native Boru Harness & Observability slice integrated (ADR 0005)
+
+**Evaluation.** Three external projects were reviewed for adoption instead of
+reinvention, recorded in `docs/ADRS/0005-harness-and-observability.md`:
+
+1. `OrcunSamiTandogan/agent-orchestration-setup` — a desktop launcher bound to
+   the Turkish e-Devlet **EVREN** identity service and NVIDIA/DeepSeek
+   providers; an end-user app and setup prompts, **not** a reusable library, and
+   region-locked. **Not integrable.** Transferable idea: guided first-run
+   verification checklist and multi-pane workspace layout.
+2. `ojuschugh1/OpenHawk` (Rust) — local-first "Agent OS": CoW snapshots + undo,
+   AES-256-GCM vault, JSON-RPC bus, per-agent permission sandboxing, HawkEye TUI,
+   air-gapped mode, claim verification. Architecturally the closest match to the
+   broker/sandbox/scheduler split, but a **different language**.
+3. `shoaibyazdani/leo-agent` (Python) — provider-independent, local-first: TUI,
+   loopback dashboard + API, interactive approval gates with audit, a shell
+   **deny-policy** floor (`smart|manual|off` + hardline `deny_commands`), and
+   "external content is untrusted data, never instructions". Same stack as Boru.
+
+**Decision.** Per ADR 0003 (native independent core, never a wrapper), Boru gains
+a **native `boru/harness/`** layer that re-implements the LEO/OpenHawk patterns
+inside Boru's own authorization model. **No external runtime dependency is
+added**, and the harness is optional, disabled by default, and introduces **no
+new authorization surface**: every restricted action still routes through Core,
+the broker and the sandbox.
+
+**Delivered (thin vertical slice):**
+
+| Module | Purpose |
+|--------|---------|
+| `boru/harness/shell_policy.py` | Pure, fail-closed **command deny floor** for the `run_synthetic_command` decision (LEO `deny_commands` + OpenHawk manifest idea). Never executes anything. |
+| `boru/harness/tui.py` | **Read-only** live observability over a pure, bounded, secret-free `snapshot()` (OpenHawk HawkEye / LEO `leo tui` pattern). No network listener, no third-party dependency. |
+| `boru/cli.py` | `boru harness view --once` and `boru harness policy-check --command-string ...` |
+| `docs/ADRS/0005-harness-and-observability.md` | The recorded evaluation and decision |
+
+**Security notes.**
+- A real defect was found and fixed during integration: the deny floor first
+  split a chained command on `&&`/`;`/`|` and then matched hardline patterns per
+  segment, so a fork bomb (`:(){ :|:& };:`) and a remote-code pipe
+  (`curl … | sh`) were **allowed** because the splitter destroyed the very
+  metacharacters those patterns rely on. `deny_floor` now scans the whole command
+  first, then per segment, and also refuses dangerous `$()`/backtick
+  substitution. `tests/test_harness.py::test_chain_cannot_launder_a_dangerous_suffix`
+  and the hardline/pipe tests pin the corrected ordering.
+- The vault idea is **not** re-invented: `boru/auth/` already provides the
+  encrypted token vault used by `connect`/`accounts`/`disconnect`.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **815 tests OK**
+(796 baseline + 19 new in `tests/test_harness.py`); `scripts/check_project.py` →
+PASS; `python3 -m compileall -q boru` clean; `boru harness policy-check` returns
+ALLOW (exit 0) for `ls -la` and DENY (exit 1) for `rm -rf /`; `boru harness view
+--once` prints a bounded frame containing no token. MOCK/STATIC only.
+
+**Not touched:** the LOCAL_ONLY / LOCAL_ISOLATED / MINIMUM_NECESSARY defaults,
+the four independent policy axes, the typed field maps, or any HOLD gate. PR #14
+stays draft; nothing is merged or released. Gate 1 remains CLOSED — PASS.
+
+**Held for later slices (not claimed):** CoW snapshot/undo, interactive live
+approval console, claim verification, and any optional executor adapter to an
+external agent framework — each behind its own ADR and acceptance gate.
