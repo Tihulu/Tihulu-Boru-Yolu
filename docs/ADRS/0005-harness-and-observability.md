@@ -76,9 +76,12 @@ stated in `boru/dashboard.py`.
   MINIMUM_NECESSARY defaults and all HOLD gates.
 - Negative/held: an encrypted at-rest secrets vault is **already provided** by
   `boru/auth/` (the `connect`/`accounts`/`disconnect` token vault), so it is not
-  re-invented here. CoW snapshot/undo, and interactive live approvals remain
-  **future** slices and are not claimed here. No adapter to LEO/OpenHawk is added
-  in this ADR, and no external project becomes a runtime dependency.
+  re-invented here. **CoW snapshot/undo is deliberately not built**: TIHULU's
+  local path is read-only (the executor opens aliases `O_DIRECTORY|O_NOFOLLOW`
+  and never writes) and the sandbox is a decision layer, so there is no local
+  mutation to roll back yet — building it now would be speculative infrastructure.
+  No adapter to LEO/OpenHawk is added in this ADR, and no external project becomes
+  a runtime dependency.
 - Guardrail: `scripts/check_project.py`, the repository-language rule and the
   full test suite must stay green; the harness ships with its own negative tests
   (unknown/oversized/dangerous commands refused; chained commands cannot launder

@@ -139,9 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
     disconnect.add_argument("--handle", required=True)
     harness = sub.add_parser("harness", help="optional read-only observability and the command deny floor")
     _add_common_shorthands(harness)
-    harness.add_argument("action", choices=("view", "policy-check", "verify"),
+    harness.add_argument("action", choices=("view", "policy-check", "verify", "review"),
                          help="view: read-only observability frame; policy-check: deny-floor decision; "
-                              "verify: read-only post-hoc claim audit")
+                              "verify: read-only post-hoc claim audit; review: interactive owner review "
+                              "of awaiting tasks, routed through Core")
     harness.add_argument("--command-string", default=None,
                          help="command string for policy-check (never executed)")
     harness.add_argument("--once", action="store_true",
@@ -429,6 +430,16 @@ def _harness(args) -> int:
         else:
             print(("ALLOW" if allowed else "DENY " + str(reason or "denied")))
         return 0 if allowed else 1
+
+    if args.action == "review":
+        from .harness import review as harness_review
+        try:
+            with _open_core(_load_config(args.config), args.state_dir) as core:
+                accepted, rejected = harness_review.run_interactive(core)
+        except Exception:
+            accepted, rejected = 0, 0
+        _emit({"accepted": accepted, "rejected": rejected}, args.show_text)
+        return EXIT_OK
 
     if args.action == "verify":
         from .harness import verify as harness_verify

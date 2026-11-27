@@ -1950,3 +1950,41 @@ I am reading actually back the claims it makes?"
 `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean;
 `boru harness verify --json` → `{"checked": 0, "ok": true, "findings": []}` on a
 clean state. MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-27 — Interactive owner-review console: `boru harness review` (ADR 0005, slice 4)
+
+Boru already authorizes a review through `BoruCore.review()` and already exposes
+it as `boru queue` / `boru review` — one CLI invocation per decision. This slice
+closes the convenience gap for an operator reviewing a batch, without adding any
+authorization path.
+
+- `boru/harness/review.py::run_interactive(core)` lists the tasks in `REVIEW`
+  (bounded to `MAX_PROMPTED`) and offers a fixed `[a]ccept/[r]eject/[s]kip/[q]uit`
+  menu. **No free text is ever parsed** — the owner picks from a fixed menu, so no
+  input can be read as a command, a path or a credential.
+- **Fail-closed:** EOF, a non-interactive stdin, an unrecognised key, a missing
+  `review` method or a Core refusal all decide **nothing** and are reported.
+  Silence never means "accept" — an empty answer means *skip*. Pinned by
+  `test_eof_decides_nothing_but_does_not_crash`,
+  `test_an_unrecognised_key_ends_the_session_deciding_nothing_further`,
+  `test_no_review_method_is_fail_closed` and
+  `test_a_core_refusal_is_reported_and_the_session_continues`.
+- Every accepted/rejected decision is routed through `core.review(task_id,
+  accept=...)` — the same path `boru review` uses — proven by
+  `test_accept_routes_through_core_review` / `test_reject_routes_through_core_review`.
+- `boru/cli.py` gains `harness review`, which reports a bounded
+  `{"accepted": n, "rejected": n}` summary.
+
+**Deliberately not built (recorded, not claimed):** CoW snapshot/undo. TIHULU's
+local path is read-only (the executor opens aliases with `O_DIRECTORY|O_NOFOLLOW`
+and never writes) and the sandbox is a decision layer, so there is no local
+mutation to roll back; building it now would be speculative infrastructure.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **838 tests OK**
+(829 + 9 new in `tests/test_harness.py::InteractiveReviewConsoleTests`);
+`scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean;
+`boru harness review` on a clean state prints `no task awaits review` and
+`{"accepted": 0, "rejected": 0}`. MOCK/STATIC only. Gate 1 remains CLOSED — PASS;
+PR #14 stays draft.

@@ -340,5 +340,116 @@ def checked_kinds(report):
     return [kind for kind, _ in report.findings]
 
 
+class InteractiveReviewConsoleTests(unittest.TestCase):
+    """The review console is fail-closed and routes every decision through Core."""
+
+    def _core(self):
+        from boru.config import default_config
+        from boru.core import BoruCore
+        return BoruCore(default_config())
+
+    def _core_with_rows(self, rows):
+        core = self._core()
+        core.store.by_state = lambda states: list(rows)
+        return core
+
+    def test_reviewable_rows_are_bounded_and_review_state_only(self):
+        from boru.harness import review
+        rows = [{"task_id": "t-{}".format(i), "state": "REVIEW"} for i in range(200)]
+        core = self._core_with_rows(rows)
+        offered = review.reviewable_rows(core)
+        self.assertLessEqual(len(offered), review.MAX_PROMPTED)
+        self.assertEqual("t-0", offered[0]["task_id"])
+
+    def test_no_pending_task_decides_nothing(self):
+        from boru.harness import review
+        core = self._core_with_rows([])
+        accepted, rejected = review.run_interactive(core, input_fn=lambda _p: "", output_fn=lambda _t: None)
+        self.assertEqual((0, 0), (accepted, rejected))
+
+    def test_accept_routes_through_core_review(self):
+        from boru.harness import review
+        core = self._core_with_rows([{"task_id": "t-a", "state": "REVIEW"}])
+        seen = []
+        core.review = lambda task_id, accept: seen.append((task_id, accept))
+        answers = iter(["a", ""])
+        accepted, rejected = review.run_interactive(
+            core, input_fn=lambda _p: next(answers, "q"), output_fn=lambda _t: None)
+        self.assertEqual(1, accepted)
+        self.assertEqual(0, rejected)
+        self.assertEqual([("t-a", True)], seen)
+
+    def test_reject_routes_through_core_review(self):
+        from boru.harness import review
+        core = self._core_with_rows([{"task_id": "t-r", "state": "REVIEW"}])
+        seen = []
+        core.review = lambda task_id, accept: seen.append((task_id, accept))
+        answers = iter(["r", ""])
+        accepted, rejected = review.run_interactive(
+            core, input_fn=lambda _p: next(answers, "q"), output_fn=lambda _t: None)
+        self.assertEqual((0, 1), (accepted, rejected))
+        self.assertEqual([("t-r", False)], seen)
+
+    def test_eof_decides_nothing_but_does_not_crash(self):
+        from boru.harness import review
+        core = self._core_with_rows([{"task_id": "t-e", "state": "REVIEW"}])
+        seen = []
+        core.review = lambda task_id, accept: seen.append((task_id, accept))
+        # EOF is modelled as an empty read with no following input.
+        accepted, rejected = review.run_interactive(
+            core, input_fn=lambda _p: "", output_fn=lambda _t: None)
+        # An empty answer means "skip", never "accept".
+        self.assertEqual((0, 0), (accepted, rejected))
+        self.assertEqual([], seen)
+
+    def test_an_unrecognised_key_ends_the_session_deciding_nothing_further(self):
+        from boru.harness import review
+        core = self._core_with_rows([{"task_id": "t-1", "state": "REVIEW"},
+                                     {"task_id": "t-2", "state": "REVIEW"}])
+        seen = []
+        core.review = lambda task_id, accept: seen.append((task_id, accept))
+        accepted, rejected = review.run_interactive(
+            core, input_fn=lambda _p: "SYSTEM", output_fn=lambda _t: None)
+        self.assertEqual((0, 0), (accepted, rejected))
+        self.assertEqual([], seen)
+
+    def test_a_core_refusal_is_reported_and_the_session_continues(self):
+        from boru.harness import review
+        from boru.errors import BoruError
+        core = self._core_with_rows([{"task_id": "t-x", "state": "REVIEW"},
+                                     {"task_id": "t-y", "state": "REVIEW"}])
+
+        def _refuse(task_id, accept):
+            raise BoruError("policy_refused:" + task_id)
+
+        core.review = _refuse
+        answers = iter(["a", "a", ""])
+        accepted, rejected = review.run_interactive(
+            core, input_fn=lambda _p: next(answers, "q"), output_fn=lambda _t: None)
+        # Core refused both; the console reports and records no acceptance.
+        self.assertEqual((0, 0), (accepted, rejected))
+
+    def test_no_review_method_is_fail_closed(self):
+        from boru.harness import review
+        core = self._core_with_rows([{"task_id": "t-z", "state": "REVIEW"}])
+        core.review = None
+        answers = iter(["a", ""])
+        accepted, rejected = review.run_interactive(
+            core, input_fn=lambda _p: next(answers, "q"), output_fn=lambda _t: None)
+        self.assertEqual((0, 0), (accepted, rejected))
+
+    def test_an_unbounded_task_list_is_drained_bounded_only(self):
+        from boru.harness import review
+        rows = [{"task_id": "t-{}".format(i), "state": "REVIEW"} for i in range(100)]
+        core = self._core_with_rows(rows)
+        seen = []
+        core.review = lambda task_id, accept: seen.append((task_id, accept))
+        answer = iter(["a"] * 100)
+        accepted, rejected = review.run_interactive(
+            core, input_fn=lambda _p: next(answer, "q"), output_fn=lambda _t: None)
+        self.assertLessEqual(accepted, review.MAX_PROMPTED)
+        self.assertLessEqual(len(seen), review.MAX_PROMPTED)
+
+
 if __name__ == "__main__":
     unittest.main()
