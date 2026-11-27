@@ -226,33 +226,32 @@ class PollingSync:
         is atomic — if any event fails, the entire batch is rejected without
         partial mutation.
 
-        N18 FIX: Pre-flight registry capacity check and mutation under single lock.
-        Capacity check and mutation are atomic — no concurrent partial mutation.
+        N18 FIX: Full atomic validation and mutation under single lock.
+        All validation, capacity check, and mutation happen under the lock.
         """
-        # PRE-FLIGHT: validate all events before ANY mutation (outside lock)
-        fresh_ids = []
-        for event in events:
-            # Shape check
-            if not isinstance(event, SyncEvent):
-                raise ConnectorDenied("event_malformed")
-            if event.validate():
-                raise ConnectorDenied("events_malformed")
-            # Raw ID validation before any coercion/mutation
-            self._validate_raw_id(event.event_id)
-            # Event-type allowlist check before mutation
-            if not self.allowlist.permits(event.event_type):
-                raise ConnectorDenied("event_type_not_allowed")
-            # Track fresh IDs for capacity check (use set to deduplicate)
-            if event.event_id not in self._seen_set:
-                fresh_ids.append(event.event_id)
-
-        # Deduplicate fresh IDs (N18: duplicate IDs in batch must not overcount)
-        unique_fresh_ids = list(dict.fromkeys(fresh_ids))
-
-        # ALL PRE-FLIGHT CHECKS PASSED: now mutate and collect UNDER LOCK
-        # Capacity check and mutation are atomic
+        # ALL VALIDATION AND MUTATION UNDER LOCK
         with self._lock:
-            # N18 FIX: Re-check capacity under lock (capacity may have changed)
+            # PRE-FLIGHT: validate all events before ANY mutation
+            fresh_ids = []
+            for event in events:
+                # Shape check
+                if not isinstance(event, SyncEvent):
+                    raise ConnectorDenied("event_malformed")
+                if event.validate():
+                    raise ConnectorDenied("events_malformed")
+                # Raw ID validation before any coercion/mutation
+                self._validate_raw_id(event.event_id)
+                # Event-type allowlist check before mutation
+                if not self.allowlist.permits(event.event_type):
+                    raise ConnectorDenied("event_type_not_allowed")
+                # Track fresh IDs for capacity check (use set to deduplicate)
+                if event.event_id not in self._seen_set:
+                    fresh_ids.append(event.event_id)
+
+            # Deduplicate fresh IDs (N18: duplicate IDs in batch must not overcount)
+            unique_fresh_ids = list(dict.fromkeys(fresh_ids))
+
+            # CAPACITY CHECK: re-check capacity under lock
             if len(self._seen) + len(unique_fresh_ids) > MAX_SEEN:
                 raise ConnectorDenied("seen_registry_exhausted")
 
