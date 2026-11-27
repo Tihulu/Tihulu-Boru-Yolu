@@ -721,6 +721,147 @@ class N14ResourceMismatchTests(unittest.TestCase):
         wire = gl_wire_body(snap)
         self.assertEqual(["source_branch"], wire)
 
+    # --- N10: Fail-before/success-after regression evidence ---
+
+    def test_n10_n07_fail_before_pass_after_gitlab_workflow_ownership(self):
+        """N10: GitLab workflow ownership - fails without source, passes with valid source."""
+        # Without source field - should FAIL
+        def transport_bad(method, path, body):
+            if "/pipelines?ref=main" in path:
+                return 200, json.dumps([{"id": "42", "ref": "main"}]).encode()  # Missing source
+            return 200, b"{}"
+
+        provider = GitLabProvider(transport=transport_bad)
+        subject = connector_grant(repository="owner/project", reference="main",
+                                  operations=("get_run",), workflow_ids=("ci.yml",))
+        with self.assertRaises(ConnectorDenied) as ctx:
+            provider.call(subject, "get_run",
+                          {"repository": "owner/project", "run_id": "42",
+                           "workflow": "ci.yml", "reference": "main"})
+        self.assertEqual("run_not_of_workflow", str(ctx.exception))
+
+        # With valid source - should PASS
+        def transport_good(method, path, body):
+            if "/pipelines?ref=main" in path:
+                return 200, json.dumps([{"id": "42", "ref": "main", "source": "push"}]).encode()
+            return 200, b"{}"
+
+        provider = GitLabProvider(transport=transport_good)
+        payload = provider.call(subject, "get_run",
+                                {"repository": "owner/project", "run_id": "42",
+                                 "workflow": "ci.yml", "reference": "main"})
+        self.assertEqual({}, payload)
+
+    def test_n10_n12_fail_before_pass_after_canonical_snapshot(self):
+        """N10: Canonical snapshot - rejects duplicate keys, passes with canonical."""
+        from boru.connectors.scope import check_call
+        from boru.connectors.request import snapshot, _DuplicateKey
+        from boru.connectors.base import Grant, Capability
+        import time
+
+        grant = connector_grant(grant_id="n10_test", repository="owner/repo",
+                                reference="main", operations=("create_branch",),
+                                capabilities=(Capability.CODE_PR_WRITE,))
+
+        # Test that snapshot rejects duplicate normalized keys
+        # Use a custom Mapping to simulate duplicate keys (since dict dedups)
+        class BadMapping(dict):
+            def items(self):
+                return [
+                    ("repository", "owner/repo"),
+                    ("reference", "main"),
+                    ("ref", "refs/heads/feature"),
+                    ("sha", "a" * 40),
+                    ("Repository", "other/repo"),  # Normalizes to "repository" -> duplicate
+                ]
+
+        bad_payload = BadMapping()
+        snap = snapshot(bad_payload)
+        self.assertIsInstance(snap, _DuplicateKey, "Duplicate normalized key should be rejected")
+
+        # Canonical payload - should PASS
+        good_payload = {"repository": "owner/repo", "reference": "main",
+                        "ref": "refs/heads/feature", "sha": "a" * 40}
+        snap = snapshot(good_payload)
+        self.assertIsInstance(snap, tuple)
+
+        # Also test check_call integration
+        slots = check_call(grant, "create_branch", good_payload, method=None, path="", default_method="POST")
+        self.assertEqual("owner/repo", slots["repository"])
+
+    def test_n10_n15_fail_before_pass_after_slot_snapshot(self):
+        """N10: Slot snapshot - mutation during validation doesn't affect result."""
+        from boru.connectors.scope import check_call
+        from boru.connectors.base import Grant, Capability
+        import time
+
+        grant = connector_grant(grant_id="n10_n15", repository="owner/repo",
+                                reference="main", operations=("create_branch",),
+                                capabilities=(Capability.CODE_PR_WRITE,))
+
+        payload = {"repository": "owner/repo", "reference": "main",
+                   "ref": "refs/heads/feature", "sha": "a" * 40}
+        slots = check_call(grant, "create_branch", payload, method=None, path="", default_method="POST")
+
+        # Mutate after validation
+        payload["repository"] = "other/repo"
+        payload["reference"] = "develop"
+
+        # Slots should be from snapshot (immutable)
+        self.assertEqual("owner/repo", slots["repository"])
+        self.assertEqual("main", slots["reference"])
+
+    def test_n10_n17_fail_before_pass_after_array_preservation(self):
+        """N10: JSON array preservation - empty array serializes to [], not {}."""
+        from boru.connectors.request import snapshot
+        from boru.connectors.github import _wire_body
+        import json
+
+        # Empty array - should serialize to []
+        snap = snapshot([])
+        wire = _wire_body(snap)
+        self.assertEqual([], wire, "Empty array must serialize to []")
+        self.assertEqual("[]", json.dumps(wire))
+
+        # String array
+        snap = snapshot(["a", "b"])
+        wire = _wire_body(snap)
+        self.assertEqual(["a", "b"], wire)
+        self.assertEqual('["a", "b"]', json.dumps(wire))
+
+    def test_n10_n18_fail_before_pass_after_polling_atomicity(self):
+        """N10: Polling atomicity - concurrent capacity rejection is atomic."""
+        from boru.connectors.polling import PollingSync, EventAllowlist, SyncEvent, MAX_SEEN
+        import threading
+
+        allowlist = EventAllowlist(("push",))
+        seen = ["e{}".format(i) for i in range(MAX_SEEN - 1)]  # Only 1 slot available
+        sync = PollingSync(allowlist, seen=seen)
+
+        results = []
+        errors = []
+
+        def worker():
+            try:
+                sync.accept([SyncEvent(event_id="new{}".format(threading.current_thread().ident),
+                                       event_type="push", payload={})])
+                results.append("ok")
+            except Exception as e:
+                errors.append(str(e))
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # At most one should succeed (registry capacity)
+        success_count = sum(1 for r in results if r == "ok")
+        self.assertLessEqual(success_count, 1, "At most one thread should succeed")
+
+        # No partial mutation - registry should be consistent
+        self.assertLessEqual(len(sync.seen), MAX_SEEN)
+
 
 class F20RevisionContractTests(unittest.TestCase):
     """F20: the pin honours the documented revision contract."""

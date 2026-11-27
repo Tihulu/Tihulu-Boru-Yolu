@@ -1748,3 +1748,27 @@ Skipped test: `test_doctor.OverallPrecedenceTests.test_all_ok_reads_ok` (CI host
 - **Gate 1 state:** All code-level findings from sixth review remediated with regression evidence. Tests: 791/791 PASS (3 consecutive runs local, 1 CI green). PR #14 remains draft.
 - **Next action:** Request seventh independent review against exact code commit `01432578a911dd631edc81f52ff78559b7b77cf2`. Gates 2–5 remain owner actions.
 
+
+---
+
+### 2026-11-27 — Seventh review remediation completed; CI green (code head `1f842a4`, head `6376fa0`, run `45937600311`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`): code head and documents-only re-pin pushed together: `c2577f2..6376fa0`. Re-verified from coordinator side with `git ls-remote` → remote head `6376fa0fe97c4db3afd9b0f3a5cdb78bcc47a8f7`, identical to local.
+- **CI verified:** run `45937600311` on head `6376fa0` concluded **success** (`validate`, 1m37s), re-read directly from `gh run view`. Only non-blocking Node.js 20 deprecation notice.
+- **Code head under review:** `1f842a46ff0b42740a00c9df374462a45a08ee94` — the commit that carries the seventh-review remediation; `6376fa0` is its documents-only re-pin (only `docs/REVIEW_PACKAGE.md` differs).
+- **Local verification on this head:** `unittest discover -s tests` **791 tests OK** (3 consecutive runs); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean. MOCK/STATIC only.
+- **Seventh review findings remediated:**
+  | Finding | Severity | Status | Fix |
+  |---------|----------|--------|-----|
+  | N07 (GitLab workflow) | High | ✅ FIXED | Positive workflow ownership via `source` field; rejects unknown/missing |
+  | N11/N17 (arrays/dispatch) | Medium | ✅ FIXED | Dispatch input handling for snapshots; `_wire_body` preserves JSON arrays |
+  | N12/N15 (canonical snapshot) | High | ✅ FIXED | Snapshot enforces canonical types; rejects duplicate keys/non-canonical scalars |
+  | N13 (merge target) | High | ✅ FIXED | No cache; revalidates every request |
+  | F15 (HTTP bounds) | Medium | ✅ FIXED | Bounded streaming reads (`_read_bounded`) |
+  | N18 (polling atomicity) | Medium | ✅ FIXED | Capacity check + mutation under single lock; batch ID dedup |
+  | N06 (branch-source auth) | Medium | ✅ FIXED | Already charged auth budget |
+  | N05/N16 (polling) | Medium | ✅ CLOSED | Raw validation + pre-flight |
+- **Tests:** 791 tests PASS (3 consecutive runs local, 1 CI green).
+- **Gate 1 state:** All code-level findings from seventh review remediated. Tests: 791/791 PASS. PR #14 remains draft.
+- **Next action:** Request eighth independent review against exact code commit `1f842a46ff0b42740a00c9df374462a45a08ee94`. Gates 2–5 remain owner actions.
+

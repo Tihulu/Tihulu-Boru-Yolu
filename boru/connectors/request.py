@@ -123,10 +123,10 @@ def snapshot(value: Any, *, depth: int = 0) -> Any:
         items = list(value.items())
         if len(items) > _MAX_SNAPSHOT_KEYS:
             return _TooLarge()
-        # Check for duplicate normalized keys (str() coercion collision)
+        # Check for duplicate normalized keys (case-insensitive str() coercion collision)
         seen_keys = set()
         for k, _ in items:
-            norm_key = str(k)
+            norm_key = str(k).lower()
             if norm_key in seen_keys:
                 return _DuplicateKey()
             seen_keys.add(norm_key)
