@@ -150,9 +150,11 @@ def verify_core(core: Any) -> VerificationReport:
             rows = []
         for row in rows:
             checked += 1
-            raw_id = row.get("task_id") if isinstance(row, dict) else None
+            # Duck-typed reads: a Mapping-shaped row (not a plain dict) must be
+            # read the same way, or a legitimate record is reported corrupt.
+            raw_id = _field(row, "task_id")
             task_id = _safe_subject(raw_id)
-            state = row.get("state") if isinstance(row, dict) else None
+            state = _field(row, "state")
             if not _known_state(state):
                 findings.append((_FINDING_UNKNOWN_STATE, task_id))
                 continue

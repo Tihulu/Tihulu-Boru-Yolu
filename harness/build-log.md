@@ -2218,3 +2218,41 @@ Pinned by `tests/test_harness.py::ClaimVerificationMappingTests` (4 tests).
 **Tests observed:** `python3 -m unittest discover -s tests` → **858 tests OK**
 (854 + 4); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
 MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-27 — Claim-audit head pushed and CI green (head `359b348`, run `46031398966`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`):
+  `8e22c08..359b348`. Re-verified from the coordinator side with `git ls-remote` →
+  remote head `359b3482c8029ac0e86c53c9e2e8da5c76fe0514`, identical to local.
+- **CI verified:** run `46031398966` on head `359b348` concluded **success**
+  (`validate`, 1m35s), re-read directly from `gh run view`.
+- **Code head under review:** `70e10eef4e8c5a4d9b52d7ab5e93482d21d78865`;
+  `359b348` is its documents-only re-pin family (`docs/REVIEW_PACKAGE.md`).
+- **Local verification:** `unittest discover -s tests` **858 tests OK**;
+  `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+  `boru harness verify --json` → `{"checked": 0, "ok": true, "findings": []}`.
+  MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-27 — Remaining two instances of the mapping-read bug class closed (head on `p1/boru-core-vertical-slice`)
+
+After fixing the record reads, a sweep for the same bug class found **two further
+`isinstance(row, dict)` reads** in `verify_core()`'s listing loop
+(`raw_id`/`state`). A `by_state()` that returned `Mapping`-shaped rows would have
+read `state = None`, so every legitimate row would be reported as
+`unknown_task_state` — corruption noise rather than a finding.
+
+Fixed with the same duck-typed `_field()`, and both directions pinned by
+`ClaimVerificationRowShapeTests`: a `MappingProxyType` row in state `DONE` with
+attempt evidence now audits clean, while a genuinely unknown state is still
+reported.
+
+After this change `grep -rn 'isinstance(.*dict)' boru/harness/` returns only a
+docstring reference — the bug class is closed in the package.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **860 tests OK**
+(858 + 2); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.

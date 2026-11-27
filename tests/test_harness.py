@@ -623,6 +623,42 @@ class ClaimVerificationMappingTests(unittest.TestCase):
         self.assertIn("success_without_evidence", kinds)
 
 
+class ClaimVerificationRowShapeTests(unittest.TestCase):
+    """A Mapping-shaped listing row is not reported as corruption."""
+
+    def test_a_mapping_shaped_row_is_not_reported_corrupt(self):
+        from types import MappingProxyType
+        from boru.harness import verify
+        core = type("C", (), {})()
+        core.store = type("S", (), {})()
+        core.store.by_state = lambda states: [MappingProxyType(
+            {"task_id": "t-9", "state": "DONE"})]
+        core.store.get = lambda tid: {"task_id": tid, "state": "DONE",
+                                      "attempts": [{"p": "m"}], "events": []}
+        core.audit = type("A", (), {})()
+        core.audit.recent = lambda limit=64: []
+        core.audit.count = lambda: 0
+        report = verify.verify_core(core)
+        self.assertTrue(report.ok, [(k, s) for k, s in report.findings])
+
+    def test_a_genuinely_unknown_state_is_still_reported(self):
+        from types import MappingProxyType
+        from boru.harness import verify
+        core = type("C", (), {})()
+        core.store = type("S", (), {})()
+        core.store.by_state = lambda states: [MappingProxyType(
+            {"task_id": "t-x", "state": "TELEPORTED"})]
+        core.store.get = lambda tid: {"task_id": tid, "state": "TELEPORTED",
+                                      "attempts": [], "events": []}
+        core.audit = type("A", (), {})()
+        core.audit.recent = lambda limit=64: []
+        core.audit.count = lambda: 0
+        report = verify.verify_core(core)
+        self.assertFalse(report.ok)
+        kinds = [kind for kind, _ in report.findings]
+        self.assertIn("unknown_task_state", kinds)
+
+
 class InteractiveReviewConsoleTests(unittest.TestCase):
     """The review console is fail-closed and routes every decision through Core."""
 
