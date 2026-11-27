@@ -385,6 +385,13 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
     if str(reference) != str(getattr(grant, "reference", "") or ""):
         raise ConnectorDenied("reference_not_granted")
     inputs = _body_get(body, "inputs") or {}
+    # Handle snapshot tuple for inputs (N11/N17 fix)
+    if isinstance(inputs, tuple):
+        # Convert snapshot tuple back to dict for validation
+        inputs_dict = {}
+        for k, v in inputs:
+            inputs_dict[str(k)] = v
+        inputs = inputs_dict
     if not isinstance(inputs, Mapping):
         raise ConnectorDenied("invalid_body")
     if len(inputs) > MAX_BODY_KEYS:

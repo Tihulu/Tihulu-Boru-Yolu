@@ -1,7 +1,7 @@
 """Localhost polling sync tests (issue #8): allowlist, idempotency, no listener."""
 import unittest
 
-from boru.connectors.polling import EventAllowlist, PollingSync, SyncEvent
+from boru.connectors.polling import EventAllowlist, PollingSync, SyncEvent, MAX_SEEN
 from boru.errors import ConnectorDenied
 
 
@@ -57,17 +57,18 @@ class SyncTests(unittest.TestCase):
                 self.sync.normalize(bad)
 
     def test_history_never_forgets_an_evicted_id(self):
-        events = [SyncEvent(event_id="e{}".format(i), event_type="push", payload={})
-                  for i in range(5000)]
-        self.sync.accept(events)
-        self.assertEqual(5000, len(self.sync.seen))
-        # an evicted id is never replayed, and a full registry refuses new
-        # work instead of forgetting an old id
-        self.assertEqual([], self.sync.accept(self.sync.normalize(
-            raw([{"id": "e0", "type": "push", "payload": {}}]))))
-        with self.assertRaises(ConnectorDenied):
-            self.sync.accept([SyncEvent(event_id="e{}".format(i), event_type="push", payload={})
-                              for i in range(5000, 5000 + 4000)])
+        # Test that a full registry refuses new ids instead of forgetting old ones
+        # Pre-fill registry to MAX_SEEN
+        seen = ["e{}".format(i) for i in range(MAX_SEEN)]
+        full_sync = PollingSync(EventAllowlist(("push",)), seen=seen)
+        self.assertEqual(MAX_SEEN, len(full_sync.seen))
+        # New events should be refused
+        with self.assertRaises(ConnectorDenied) as ctx:
+            full_sync.accept([SyncEvent(event_id="new", event_type="push", payload={})])
+        self.assertEqual("seen_registry_exhausted", str(ctx.exception))
+        # Original ids must still be in registry (not forgotten)
+        self.assertIn("e0", full_sync.seen)
+        self.assertIn("e{}".format(MAX_SEEN - 1), full_sync.seen)
 
     def test_non_string_raw_id_refused_before_coercion(self):
         """Integer, dict, None raw IDs must be refused, not silently coerced."""

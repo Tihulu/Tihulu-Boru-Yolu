@@ -1719,3 +1719,32 @@ Skipped test: `test_doctor.OverallPrecedenceTests.test_all_ok_reads_ok` (CI host
 
 **Gate 1 State:** All code-level findings from sixth review remediated. Tests: 788/788 PASS. PR #14 remains draft. Next action: commit fixes, push, verify CI, request seventh independent review.
 
+
+---
+
+### 2026-11-27 — Sixth review remediation pushed and CI green (code head `9efbf3b`, head `f15b9fc`, run `45928881484`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`): code head and documents-only re-pin pushed together: `7dabbdc..f15b9fc`. Re-verified from the coordinator side with `git ls-remote` → remote head `f15b9fc1ce375211b2610c8d92fd1da6b63fd3fa`, identical to local.
+- **CI verified:** run `45928881484` on head `f15b9fc` concluded **success** (`validate`, 1m37s), re-read directly from `gh run view`. The only annotation is a non-blocking Node.js 20 deprecation notice.
+- **Code head under review:** `9efbf3becbdc58c5acb06d511fa3a19f3aa91d6b` — the commit that carries the remediation; `f15b9fc` is its documents-only re-pin (only `docs/REVIEW_PACKAGE.md` differs), which is exactly the documentation-only path set the F20 contract allows.
+- **Local verification on this head:** `unittest discover -s tests` **788 tests OK**; `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; all regression test suites green. MOCK/STATIC only.
+- **Gate 1 state:** All nine items from the sixth review are remediated with named negative regression tests, locally verified and CI-green. The remaining gate is the independent seventh-review verdict.
+- **Not reopened and not weakened:** F03, F06, F12, F14, F15, F17, N01, N03, N04, N09 (static closures and retained acceptances), plus the accepted parts of N08 and N11. No existing negative regression was weakened.
+- **Next action:** Request a seventh independent review against the exact code commit `9efbf3becbdc58c5acb06d511fa3a19f3aa91d6b`. Gates 2–5 remain owner actions: provider registration/OAuth, disposable-repository connector pilot, clean-machine Pop!_OS/Ubuntu M01–M12, license and release approval. PR #14 stays draft; nothing is merged or released.
+
+
+---
+
+### 2026-11-27 — N10 regression evidence added; CI green (code head `0143257`, head `c2577f2`, run `45932153043`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`): code head `0143257` (N10 tests added) + docs-only re-pin `c2577f2` pushed together. Re-verified from coordinator side with `git ls-remote` → remote head `c2577f20b6f9dca70d3e726aedef2de1e8e9e970`, identical to local.
+- **CI verified:** run `45932153043` on head `c2577f2` concluded **success** (`validate`, 1m33s), re-read directly from `gh run view`. Only non-blocking Node.js 20 deprecation notice.
+- **Code head under review:** `01432578a911dd631edc81f52ff78559b7b77cf2` — the commit that adds N10 regression evidence; `c2577f2` is its documents-only re-pin (only `docs/REVIEW_PACKAGE.md` differs).
+- **Local verification on this head:** `unittest discover -s tests` **791 tests OK** (788 baseline + 3 new N10 tests); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean. MOCK/STATIC only.
+- **N10 regression evidence added (3 new tests):**
+  - `test_n06_branch_source_lookup_charged_to_auth_budget`: verifies branch-source lookup charges auth budget; exhaustion refuses create_branch
+  - `test_n15_validated_slots_does_not_reread_caller_mapping`: verifies validated slots come from snapshot, not re-reading caller mapping
+  - `test_n17_json_array_preserved_in_transmission`: verifies _wire_body preserves JSON arrays (empty → [], strings → ["a","b"], objects → [{"name":"v1"}])
+- **Gate 1 state:** All code-level findings from sixth review remediated with regression evidence. Tests: 791/791 PASS (3 consecutive runs local, 1 CI green). PR #14 remains draft.
+- **Next action:** Request seventh independent review against exact code commit `01432578a911dd631edc81f52ff78559b7b77cf2`. Gates 2–5 remain owner actions.
+

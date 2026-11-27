@@ -226,10 +226,10 @@ class PollingSync:
         is atomic — if any event fails, the entire batch is rejected without
         partial mutation.
 
-        N18 FIX: Pre-flight registry capacity check. A batch that would exceed
-        MAX_SEEN is rejected atomically without partial mutation.
+        N18 FIX: Pre-flight registry capacity check and mutation under single lock.
+        Capacity check and mutation are atomic — no concurrent partial mutation.
         """
-        # PRE-FLIGHT: validate all events before ANY mutation
+        # PRE-FLIGHT: validate all events before ANY mutation (outside lock)
         fresh_ids = []
         for event in events:
             # Shape check
@@ -242,18 +242,27 @@ class PollingSync:
             # Event-type allowlist check before mutation
             if not self.allowlist.permits(event.event_type):
                 raise ConnectorDenied("event_type_not_allowed")
-            # Track fresh IDs for capacity check
+            # Track fresh IDs for capacity check (use set to deduplicate)
             if event.event_id not in self._seen_set:
                 fresh_ids.append(event.event_id)
 
-        # N18 FIX: Pre-flight capacity check — reject entire batch if
-        # accepting all fresh events would exceed MAX_SEEN
-        if len(self._seen) + len(fresh_ids) > MAX_SEEN:
-            raise ConnectorDenied("seen_registry_exhausted")
+        # Deduplicate fresh IDs (N18: duplicate IDs in batch must not overcount)
+        unique_fresh_ids = list(dict.fromkeys(fresh_ids))
 
-        # ALL PRE-FLIGHT CHECKS PASSED: now mutate and collect
-        fresh: List[SyncEvent] = []
+        # ALL PRE-FLIGHT CHECKS PASSED: now mutate and collect UNDER LOCK
+        # Capacity check and mutation are atomic
         with self._lock:
+            # N18 FIX: Re-check capacity under lock (capacity may have changed)
+            if len(self._seen) + len(unique_fresh_ids) > MAX_SEEN:
+                raise ConnectorDenied("seen_registry_exhausted")
+
+            # Materialize a stable bounded batch to prevent batch modification
+            events = list(events)[:MAX_EVENTS]
+            if len(events) > MAX_EVENTS:
+                raise ConnectorDenied("events_too_many")
+
+            # ALL CHECKS PASSED: now mutate and collect
+            fresh: List[SyncEvent] = []
             for event in events:
                 if event.event_id in self._seen_set:
                     continue

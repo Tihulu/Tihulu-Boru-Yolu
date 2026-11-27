@@ -441,16 +441,27 @@ class GitHubProvider(RepositoryProvider):
                     content_type = resp.headers.get("Content-Type", "")
                     if "application/json" not in content_type:
                         raise ConnectorDenied("unexpected_content_type")
-                return resp.getcode(), resp.read()
+                return resp.getcode(), self._read_bounded(resp)
         except urllib.error.HTTPError as exc:
             if exc.code in (301, 302, 303, 307, 308):
                 raise ConnectorDenied("redirects_not_followed")
-            body_bytes = exc.read()
-            if len(body_bytes) > MAX_ERROR_BODY_BYTES:
-                body_bytes = body_bytes[:MAX_ERROR_BODY_BYTES]
-            return exc.code, body_bytes
+            return exc.code, self._read_bounded(exc)
         except urllib.error.URLError as exc:
             raise ConnectorDenied("transport_" + str(exc.reason))
+
+    def _read_bounded(self, response) -> bytes:
+        """Read response body with bounded memory consumption (F15)."""
+        chunks = []
+        total = 0
+        while True:
+            chunk = response.read(8192)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_ERROR_BODY_BYTES:
+                raise ConnectorDenied("response_body_exceeds_limit")
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     @staticmethod
     def _verify_response(operation: str, payload: Mapping[str, Any], raw: bytes) -> None:

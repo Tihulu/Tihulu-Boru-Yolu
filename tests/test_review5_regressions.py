@@ -267,7 +267,7 @@ class N07OwnershipContextTests(unittest.TestCase):
         def transport(method, path, body):
             self.paths.append(path)
             if "/pipelines?ref=main" in path:
-                return 200, json.dumps([{"id": "42", "ref": "main"}]).encode()
+                return 200, json.dumps([{"id": "42", "ref": "main", "source": "push"}]).encode()
             if "/pipelines?ref=develop" in path:
                 return 200, json.dumps([]).encode()
             return 200, b"{}"
@@ -316,7 +316,7 @@ class N07OwnershipContextTests(unittest.TestCase):
     def _gitlab_reporting_the_grants_pipelines(self):
         def transport(method, path, body):
             if "/pipelines?ref=main" in path:
-                return 200, json.dumps([{"id": "42", "ref": "main"}]).encode()
+                return 200, json.dumps([{"id": "42", "ref": "main", "source": "push"}]).encode()
             return 200, b"[]"
 
         return GitLabProvider(transport=transport)
@@ -651,7 +651,7 @@ class N14ResourceMismatchTests(unittest.TestCase):
         def transport(method, path, body):
             self.paths.append((method, path))
             if "/pipelines?ref=main" in path:
-                return 200, json.dumps([{"id": "42", "ref": "main"}]).encode()
+                return 200, json.dumps([{"id": "42", "ref": "main", "source": "push"}]).encode()
             return 200, b"{}"
 
         self.provider._transport = transport

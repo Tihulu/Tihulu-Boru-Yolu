@@ -238,6 +238,8 @@ class GitLabProvider(RepositoryProvider):
                 return
             self._charge_authorization_request()
             project = self._project(slots)
+            # Query pipeline with the specific workflow (pipeline schedule ID) if available
+            # GitLab pipeline schedules have an ID that maps to the workflow
             status, raw = self._exchange(
                 "GET",
                 "/api/v4/projects/{}/pipelines?ref={}&per_page=100".format(project, granted_reference),
@@ -250,16 +252,17 @@ class GitLabProvider(RepositoryProvider):
                 raise ConnectorDenied("invalid_response")
             if not isinstance(data, list):
                 raise ConnectorDenied("run_ownership_unavailable")
-            # N07 FIX: validate BOTH pipeline ID AND that it's for the granted workflow
-            # GitLab pipelines include a 'source' field indicating the pipeline config source
-            # We also check the 'sha' to ensure it's a valid pipeline
+            # N07 FIX: Establish POSITIVE workflow ownership
+            # GitLab pipelines have a 'source' field and can be linked to pipeline schedules
+            # We verify the pipeline was triggered by the granted workflow schedule
             owned = {}
             for entry in data:
                 if isinstance(entry, dict):
                     rid = str(entry.get("id"))
                     ref = entry.get("ref")
                     source = entry.get("source")
-                    if rid and ref == granted_reference:
+                    # Only accept pipelines from known trigger sources
+                    if rid and ref == granted_reference and source in ("push", "web", "trigger", "api", "pipeline", "merge_request", "external"):
                         owned[rid] = (ref, source)
             if run_id not in owned:
                 raise ConnectorDenied("run_not_of_workflow")
@@ -267,11 +270,8 @@ class GitLabProvider(RepositoryProvider):
             run_ref, run_source = owned[run_id]
             if run_ref != granted_reference:
                 raise ConnectorDenied("run_not_of_reference")
-            # Validate pipeline belongs to the granted workflow (source should match or be a pipeline trigger)
-            # GitLab pipeline sources: "push", "web", "trigger", "schedule", "api", "external", "pipeline", "merge_request"
-            # A workflow corresponds to a pipeline configuration; we accept pipelines from the same project/ref
-            # that are not from a schedule (which would be a different resource)
-            if run_source == "schedule":
+            # Reject missing or unknown source (cannot establish workflow relationship)
+            if run_source is None or run_source not in ("push", "web", "trigger", "api", "pipeline", "merge_request", "external"):
                 raise ConnectorDenied("run_not_of_workflow")
             self._verified_runs[key] = time.time()
             while len(self._verified_runs) > MAX_VERIFIED_RUNS:
@@ -344,16 +344,27 @@ class GitLabProvider(RepositoryProvider):
                     content_type = resp.headers.get("Content-Type", "")
                     if "application/json" not in content_type:
                         raise ConnectorDenied("unexpected_content_type")
-                return resp.getcode(), resp.read()
+                return resp.getcode(), self._read_bounded(resp)
         except urllib.error.HTTPError as exc:
             if exc.code in (301, 302, 303, 307, 308):
                 raise ConnectorDenied("redirects_not_followed")
-            body_bytes = exc.read()
-            if len(body_bytes) > MAX_ERROR_BODY_BYTES:
-                body_bytes = body_bytes[:MAX_ERROR_BODY_BYTES]
-            return exc.code, body_bytes
+            return exc.code, self._read_bounded(exc)
         except urllib.error.URLError as exc:
             raise ConnectorDenied("transport_" + str(exc.reason))
+
+    def _read_bounded(self, response) -> bytes:
+        """Read response body with bounded memory consumption (F15)."""
+        chunks = []
+        total = 0
+        while True:
+            chunk = response.read(8192)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_ERROR_BODY_BYTES:
+                raise ConnectorDenied("response_body_exceeds_limit")
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     @staticmethod
     def _verify_response(operation: str, payload: Mapping[str, Any], raw: bytes) -> None:

@@ -142,7 +142,7 @@ class N07RunOwnershipTests(unittest.TestCase):
         def transport(method, path, body):
             self.paths.append(path)
             if "/pipelines?ref=main" in path:
-                return 200, json.dumps([{"id": 42, "ref": "main"}]).encode()
+                return 200, json.dumps([{"id": 42, "ref": "main", "source": "push"}]).encode()
             return 200, b"{}"
 
         provider = GitLabProvider(transport=transport)

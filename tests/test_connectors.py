@@ -225,7 +225,7 @@ class GitLabProviderTests(unittest.TestCase):
         def record(method, path, body):
             seen.append(path)
             if "/pipelines?ref=main" in path:
-                return (200, b'[{"id": 42, "ref": "main"}]')
+                return (200, b'[{"id": 42, "ref": "main", "source": "push"}]')
             return (200, b'{}')
 
         self.provider._transport = record

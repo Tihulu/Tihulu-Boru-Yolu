@@ -315,8 +315,8 @@ class F15Tests(unittest.TestCase):
         source = open(github_module.__file__, "r", encoding="utf-8").read()
         exchange = source[source.index("def _exchange"):source.index("def _verify_response")]
         self.assertNotIn("error.read()", exchange)
-        # The actual implementation uses exc.read() with a bounded slice
-        self.assertIn("exc.read()", exchange)
+        # The implementation now uses _read_bounded helper for bounded streaming
+        self.assertIn("_read_bounded", exchange)
         self.assertIn("MAX_ERROR_BODY_BYTES", exchange)
 
 

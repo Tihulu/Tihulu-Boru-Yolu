@@ -110,6 +110,10 @@ def snapshot(value: Any, *, depth: int = 0) -> Any:
     and objects exactly and unambiguously, while making the result hashable
     and impossible to mutate.
 
+    Only canonical JSON-compatible primitive types are permitted:
+    str, int, float, bool, None.  Non-string keys, duplicate normalized keys,
+    and non-canonical scalars are rejected (N12/N15).
+
     A ``DepthExceeded`` sentinel is returned when the depth limit
     is hit, so the caller can raise ``ConnectorDenied`` deterministically.
     """
@@ -119,6 +123,13 @@ def snapshot(value: Any, *, depth: int = 0) -> Any:
         items = list(value.items())
         if len(items) > _MAX_SNAPSHOT_KEYS:
             return _TooLarge()
+        # Check for duplicate normalized keys (str() coercion collision)
+        seen_keys = set()
+        for k, _ in items:
+            norm_key = str(k)
+            if norm_key in seen_keys:
+                return _DuplicateKey()
+            seen_keys.add(norm_key)
         return tuple(sorted(
             ((str(k), snapshot(v, depth=depth + 1)) for k, v in items),
             key=lambda p: str(p[0]),
@@ -128,7 +139,11 @@ def snapshot(value: Any, *, depth: int = 0) -> Any:
         if len(seq) > _MAX_SNAPSHOT_ITEMS:
             return _TooLarge()
         return _ArrayMarker(snapshot(item, depth=depth + 1) for item in seq)
-    return value
+    # Only allow canonical JSON primitives
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    # Reject non-canonical types (custom classes, etc.)
+    return _InvalidScalar()
 
 
 class _DepthExceeded:
@@ -147,6 +162,22 @@ class _TooLarge:
         return "<too-large>"
 
 
+class _DuplicateKey:
+    """Sentinel for duplicate normalized keys in mapping (N12)."""
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<duplicate-key>"
+
+
+class _InvalidScalar:
+    """Sentinel for non-canonical scalar types (N12/N15)."""
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<invalid-scalar>"
+
+
 # _ArrayMarker for unambiguous array vs object distinction in snapshots (N17)
 class _ArrayMarker(tuple):
     """Tuple subclass marking a JSON array in the snapshot."""
@@ -158,8 +189,12 @@ def snapshot_body(body: Any) -> Any:
     if body is None:
         return None
     snap = snapshot(body)
-    if isinstance(snap, (_DepthExceeded, _TooLarge)):
+    if isinstance(snap, (_DepthExceeded, _TooLarge, _DuplicateKey, _InvalidScalar)):
         from ..errors import ConnectorDenied
+        if isinstance(snap, _DuplicateKey):
+            raise ConnectorDenied("body_duplicate_key")
+        if isinstance(snap, _InvalidScalar):
+            raise ConnectorDenied("body_invalid_scalar")
         raise ConnectorDenied("body_nested_too_deeply")
     return snap
 
@@ -169,8 +204,12 @@ def snapshot_payload(payload: Any) -> Any:
     if payload is None:
         return None
     snap = snapshot(payload)
-    if isinstance(snap, (_DepthExceeded, _TooLarge)):
+    if isinstance(snap, (_DepthExceeded, _TooLarge, _DuplicateKey, _InvalidScalar)):
         from ..errors import ConnectorDenied
+        if isinstance(snap, _DuplicateKey):
+            raise ConnectorDenied("payload_duplicate_key")
+        if isinstance(snap, _InvalidScalar):
+            raise ConnectorDenied("payload_invalid_scalar")
         raise ConnectorDenied("payload_nested_too_deeply")
     return snap
 
