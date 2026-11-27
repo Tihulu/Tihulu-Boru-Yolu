@@ -1878,3 +1878,17 @@ stays draft; nothing is merged or released. Gate 1 remains CLOSED — PASS.
 **Held for later slices (not claimed):** CoW snapshot/undo, interactive live
 approval console, claim verification, and any optional executor adapter to an
 external agent framework — each behind its own ADR and acceptance gate.
+
+---
+
+### 2026-11-27 — Harness head pushed and CI green (head `748d35f`, run `45973405427`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`): `4ac5818..748d35f`. Re-verified from the coordinator side with `git ls-remote` → remote head `748d35ffc3a2b44937116d81731002acec71b778`, identical to local.
+- **CI verified:** run `45973405427` on head `748d35f` concluded **success** (`validate`, 1m32s), re-read directly from `gh run view`. Only a non-blocking Node.js 20 deprecation annotation.
+- **Code head under review:** `6bac14c7e9bec59f5da31fb3ef44198a905fd39f` (the harness commit); `748d35f` is its documents-only re-pin family (`docs/REVIEW_PACKAGE.md` pin advanced to the full 40-char SHA and the 815-test set) — the documentation-only path set the F20 contract allows.
+- **Local verification on this head:** `unittest discover -s tests` **815 tests OK**; `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; `boru harness view --once` prints a bounded frame containing no token; `boru harness policy-check --command-string "ls -la"` → ALLOW (exit 0) and `"rm -rf /"` → DENY (exit 1). MOCK/STATIC only.
+- **Intermediate CI failures during this slice (and their fixes), recorded honestly:**
+  * Run `45972833889` (head `6bac14c`): **1 failure** — `test_the_package_pins_the_current_head`, because the pin then named `082f7bd` while `boru/cli.py` + the new harness files had changed. Fixed by re-pinning to the harness head.
+  * Run `45973056785` (head `fe21059`): **1 failure** — `test_the_package_records_a_head_commit`, because the pin was written as the abbreviated `6bac14c` and the contract requires a full 40-char SHA. Fixed by pinning the full SHA `6bac14c7e9bec59f5da31fb3ef44198a905fd39f`.
+- **Gate 1 state:** remains CLOSED — PASS. The harness slice is additive, optional, disabled by default, and introduces no new authorization surface; no HOLD gate was touched. PR #14 stays draft; nothing is merged or released.
+- **Next action:** none required for Gate 1. Future harness slices (CoW snapshot/undo, interactive live approval console, claim verification, optional executor adapter) each need their own ADR and acceptance gate.
