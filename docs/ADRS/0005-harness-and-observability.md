@@ -49,7 +49,16 @@ stated in `boru/dashboard.py`.
    `deny_commands` + hardline patterns; OpenHawk's manifest permission idea).
    It is a *decision* function only: it never executes anything and hardens the
    existing sandbox decision path ahead of any future execution path.
-2. `boru/harness/tui.py` — a **read-only** live observability console over a
+2. `boru/harness/verify.py` — a **read-only, post-hoc claim audit** (OpenHawk
+   `claimcheck` / LEO audited-approvals pattern). Boru enforces its invariants
+   at transition time; this answers the owner's different question *after the
+   fact*: "does the durable state I am reading actually back the claims it
+   makes?" It reports, and never repairs, a success with no attempt evidence, a
+   failure with no reason, an unknown state name, a ledger row carrying a path or
+   URL, and an over-bound store. Every reported subject passes through the same
+   `boru.audit.sanitize_identifier` used by the ledger, so a hostile `task_id`
+   cannot launder a path into a report — a finding pinned by test.
+3. `boru/harness/tui.py` — a **read-only** live observability console over a
    pure, testable snapshot function (OpenHawk HawkEye / LEO `leo tui`
    pattern). `snapshot_from_core(core)` wires it to a real `BoruCore` and reads
    only bounded public state: the four axes from `core.policy`, providers by
@@ -71,6 +80,8 @@ stated in `boru/dashboard.py`.
   **future** slices and are not claimed here. No adapter to LEO/OpenHawk is added
   in this ADR, and no external project becomes a runtime dependency.
 - Guardrail: `scripts/check_project.py`, the repository-language rule and the
-  existing 796-test suite must stay green; the harness ships with its own
-  negative tests (unknown/oversized/dangerous commands refused; snapshot never
-  leaks secrets).
+  full test suite must stay green; the harness ships with its own negative tests
+  (unknown/oversized/dangerous commands refused; chained commands cannot launder
+  a dangerous suffix; the snapshot never leaks a token or endpoint; the claim
+  audit reports an unbacked success, an unexplained failure, an unknown state, an
+  unsafe ledger row and an over-bound store, and repairs nothing).

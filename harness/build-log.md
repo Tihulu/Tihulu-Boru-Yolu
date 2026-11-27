@@ -1922,3 +1922,31 @@ surface.
 `boru harness view --once` prints the real defaults (AUTO / LOCAL_ONLY /
 LOCAL_ISOLATED / MINIMUM_NECESSARY, `mock-0 configured`, queue and ledger
 counts). MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-27 — Claim verification slice: `boru harness verify` (ADR 0005, third slice)
+
+Boru enforces its invariants *at transition time*. The third harness slice adds
+the complementary **post-hoc** check an owner asks later: "does the durable state
+I am reading actually back the claims it makes?"
+
+- `boru/harness/verify.py::verify_core(core)` — read-only audit over bounded
+  public state. Reports (and **never repairs**): a terminal-success task with no
+  attempt evidence (`success_without_evidence`); a non-success terminal task with
+  no transition reason (`failure_without_reason`); an unknown state name
+  (`unknown_task_state`); a ledger row carrying a path/URL/token fragment
+  (`ledger_row_unsafe`); an over-bound store (`store_over_bound`).
+- `boru/cli.py` gains `harness verify` (exit 0 when OK, 1 when findings).
+- **Disclosure defect found by the slice's own test and fixed in code:** the first
+  version reported the raw `task_id` as the finding subject, so a hostile id such
+  as `/etc/passwd` would launder a path into the report. Every reported subject
+  now passes through `boru.audit.sanitize_identifier` (the ledger's own
+  sanitizer); an unrepresentative value becomes `unidentified`. Pinned by
+  `test_findings_are_typed_strings_never_state`.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **829 tests OK**
+(820 + 9 new in `tests/test_harness.py::ClaimVerificationTests`);
+`scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean;
+`boru harness verify --json` → `{"checked": 0, "ok": true, "findings": []}` on a
+clean state. MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.

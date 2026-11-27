@@ -214,5 +214,131 @@ class HarnessCoreWiringTests(unittest.TestCase):
         self.assertEqual(0, dict(view.budget)["ledger_denials"])
 
 
+class ClaimVerificationTests(unittest.TestCase):
+    """The post-hoc claim audit reports defects and repairs nothing."""
+
+    def _core(self):
+        from boru.config import default_config
+        from boru.core import BoruCore
+        return BoruCore(default_config())
+
+    def test_clean_state_reports_ok(self):
+        from boru.harness import verify
+        report = verify.verify_core(self._core())
+        self.assertTrue(report.ok)
+        self.assertEqual((), report.findings)
+
+    def test_success_without_attempt_evidence_is_reported(self):
+        from boru.harness import verify
+        core = self._core()
+
+        state = {"task_id": "t-ok", "state": "DONE"}
+        core.store.by_state = lambda states: [state]
+        core.store.get = lambda task_id: {"task_id": task_id, "state": "DONE",
+                                          "attempts": [], "events": []}
+        report = verify.verify_core(core)
+        self.assertFalse(report.ok)
+        kinds = [kind for kind, _ in report.findings]
+        self.assertIn("success_without_evidence", kinds)
+
+    def test_failure_without_a_reason_is_reported(self):
+        from boru.harness import verify
+        core = self._core()
+        core.store.by_state = lambda states: [{"task_id": "t-bad", "state": "FAILED"}]
+        core.store.get = lambda task_id: {"task_id": task_id, "state": "FAILED",
+                                          "attempts": [{"x": 1}], "events": []}
+        report = verify.verify_core(core)
+        self.assertFalse(report.ok)
+        kinds = [kind for kind, _ in report.findings]
+        self.assertIn("failure_without_reason", kinds)
+
+    def test_unknown_state_name_is_reported_as_corruption(self):
+        from boru.harness import verify
+        core = self._core()
+        core.store.by_state = lambda states: [{"task_id": "t-weird", "state": "TELEPORTED"}]
+        core.store.get = lambda task_id: {"task_id": task_id, "state": "TELEPORTED",
+                                          "attempts": [{"x": 1}], "events": []}
+        report = verify.verify_core(core)
+        self.assertFalse(report.ok)
+        kinds = [kind for kind, _ in report.findings]
+        self.assertIn("unknown_task_state", kinds)
+
+    def test_ledger_row_carrying_a_path_or_url_is_reported(self):
+        from boru.harness import verify
+        core = self._core()
+        core.store.by_state = lambda states: []
+        core.audit.recent = lambda limit=64: [
+            {"subject": "https://example.com/x", "reason": "sandbox_unavailable"}]
+        report = verify.verify_core(core)
+        self.assertFalse(report.ok)
+        kinds = [kind for kind, _ in report.findings]
+        self.assertIn("ledger_row_unsafe", kinds)
+
+    def test_over_bound_store_is_reported(self):
+        from boru.harness import verify
+        core = self._core()
+        core.store.by_state = lambda states: []
+        core.store.count = lambda: core.store.max_records + 1
+        report = verify.verify_core(core)
+        self.assertFalse(report.ok)
+        kinds = [kind for kind, _ in report.findings]
+        self.assertIn("store_over_bound", kinds)
+
+    def test_a_backed_success_and_a_reasoned_failure_pass(self):
+        from boru.harness import verify
+        core = self._core()
+        core.store.by_state = lambda states: [
+            {"task_id": "t-ok", "state": "DONE"},
+            {"task_id": "t-bad", "state": "FAILED"},
+        ]
+
+        def _get(task_id):
+            if task_id == "t-ok":
+                return {"task_id": task_id, "state": "DONE",
+                        "attempts": [{"provider": "mock"}], "events": []}
+            return {"task_id": task_id, "state": "FAILED", "attempts": [],
+                    "events": [{"reason": "sandbox_unavailable"}]}
+
+        core.store.get = _get
+        report = verify.verify_core(core)
+        self.assertTrue(report.ok, [k for k, _ in report.findings])
+
+    def test_verify_repairs_nothing_and_changes_no_state(self):
+        from boru.harness import verify
+        core = self._core()
+        core.store.by_state = lambda states: [
+            {"task_id": "t-ok", "state": "DONE"},
+            {"task_id": "t-bad", "state": "FAILED"},
+        ]
+        core.store.get = lambda task_id: {"task_id": task_id, "state": "DONE",
+                                          "attempts": [], "events": []}
+        before_count = core.store.count()
+        before_denials = core.audit.count()
+        report = verify.verify_core(core)
+        self.assertFalse(report.ok)
+        # Reported, never repaired: the state the audit flagged is untouched.
+        self.assertEqual(before_count, core.store.count())
+        self.assertEqual(before_denials, core.audit.count())
+
+    def test_findings_are_typed_strings_never_state(self):
+        from boru.harness import verify
+        core = self._core()
+        core.store.by_state = lambda states: [{"task_id": "/etc/passwd", "state": "??"}]
+        core.store.get = lambda task_id: {"task_id": task_id, "state": "??",
+                                          "attempts": [], "events": []}
+        report = verify.verify_core(core)
+        self.assertEqual(checked_kinds(report), sorted(checked_kinds(report)))
+        for kind, subject in report.findings:
+            self.assertIsInstance(kind, str)
+            self.assertIsInstance(subject, str)
+        payload = report.as_dict()
+        # The serialized report leaks no secret and no absolute path detail.
+        self.assertNotIn("/etc", str(payload))
+
+
+def checked_kinds(report):
+    return [kind for kind, _ in report.findings]
+
+
 if __name__ == "__main__":
     unittest.main()

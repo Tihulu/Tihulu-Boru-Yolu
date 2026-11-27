@@ -139,8 +139,9 @@ def build_parser() -> argparse.ArgumentParser:
     disconnect.add_argument("--handle", required=True)
     harness = sub.add_parser("harness", help="optional read-only observability and the command deny floor")
     _add_common_shorthands(harness)
-    harness.add_argument("action", choices=("view", "policy-check"),
-                         help="view: read-only observability frame; policy-check: deny-floor decision")
+    harness.add_argument("action", choices=("view", "policy-check", "verify"),
+                         help="view: read-only observability frame; policy-check: deny-floor decision; "
+                              "verify: read-only post-hoc claim audit")
     harness.add_argument("--command-string", default=None,
                          help="command string for policy-check (never executed)")
     harness.add_argument("--once", action="store_true",
@@ -428,6 +429,25 @@ def _harness(args) -> int:
         else:
             print(("ALLOW" if allowed else "DENY " + str(reason or "denied")))
         return 0 if allowed else 1
+
+    if args.action == "verify":
+        from .harness import verify as harness_verify
+        try:
+            with _open_core(_load_config(args.config), args.state_dir) as core:
+                report = harness_verify.verify_core(core)
+        except Exception:
+            report = harness_verify.VerificationReport(checked=0, findings=(), ok=False)
+        payload = report.as_dict()
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=True))
+        else:
+            if report.ok:
+                print("OK claim audit: {} task(s) checked, no finding".format(report.checked))
+            else:
+                print("FINDINGS claim audit: {} task(s) checked".format(report.checked))
+                for kind, subject in report.findings:
+                    print("  {:<28} {}".format(kind, subject))
+        return EXIT_OK if report.ok else EXIT_REJECTED
 
     # action == "view": a single bounded, secret-free frame backed by real
     # Boru Core state. Read-only: it opens the store/ledger the owner names,
