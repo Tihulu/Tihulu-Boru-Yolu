@@ -2038,3 +2038,39 @@ PR #14 stays draft.
   behave as documented. MOCK/STATIC only.
 - **Gate 1 state:** remains CLOSED — PASS. PR #14 stays draft; nothing is merged or
   released and no HOLD gate was touched.
+
+---
+
+### 2026-11-27 — Self-audit of the deny floor closes 12 host-denial bypasses (head on `p1/boru-core-vertical-slice`)
+
+Continuing autonomously, the slice's own deny floor was probed adversarially
+rather than assumed correct. The probe found **12 real bypasses** in code this
+project wrote — commands that are unambiguously destructive or host-denying yet
+passed the floor:
+
+`find / -delete`, `shutdown/reboot/halt`, `systemctl poweroff`, `kill -9 -1`,
+`killall`, `fdisk/parted/cfdisk`, `umount -a`, `swapoff -a`, `chmod -R 000 /`,
+`iptables -F`, `ln -sf /dev/null /etc/passwd`, `echo x > /etc/hosts`.
+
+**Fixed** by extending `HARDLINE_DENY` with ten further patterns
+(`destructive_find`, `host_power`, `mass_kill`, `partition_table`,
+`unmount_all`, `lockout_permissions`, `firewall_flush`, `system_file_clobber`,
+`system_path_write`), each scoped to avoid false positives:
+
+* `find` is refused only with `-delete` or `-exec … rm`; a plain `find . -name
+  '*.log'` still passes.
+* `kill` is refused only for the mass targets `-1`/`0`; `kill -9 1234` still passes.
+* `umount`/`swapoff` are refused only with `-a`/`--all`; a specific mount passes.
+* `chmod` is refused only for `000` against `/`; `chmod 755 script.sh` passes.
+* `ln -s` and `>` are refused only onto `/etc`, `/dev`, `/boot`, `/bin`, `/sbin`,
+  `/usr`, `/var`; project-relative targets pass.
+
+**Verification:** a paired matrix of 22 must-deny and 16 must-allow commands runs
+clean — **0 remaining bypasses, 0 false positives** — and is pinned by
+`tests/test_harness.py::ShellPolicyHostDenialTests`, including chained
+(`echo ok && shutdown -h now`) and nested (`bash -c 'shutdown -h now'`) laundering
+attempts.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **842 tests OK**
+(838 + 4); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.

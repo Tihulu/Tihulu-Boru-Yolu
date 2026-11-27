@@ -44,6 +44,21 @@ HARDLINE_DENY: Tuple[Tuple[str, str], ...] = (
     (r"\bgit\s+push\b[^\n]*(--force\b|-f\b)", "force_push"),
     (r"\bgit\s+reset\s+--hard\b", "hard_reset"),
     (r":(){ :|:& };:", "fork_bomb_alt"),
+    # Host-level denial and system-clobber patterns, added after this slice's
+    # own adversarial probe found them passing the floor.
+    (r"\bfind\b[^\n]*\s-delete\b", "destructive_find"),
+    (r"\bfind\b[^\n]*\s-exec[^\n]*\brm\b", "destructive_find"),
+    (r"\b(shutdown|poweroff|reboot|halt)\b", "host_power"),
+    (r"\bsystemctl\s+(poweroff|reboot|halt|kexec)", "host_power"),
+    (r"\bkill\s+(-9\s+|-KILL\s+|-SIGKILL\s+)*(-1|0)\b", "mass_kill"),
+    (r"\bkillall\b", "mass_kill"),
+    (r"\b(fdisk|parted|sfdisk|cfdisk|gdisk)\b", "partition_table"),
+    (r"\b(umount|swapoff)\b[^\n]*(\s-(a|all)\b|\s--all)", "unmount_all"),
+    (r"\bchmod\s+(-R\s+)?0{3}\s+/", "lockout_permissions"),
+    (r"\biptables\b[^\n]*(\s-F\b|--flush)", "firewall_flush"),
+    (r"\bln\s+-[a-z]*s[a-z]*f?\s+[^\n]*\s/(etc|dev|boot|bin|sbin|usr|var)(/|$|\s)",
+     "system_file_clobber"),
+    (r">\s*/(etc|dev|boot|bin|sbin|usr|var)(/|$|\s)", "system_path_write"),
 )
 
 #: Characters that terminate or chain a shell command. A command carrying any of

@@ -84,7 +84,9 @@ stated in `boru/dashboard.py`.
   a runtime dependency.
 - Guardrail: `scripts/check_project.py`, the repository-language rule and the
   full test suite must stay green; the harness ships with its own negative tests
-  (unknown/oversized/dangerous commands refused; chained commands cannot launder
-  a dangerous suffix; the snapshot never leaks a token or endpoint; the claim
-  audit reports an unbacked success, an unexplained failure, an unknown state, an
-  unsafe ledger row and an over-bound store, and repairs nothing).
+  (unknown/oversized/dangerous commands refused; chained and nested commands
+  cannot launder a dangerous suffix; host-level denial and system-clobber
+  commands are refused while their ordinary counterparts still pass; the snapshot
+  never leaks a token or endpoint; the claim audit reports an unbacked success, an
+  unexplained failure, an unknown state, an unsafe ledger row and an over-bound
+  store, and repairs nothing).

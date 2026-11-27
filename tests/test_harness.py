@@ -95,6 +95,81 @@ class ShellPolicyDenyFloorTests(unittest.TestCase):
         self.assertFalse(os.path.exists("/tmp/boru-harness-side-effect"))
 
 
+class ShellPolicyHostDenialTests(unittest.TestCase):
+    """The deny floor refuses host-level denial and system clobber.
+
+    These patterns were added after the slice's own adversarial probe found them
+    passing the floor. Each row is a command a legitimate synthetic command
+    never needs, and each has a safe counterpart that must still pass.
+    """
+
+    MUST_DENY = (
+        ("find / -delete", "destructive_find"),
+        ("find . -name '*.log' -delete", "destructive_find"),
+        ("find /tmp -exec rm {} ;", "destructive_find"),
+        ("shutdown -h now", "host_power"),
+        ("systemctl poweroff", "host_power"),
+        ("reboot", "host_power"),
+        ("kill -9 -1", "mass_kill"),
+        ("kill -KILL 0", "mass_kill"),
+        ("killall python", "mass_kill"),
+        ("fdisk /dev/sda", "partition_table"),
+        ("parted /dev/sda", "partition_table"),
+        ("umount -a", "unmount_all"),
+        ("swapoff --all", "unmount_all"),
+        ("chmod -R 000 /", "lockout_permissions"),
+        ("chmod 000 /etc", "lockout_permissions"),
+        ("iptables -F", "firewall_flush"),
+        ("iptables --flush", "firewall_flush"),
+        ("ln -sf /dev/null /etc/passwd", "system_file_clobber"),
+        ("echo x > /etc/hosts", "system_path_write"),
+    )
+
+    MUST_ALLOW = (
+        "find . -name '*.log'",
+        "find src -type f -name '*.py'",
+        "kill -9 1234",
+        "kill 5678",
+        "umount /mnt/data",
+        "swapon /dev/sda2",
+        "chmod 755 script.sh",
+        "chmod 644 file.txt",
+        "ln -s ./src ./dst",
+        "ln -sf target.txt link.txt",
+        "echo x > ./out.txt",
+        "echo x > build/out.log",
+        "ls -la",
+        "python3 -m pytest -q",
+        "git status",
+    )
+
+    def test_host_denial_and_clobber_commands_are_refused(self):
+        for command, reason in self.MUST_DENY:
+            allowed, got = shell_policy.deny_floor(command)
+            self.assertFalse(allowed, command + " must be refused")
+            self.assertEqual(reason, got, command)
+
+    def test_ordinary_commands_still_pass_the_extended_floor(self):
+        for command in self.MUST_ALLOW:
+            allowed, reason = shell_policy.deny_floor(command)
+            self.assertTrue(allowed, command + " must pass (reason: " + str(reason) + ")")
+            self.assertIsNone(reason)
+
+    def test_a_safe_prefix_cannot_launder_a_host_denial(self):
+        for command in ("echo ok && shutdown -h now",
+                        "true ; find / -delete",
+                        "ls | iptables -F"):
+            allowed, _reason = shell_policy.deny_floor(command)
+            self.assertFalse(allowed, command + " must be refused")
+
+    def test_a_nested_host_denial_is_refused(self):
+        for command in ("bash -c 'shutdown -h now'",
+                        "sh -c 'find / -delete'",
+                        'python -c \'os.system("killall python")\''):
+            allowed, _reason = shell_policy.deny_floor(command)
+            self.assertFalse(allowed, command + " must be refused")
+
+
 class HarnessObservabilityTests(unittest.TestCase):
     """The console is read-only, bounded and secret-free."""
 
