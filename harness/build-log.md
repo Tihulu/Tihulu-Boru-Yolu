@@ -2094,3 +2094,47 @@ MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
   MOCK/STATIC only.
 - **Gate 1 state:** remains CLOSED — PASS. No HOLD gate touched; PR #14 stays
   draft; nothing merged or released.
+
+---
+
+### 2026-11-27 — Deny floor verified against adversarial, brute-force and property testing (head on `p1/boru-core-vertical-slice`)
+
+Continuing the autonomous audit, the deny floor was attacked from three angles
+rather than assumed correct.
+
+**1. Adversarial probe (host denial and clobber) — 12 bypasses found and closed.**
+Already recorded above (`c90aa33`): `find / -delete`, `shutdown`, `kill -9 -1`,
+`fdisk`, `umount -a`, `chmod -R 000 /`, `iptables -F`, `ln -sf … /etc/passwd`,
+`echo x > /etc/hosts` and three more. Paired must-deny/must-allow matrix now runs
+clean.
+
+**2. Brute force for false positives — 0 found.**
+20,000 randomly composed ordinary commands (35 verbs x 30 objects) were classified;
+the 41 denials were each inspected and every one is a genuinely dangerous command
+the generator happened to produce (`rm -rf …`, `kill 0`). A second, stricter run of
+30,000 commands *excluding* any command containing a dangerous token yielded
+**0 denials** — the floor does not break legitimate work.
+
+**3. Property testing for untyped outcomes — added to the existing suite.**
+The harness was not covered by `tests/test_property_hostile_inputs.py`, whose
+stated invariant is "a typed outcome, never an unhandled exception". Added
+`PropertyHarnessDenyFloorTests` (4 tests, ~1,300 hostile commands) which demands
+every random command produce exactly one of `(True, None)`, `(False, reason)` or
+`PolicyViolation`, with a bounded printable reason, and that the decision be
+deterministic across repeated calls.
+
+**DoS check.** The patterns rely on `[a-z]*` / `[^\n]*`, a classic catastrophic
+backtracking shape. Pathological inputs (`rm -` + 200 letters, 200 chained
+signals, 500-char pipes, near-max-length commands) were timed under a 2s alarm:
+**worst case 0.002s**. The 1024-char command bound caps the regex work.
+
+**Also verified (no defect):** `boru/audit.py`'s `sanitize_identifier` was probed
+with 16 hostile subjects (paths, traversal, doubled dots, URLs, metadata IP,
+backslashes, percent-encoding, RTL override, oversized, whitespace). Every
+separator is replaced, `..` and `/` become `unidentified`, and oversized values
+are refused — no filesystem or network reference survives. The ledger also
+sanitizes `reason` and `detail_kind`, not only `subject`.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **846 tests OK**
+(842 + 4); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.

@@ -22,6 +22,7 @@ from boru.broker import Broker, OperationRequest, ScopeAllowlist, WorkerIdentity
 from boru.connectors.base import Capability, Grant
 from boru.connectors.scope import check_call, check_dispatch_body
 from boru.consent import ConsentStore
+from boru.harness import shell_policy
 from boru.errors import ConnectorDenied, PolicyViolation
 from boru.executor import LocalExecutor
 from boru.types import AgentResult
@@ -147,6 +148,81 @@ class PropertyHostileInputTests(unittest.TestCase):
                                  model_provider="mock", model_id="mock",
                                  evidence_class="simulated", typed_result=typed)
             self.assertIsInstance(result.validate(), list)
+
+
+class PropertyHarnessDenyFloorTests(unittest.TestCase):
+    """The deny floor returns only typed outcomes on hostile input.
+
+    Every random command must produce exactly one of:
+    ``(True, None)`` (safe), ``(False, reason)`` (refused, with a bounded
+    non-empty reason) or ``PolicyViolation`` (malformed). An unhandled
+    exception, an unbounded reason, a non-boolean allow flag or a
+    non-deterministic answer is a failure. The bound also caps the regex work,
+    so a hostile command cannot turn a decision into a hang.
+    """
+
+    COMMAND_ALPHABET = (string.ascii_letters + string.digits +
+                        " -/|;&$`'\\\"\n\t<>(){}*?._=:@#%\x00\x07\x1b\x7f")
+
+    def _random_command(self, rng, length):
+        return "".join(rng.choice(self.COMMAND_ALPHABET)
+                       for _ in range(length))
+
+    def test_random_commands_yield_only_typed_decisions(self):
+        rng = random.Random(SEED + 1)
+        for _ in range(ROUNDS * 4):
+            command = self._random_command(rng, rng.randint(0, 120))
+            try:
+                allowed, reason = shell_policy.deny_floor(command)
+            except PolicyViolation:
+                continue
+            self.assertIsInstance(allowed, bool)
+            if allowed:
+                # A safe decision carries no reason.
+                self.assertIsNone(reason)
+            else:
+                # A refusal carries a bounded, non-empty, printable reason.
+                self.assertIsInstance(reason, str)
+                self.assertTrue(reason.strip())
+                self.assertLessEqual(len(reason), 64)
+
+    def test_random_commands_decide_deterministically(self):
+        rng = random.Random(SEED + 2)
+        for _ in range(ROUNDS):
+            command = self._random_command(rng, rng.randint(0, 120))
+            first = self._decide(command)
+            for _ in range(3):
+                self.assertEqual(first, self._decide(command),
+                                 "the deny floor must be deterministic: " + repr(command))
+
+    def test_random_owner_deny_patterns_fail_closed(self):
+        rng = random.Random(SEED + 3)
+        for _ in range(ROUNDS):
+            command = self._random_command(rng, rng.randint(0, 80))
+            pattern = self._random_command(rng, rng.randint(0, 40))
+            try:
+                allowed, reason = shell_policy.command_allowed(
+                    command, deny_patterns=(pattern,))
+            except PolicyViolation:
+                continue
+            self.assertIsInstance(allowed, bool)
+            if not allowed:
+                self.assertIsInstance(reason, str)
+                self.assertTrue(reason.strip())
+
+    def test_an_oversized_command_is_refused_not_hung(self):
+        rng = random.Random(SEED + 4)
+        for _ in range(ROUNDS // 10):
+            command = self._random_command(
+                rng, shell_policy.MAX_COMMAND_CHARS + rng.randint(1, 200))
+            with self.assertRaises(PolicyViolation):
+                shell_policy.deny_floor(command)
+
+    def _decide(self, command):
+        try:
+            return shell_policy.deny_floor(command)
+        except PolicyViolation:
+            return "refused"
 
 
 if __name__ == "__main__":

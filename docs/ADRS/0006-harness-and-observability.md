@@ -89,4 +89,8 @@ stated in `boru/dashboard.py`.
   commands are refused while their ordinary counterparts still pass; the snapshot
   never leaks a token or endpoint; the claim audit reports an unbacked success, an
   unexplained failure, an unknown state, an unsafe ledger row and an over-bound
-  store, and repairs nothing).
+  store, and repairs nothing). The deny floor is additionally verified by
+  adversarial probing (host-denial and system-clobber commands), a
+  brute-force false-positive sweep over ordinary commands, and property
+  testing that demands a typed outcome and a deterministic answer for
+  every hostile input.
