@@ -2074,3 +2074,23 @@ attempts.
 **Tests observed:** `python3 -m unittest discover -s tests` → **842 tests OK**
 (838 + 4); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
 MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-27 — Deny-floor head pushed and CI green (head `2078858`, run `46022581248`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`):
+  `0474468..2078858`. Re-verified from the coordinator side with `git ls-remote` →
+  remote head `2078858a4f36dfe9a4c31339950401a8ef62be16`, identical to local.
+- **CI verified:** run `46022581248` on head `2078858` concluded **success**
+  (`validate`, 1m31s), re-read directly from `gh run view`. Only a non-blocking
+  Node.js 20 deprecation annotation.
+- **Code head under review:** `c90aa3390ae9b4a081f2d9374e2f2226a84e3583`;
+  `2078858` is its documents-only re-pin family (`docs/REVIEW_PACKAGE.md`).
+- **Local verification:** `unittest discover -s tests` **842 tests OK**;
+  `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean;
+  `boru harness policy-check --command-string "find / -delete"` → DENY
+  `destructive_find` (exit 1) and `"find . -name '*.log'"` → ALLOW (exit 0).
+  MOCK/STATIC only.
+- **Gate 1 state:** remains CLOSED — PASS. No HOLD gate touched; PR #14 stays
+  draft; nothing merged or released.
