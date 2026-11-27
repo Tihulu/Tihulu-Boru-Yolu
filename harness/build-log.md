@@ -2009,3 +2009,32 @@ PR #14 stays draft.
   decision). Building either now would be speculative infrastructure.
 - **Gate 1 state:** remains CLOSED — PASS. PR #14 stays draft; nothing is merged or released and no HOLD gate was touched.
 - **Next action:** none required. Future harness work needs its own ADR and acceptance gate.
+
+---
+
+### 2026-11-27 — Harness ADR renumbered 0005 → 0006; CI green (head `033b83d`, run `45981821550`)
+
+- **Defect caught in the final consistency pass and fixed:** the harness ADR was
+  filed as `docs/ADRS/0005-harness-and-observability.md`, but
+  `docs/ADRS/0005-boru-core-runtime-slice.md` already existed — a duplicate ADR
+  number. Renamed to **`docs/ADRS/0006-harness-and-observability.md`** and every
+  reference updated (the four harness modules, `boru/cli.py`, `tests/test_harness.py`
+  and the ledger). Verified clean: no `ADR 0005` / `0005-harness` reference remains.
+- **Review package updated:** rows 20–24 added to the component table so a reviewer
+  sees the four harness slices and the ADR. `tests/test_review_package.py` still
+  passes (every cited path exists; the stated document count matches the manifest).
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`):
+  `31c5d24..033b83d`. Re-verified from the coordinator side with `git ls-remote` →
+  remote head `033b83d449b15c94c431ef270d4724810749def0`, identical to local.
+- **CI verified:** run `45981821550` on head `033b83d` concluded **success**
+  (`validate`, 1m53s), re-read directly from `gh run view`. One intermediate
+  failure (run `45981427482`, head `9a8e709`) was the F20 pin lagging the ADR
+  renumber commit; fixed by advancing the pin to the full 40-char SHA.
+- **Code head under review:** `9a8e7096503c935db2db2efe115d910b16c1a8ef`;
+  `033b83d` is its documents-only re-pin.
+- **Local verification:** `unittest discover -s tests` **838 tests OK**;
+  `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean;
+  `boru harness view --once`, `harness verify --json` and `harness review` all
+  behave as documented. MOCK/STATIC only.
+- **Gate 1 state:** remains CLOSED — PASS. PR #14 stays draft; nothing is merged or
+  released and no HOLD gate was touched.
