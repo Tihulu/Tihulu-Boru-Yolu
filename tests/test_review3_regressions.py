@@ -38,7 +38,7 @@ from boru.connectors.base import Capability, Grant
 from boru.connectors.github import GitHubProvider
 from boru.connectors.gitlab import GitLabProvider
 from boru.connectors.polling import MAX_SEEN, EventAllowlist, PollingSync
-from boru.connectors.scope import check_write_body
+from boru.connectors.scope import check_write_body, GITHUB_WRITE_BODY_CONTRACTS
 from boru.consent import ConsentStore as PersistentConsent
 from boru.errors import ConnectorDenied, PolicyViolation
 from boru.privacy import ConsentStore as LocalConsent
@@ -368,7 +368,7 @@ class N07RunScopeTests(unittest.TestCase):
         # the workflow's own runs list confirms run 42 belongs to it, and only
         # then is the run addressed
         self.provider._transport = lambda method, path, body: (
-            (200, b'{"workflow_runs": [{"id": "42"}]}')
+            (200, b'{"workflow_runs": [{"id": "42", "head_branch": "main"}]}')
             if path.endswith("/runs?per_page=100") else (200, b'{}'))
         payload = self.provider.call(self.subject, "get_run",
                                      {"repository": "owner/repo", "run_id": "42",
@@ -409,15 +409,16 @@ class N08WriteBodyTests(unittest.TestCase):
         with self.assertRaises(ConnectorDenied) as raised:
             check_write_body(subject, "create_pull",
                              {"title": "synthetic", "head": "feature", "base": "main",
-                              "smuggled": "value"})
-        self.assertEqual("body_unknown_key", str(raised.exception))
+                              "smuggled": "value"}, {}, GITHUB_WRITE_BODY_CONTRACTS)
+        self.assertEqual("extra_body_field:smuggled", str(raised.exception))
 
     def test_n08_a_release_target_must_be_the_granted_reference(self):
         subject = connector_grant(operations=("create_release",),
-                                  capabilities=(Capability.MERGE_RELEASE,), nonce="rel")
+                                  capabilities=(Capability.MERGE_RELEASE,), nonce="rel",
+                                  reference="main")
         with self.assertRaises(ConnectorDenied) as raised:
             check_write_body(subject, "create_release",
-                             {"tag_name": "v1", "target_commitish": "develop"})
+                             {"tag_name": "v1", "target_commitish": "develop"}, {}, GITHUB_WRITE_BODY_CONTRACTS)
         self.assertEqual("reference_not_granted", str(raised.exception))
 
     def test_n08_gitlab_write_bodies_are_checked_too(self):

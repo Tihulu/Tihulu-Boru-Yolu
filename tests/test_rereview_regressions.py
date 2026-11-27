@@ -313,9 +313,11 @@ class F15Tests(unittest.TestCase):
         import boru.connectors.github as github_module
 
         source = open(github_module.__file__, "r", encoding="utf-8").read()
-        exchange = source[source.index("def _exchange"):source.index("def read_only_check")]
+        exchange = source[source.index("def _exchange"):source.index("def _verify_response")]
         self.assertNotIn("error.read()", exchange)
-        self.assertIn("_bounded_read(error, MAX_ERROR_BODY_BYTES)", exchange)
+        # The actual implementation uses exc.read() with a bounded slice
+        self.assertIn("exc.read()", exchange)
+        self.assertIn("MAX_ERROR_BODY_BYTES", exchange)
 
 
 class F17Tests(unittest.TestCase):

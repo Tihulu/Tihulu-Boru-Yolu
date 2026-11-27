@@ -21,9 +21,14 @@ N16 FIX: `accept()` performs full pre-flight validation (shape, ID, allowlist)
 on ALL events BEFORE any mutation to the seen registry. Batch rejection is
 atomic — if any event fails, the entire batch is rejected without partial
 mutation.
+
+N18 FIX: `accept()` pre-flights registry capacity before any mutation.
+A batch that would exceed MAX_SEEN is rejected atomically without partial
+mutation of the seen registry.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
@@ -116,6 +121,7 @@ class PollingSync:
         self.allowlist = allowlist
         self._seen: List[str] = []
         self._seen_set: Set[str] = set()
+        self._lock = threading.Lock()
         # A restored history is bounded exactly like a live one: an oversized
         # checkpoint is refused instead of silently trusted, because the
         # registry's bound is its memory bound.  The bound is enforced **while
@@ -206,57 +212,9 @@ class PollingSync:
             # Allowlist check in normalize (N16): refuse undeclared types early
             if not self.allowlist.permits(event.event_type):
                 raise ConnectorDenied("event_type_not_allowed")
-            parsed.append(event)
-        return parsed
-
-    # For backward compatibility with tests expecting idempotent normalize
-    # This filters out already-seen events (N05 idempotency)
-    def normalize(self, raw_events: Any) -> List[SyncEvent]:
-        """Parse a provider payload into typed, allowlisted events.
-
-        N05 FIX: Raw event IDs and types are validated BEFORE coercion so
-        non-string values (int, dict, None, bytes, bool) are refused rather
-        than silently turned into string representations.
-
-        Also maintains idempotency: already-seen events are filtered out.
-        """
-        parsed = self._normalize_raw(raw_events)
-        # Filter out already-seen events for idempotency (N05)
-        return [e for e in parsed if e.event_id not in self._seen_set]
-
-    def _normalize_raw(self, raw_events: Any) -> List[SyncEvent]:
-        """Internal normalize without idempotency filtering."""
-        if not isinstance(raw_events, list):
-            raise ConnectorDenied("events_malformed")
-        if len(raw_events) > MAX_EVENTS:
-            raise ConnectorDenied("events_too_many")
-
-        parsed: List[SyncEvent] = []
-        for entry in raw_events:
-            if not isinstance(entry, Mapping):
-                raise ConnectorDenied("events_malformed")
-            unknown = sorted(set(entry) - {"id", "type", "payload"})
-            if unknown:
-                raise ConnectorDenied("events_malformed")
-
-            # N05: Validate raw ID BEFORE coercion
-            raw_id = entry.get("id")
-            validated_id = self._validate_raw_id(raw_id)
-
-            # N05: Validate raw event_type BEFORE coercion
-            raw_type = entry.get("type")
-            validated_type = self._validate_raw_type(raw_type)
-
-            event = SyncEvent(
-                event_id=validated_id,
-                event_type=validated_type,
-                payload=dict(entry.get("payload") or {})
-            )
-            if event.validate():
-                raise ConnectorDenied("events_malformed")
-            # Allowlist check in normalize (N16): refuse undeclared types early
-            if not self.allowlist.permits(event.event_type):
-                raise ConnectorDenied("event_type_not_allowed")
+            # Idempotency: skip already-seen events (N05)
+            if event.event_id in self._seen_set:
+                continue
             parsed.append(event)
         return parsed
 
@@ -267,8 +225,12 @@ class PollingSync:
         EVERY event BEFORE any mutation to the seen registry. Batch rejection
         is atomic — if any event fails, the entire batch is rejected without
         partial mutation.
+
+        N18 FIX: Pre-flight registry capacity check. A batch that would exceed
+        MAX_SEEN is rejected atomically without partial mutation.
         """
         # PRE-FLIGHT: validate all events before ANY mutation
+        fresh_ids = []
         for event in events:
             # Shape check
             if not isinstance(event, SyncEvent):
@@ -280,26 +242,37 @@ class PollingSync:
             # Event-type allowlist check before mutation
             if not self.allowlist.permits(event.event_type):
                 raise ConnectorDenied("event_type_not_allowed")
+            # Track fresh IDs for capacity check
+            if event.event_id not in self._seen_set:
+                fresh_ids.append(event.event_id)
 
-        # ALL PASSED: now mutate and collect
+        # N18 FIX: Pre-flight capacity check — reject entire batch if
+        # accepting all fresh events would exceed MAX_SEEN
+        if len(self._seen) + len(fresh_ids) > MAX_SEEN:
+            raise ConnectorDenied("seen_registry_exhausted")
+
+        # ALL PRE-FLIGHT CHECKS PASSED: now mutate and collect
         fresh: List[SyncEvent] = []
-        for event in events:
-            if event.event_id in self._seen_set:
-                continue
-            self._remember(event.event_id)
-            fresh.append(event)
+        with self._lock:
+            for event in events:
+                if event.event_id in self._seen_set:
+                    continue
+                self._remember(event.event_id)
+                fresh.append(event)
         return fresh
 
     def _remember(self, event_id: str) -> None:
         """Record one processed id; a full registry refuses, never forgets."""
         if len(self._seen) >= MAX_SEEN:
-            raise ConnectorDenied("seen_registry_full")
+            raise ConnectorDenied("seen_registry_exhausted")
         self._seen.append(event_id)
         self._seen_set.add(event_id)
 
     @property
     def seen(self) -> Tuple[str, ...]:
         return tuple(self._seen)
+
+    _lock = threading.Lock()
 
 
 # --- Single-event-ID validator shared across all paths (N05) ---------------

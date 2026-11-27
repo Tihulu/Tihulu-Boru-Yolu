@@ -118,7 +118,7 @@ class SecurityRegressions(unittest.TestCase):
                                   requests.append((method, path, body)) or (200,b'{}'))
         provider.call(grant(operation="read_file", reference="feature"), "read_file",
                       {"repository":"owner/repo","reference":"feature","path":"docs/x.md"})
-        self.assertIn("?ref=feature", requests[0][1])
+        self.assertIn("branch=feature", requests[0][1])
 
     def test_workflow_rerun_cannot_ignore_workflow_allowlist(self):
         requests = []

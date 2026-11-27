@@ -56,6 +56,18 @@ def _check_segments(value: str, label: str) -> None:
             raise ConnectorDenied("unsafe_" + label)
 
 
+def _payload_get(payload: Any, key: str) -> Any:
+    """Extract *value* for *key* from a payload that is either a plain dict
+    or the bounded immutable snapshot tuple produced by :func:`snapshot`."""
+    if isinstance(payload, dict):
+        return payload.get(key)
+    if isinstance(payload, tuple):
+        for k, v in payload:
+            if k == key:
+                return v
+    return None
+
+
 def _slot(value: Any, label: str, limit: int = 256, *, allow_slash: bool = False) -> str:
     """Validate one URL slot and return its unencoded form."""
     if not isinstance(value, str) or not value.strip() or len(value) > limit:
@@ -212,7 +224,7 @@ def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method
         raise ConnectorDenied("invalid_method")
     payload = payload or {}
     if operation in REPO_SCOPED:
-        repository = _slot(payload.get("repository"), "repository", 256, allow_slash=True)
+        repository = _slot(_payload_get(payload, "repository"), "repository", 256, allow_slash=True)
         if repository.count("/") != 1:
             raise ConnectorDenied("unsafe_repository")
         if not repository_matches(repository, getattr(grant, "repository", "")):
@@ -223,8 +235,25 @@ def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method
         raise ConnectorDenied("account_scope_not_granted")
     else:
         raise ConnectorDenied("operation_not_scoped")
-    # A file/contents read must name its reference explicitly.
-    reference = payload.get("reference", payload.get("branch"))
+    # For operations that address a repository reference, validate it.
+    # Distinguish "reference not provided" from "reference provided as empty"
+    if isinstance(payload, dict):
+        has_ref_key = "reference" in payload
+        reference = payload.get("reference") if has_ref_key else None
+        if reference is None:
+            reference = payload.get("branch") if "branch" in payload else None
+    elif isinstance(payload, tuple):
+        reference = None
+        for k, v in payload:
+            if k == "reference":
+                reference = v
+                break
+            if k == "branch" and reference is None:
+                reference = v
+    else:
+        reference = _payload_get(payload, "reference") or _payload_get(payload, "branch")
+    
+    # For file operations, reference is required
     if operation in ("read_file", "put_file") and reference is None:
         raise ConnectorDenied("reference_required")
     if reference is not None:
@@ -232,20 +261,26 @@ def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method
         granted_reference = _slot(str(getattr(grant, "reference", "") or ""), "reference", 256)
         if reference != granted_reference:
             raise ConnectorDenied("reference_not_granted")
-    file_path = payload.get("path")
+    # For run operations, also validate the reference if provided
+    elif operation in ("get_run", "get_run_logs", "get_artifacts", "cancel_run", "rerun_workflow") and reference is not None:
+        reference = _slot(str(reference), "reference", 256)
+        granted_reference = _slot(str(getattr(grant, "reference", "") or ""), "reference", 256)
+        if reference != granted_reference:
+            raise ConnectorDenied("reference_not_granted")
+    file_path = _payload_get(payload, "path")
     if file_path is not None:
         _slot(file_path, "path", 512, allow_slash=True)
-    issue = payload.get("issue")
+    issue = _payload_get(payload, "issue")
     if issue is not None:
         _slot(str(issue), "issue", 32)
         if not str(issue).isdigit():
             raise ConnectorDenied("unsafe_issue")
-    run_id = payload.get("run_id")
+    run_id = _payload_get(payload, "run_id")
     if run_id is not None:
         _slot(str(run_id), "run_id", 32)
         if not str(run_id).isdigit():
             raise ConnectorDenied("unsafe_run_id")
-    workflow = payload.get("workflow")
+    workflow = _payload_get(payload, "workflow")
     # A run belongs to a workflow: without a granted workflow name the
     # operation cannot be scoped, so it is refused rather than guessed.  This
     # holds for every workflow-addressed operation, the run operations
@@ -259,7 +294,7 @@ def check_call(grant: Any, operation: str, payload: Mapping[str, Any], *, method
         allowed_workflows = getattr(grant, "workflow_ids", ()) or ()
         if not allowed_workflows or workflow not in allowed_workflows:
             raise ConnectorDenied("workflow_not_granted")
-    sha = payload.get("sha")
+    sha = _payload_get(payload, "sha")
     if sha is not None:
         _slot(sha, "sha", 64)
         if any(c not in "0123456789abcdef" for c in str(sha)):
@@ -282,22 +317,22 @@ def validated_slots(payload: Mapping[str, Any]) -> Dict[str, str]:
     """
     payload = payload or {}
     slots: Dict[str, str] = {}
-    repository = payload.get("repository")
+    repository = _payload_get(payload, "repository")
     if repository is not None:
         slots["repository"] = _slot(repository, "repository", 256, allow_slash=True)
-    reference = payload.get("reference", payload.get("branch"))
+    reference = _payload_get(payload, "reference") or _payload_get(payload, "branch")
     if reference is not None:
         slots["reference"] = _slot(str(reference), "reference", 256)
     for name, limit, digits in (("issue", 32, True), ("run_id", 32, True),
                                 ("workflow", 256, False), ("sha", 64, False)):
-        value = payload.get(name)
+        value = _payload_get(payload, name)
         if value is None:
             continue
         text = _slot(str(value), name, limit, allow_slash=name == "workflow")
         if digits and not text.isdigit():
             raise ConnectorDenied("unsafe_" + name)
         slots[name] = text
-    file_path = payload.get("path")
+    file_path = _payload_get(payload, "path")
     if file_path is not None:
         slots["path"] = _slot(file_path, "path", 512, allow_slash=True)
     return slots
@@ -305,7 +340,7 @@ def validated_slots(payload: Mapping[str, Any]) -> Dict[str, str]:
 
 def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
                          declared: Optional[Mapping[str, Any]] = None) -> None:
-    """Validate a workflow dispatch body before any transport is built.
+    """Validate a workflow dispatch body against the grant's declared inputs.
 
     The body's ``ref`` must be exactly the granted reference (a payload can
     never widen it) and its ``inputs`` must be a bounded object of bounded
@@ -320,22 +355,36 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
     """
     if body is None:
         raise ConnectorDenied("body_required")
-    if not isinstance(body, Mapping):
+    # Handle both dict and snapshot tuple
+    def _body_get(body, key):
+        if isinstance(body, dict):
+            return body.get(key)
+        if isinstance(body, tuple):
+            for k, v in body:
+                if k == key:
+                    return v
+        return None
+
+    def _body_iter(body):
+        if isinstance(body, dict):
+            return body.items()
+        if isinstance(body, tuple):
+            return body
+        return []
+
+    if not isinstance(body, (dict, tuple)):
         raise ConnectorDenied("invalid_body")
     if len(body) > MAX_BODY_KEYS:
         raise ConnectorDenied("body_too_large")
-    # Only the dispatch body's documented keys may travel: an extra key is a
-    # payload smuggled toward the endpoint (and a body cannot carry the schema
-    # it is checked against).
-    unknown = sorted(set(body) - {"ref", "inputs"})
+    unknown = sorted(set(k for k, _ in _body_iter(body)) - {"ref", "inputs"})
     if unknown:
         raise ConnectorDenied("body_unknown_key")
-    reference = body.get("ref")
+    reference = _body_get(body, "ref")
     if reference is None:
         raise ConnectorDenied("reference_required")
     if str(reference) != str(getattr(grant, "reference", "") or ""):
         raise ConnectorDenied("reference_not_granted")
-    inputs = body.get("inputs") or {}
+    inputs = _body_get(body, "inputs") or {}
     if not isinstance(inputs, Mapping):
         raise ConnectorDenied("invalid_body")
     if len(inputs) > MAX_BODY_KEYS:
@@ -346,7 +395,8 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
     if inputs and declared is None:
         # Without the owner-supplied declaration there is no schema to validate
         # against, so a non-empty input set is refused rather than accepted on
-        # shape alone: an input is a value the workflow will read.
+        # shape alone: an input is a value the workflow reads, and shape alone
+        # cannot say which values it accepts.
         raise ConnectorDenied("inputs_undeclared")
     if declared is not None:
         from .workflows import validate_dispatch_inputs
@@ -354,7 +404,7 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
         allowed, reason = validate_dispatch_inputs(declared, inputs)
         if not allowed:
             raise ConnectorDenied(reason)
-    for key, value in inputs.items():
+    for key, value in _body_iter(inputs):
         if not isinstance(key, str) or not key.strip() or len(key) > 64:
             raise ConnectorDenied("unsafe_body_key")
         if isinstance(value, bool) or not isinstance(value, (str, int, float)):
@@ -363,6 +413,7 @@ def check_dispatch_body(grant: Any, body: Optional[Mapping[str, Any]],
             _check_control(value, "body_value")
             if len(value) > MAX_BODY_VALUE_CHARS:
                 raise ConnectorDenied("body_too_large")
+
 
 
 def _check_body_value(value: Any, label: str, depth: int = 0) -> None:
@@ -439,18 +490,58 @@ def check_write_body(grant: Any, operation: str, body: Any,
         if reference_keys:
             raise ConnectorDenied("reference_required_in_body")
         return
-    if not isinstance(body, Mapping):
+    # Handle both dict and snapshot tuple
+    def _body_has_field(b, field):
+        if isinstance(b, dict):
+            return field in b
+        if isinstance(b, tuple):
+            return any(k == field for k, v in b)
+        return False
+
+    def _body_get_field(b, field):
+        if isinstance(b, dict):
+            return b.get(field)
+        if isinstance(b, tuple):
+            for k, v in b:
+                if k == field:
+                    return v
+        return None
+
+    if not isinstance(body, (dict, tuple)):
         raise ConnectorDenied("invalid_body")
     if len(body) > MAX_BODY_KEYS:
         raise ConnectorDenied("body_too_large")
-    unknown = sorted(set(body) - set(allowed_keys))
+    unknown = sorted(set(k for k, _ in _body_iter(body)) - set(allowed_keys))
     if unknown:
-        raise ConnectorDenied("body_unknown_key")
-    for key, value in body.items():
+        raise ConnectorDenied("extra_body_field:" + ",".join(unknown))
+    for key, value in _body_iter(body):
         _check_body_value(value, key)
     granted_reference = str(getattr(grant, "reference", "") or "")
     for key in reference_keys:
-        if key not in body:
+        if not _body_has_field(body, key):
             raise ConnectorDenied("reference_required_in_body")
-        if str(body[key]) != granted_reference:
+        if str(_body_get_field(body, key)) != granted_reference:
             raise ConnectorDenied("reference_not_granted")
+
+def _body_iter(body):
+    if isinstance(body, dict):
+        return body.items()
+    if isinstance(body, tuple):
+        return body
+    return []
+
+def _body_get_field(body, field):
+    if isinstance(body, dict):
+        return body.get(field)
+    if isinstance(body, tuple):
+        for k, v in body:
+            if k == field:
+                return v
+    return None
+
+def _body_has_field(body, field):
+    if isinstance(body, dict):
+        return field in body
+    if isinstance(body, tuple):
+        return any(k == field for k, v in body)
+    return False

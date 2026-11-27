@@ -1,10 +1,11 @@
 """Official GitHub REST connector (P8 source slice) — typed, grant-bound.
 
-This connector never decides rights for itself: every call is matched against
-an owner-issued `Grant`, and a denied operation produces **no outbound
-request**. Tokens are only ever read from an environment variable named by
-configuration, and no token, body or private payload appears in errors or
-audit events (issue #9).
+Centralized authorization architecture (N12/N15/N07/N13/N06):
+1. **Materialize once**: snapshot body + payload before any validation
+2. **Validate snapshot**: all grant checks, write-body contracts against snapshot
+3. **Authorize snapshot**: identity, run ownership, merge target, branch source
+4. **Transmit snapshot**: exact validated snapshot reaches the transport
+5. **No caller objects**: never return to original body/payload after materialization
 """
 from __future__ import annotations
 
@@ -20,177 +21,529 @@ from ..errors import ConnectorDenied, PolicyViolation
 from .base import OPERATION_CAPABILITIES, Capability, Grant, RepositoryProvider
 from .scope import (
     GITHUB_WRITE_BODY_CONTRACTS, check_call, check_dispatch_body, check_write_body,
+    _payload_get,
+)
+from .request import (
+    snapshot_body, snapshot_payload, read_credential, credential_fingerprint,
+    AuthorizationBudget, MAX_SNAPSHOT_DEPTH,
 )
 
 API_BASE = "https://api.github.com"
-#: An error body is diagnostic, never a payload: keep only a bounded prefix.
 MAX_ERROR_BODY_BYTES = 4 * 1024
 
-#: Operations that address one run of a granted workflow.  A run's ownership is
-#: established from **trusted provider metadata** - the workflow's own runs
-#: list - before the run is addressed, because a caller-declared workflow name
-#: says nothing about which run an id names (N07).
 RUN_OPERATIONS = frozenset({"get_run", "get_run_logs", "get_artifacts",
                             "cancel_run", "rerun_workflow"})
 
-#: A verified (workflow, run) pair is remembered so one operation does not
-#: re-query the workflow's runs, and the memo is bounded: a long-lived process
-#: cannot grow it without limit.
 MAX_VERIFIED_RUNS = 64
-
-#: N06: authorization traffic (identity verification and ownership lookups) is
-#: bounded **as requests**, not only as stored entries: past this ceiling the
-#: connector refuses rather than issuing unbounded authorization requests.
 MAX_AUTHORIZATION_REQUESTS = 512
-
-#: N06: a verified ownership entry is evidence for a bounded time only; past
-#: the window the ownership is re-established, so a credential rotation or a
-#: changed grant cannot ride on stale evidence.
 RUN_OWNERSHIP_TTL_SECONDS = 300.0
-
-#: N12: a validated write body is copied before authorization and that exact
-#: snapshot is what reaches the transport.
-MAX_SNAPSHOT_DEPTH = 3
-
-
-def _snapshot(value: Any, depth: int = 0) -> Any:
-    """A bounded, immutable copy of a validated request body (N12).
-
-    The value that was validated is the value that reaches the transport, so
-    the body is copied **before** any authorization request and that exact
-    snapshot is transmitted: a caller mutating the original mapping during
-    authorization cannot change what is sent.
-    """
-    if depth > MAX_SNAPSHOT_DEPTH:
-        raise ConnectorDenied("body_nested_too_deeply")
-    if isinstance(value, Mapping):
-        return tuple((key, _snapshot(item, depth + 1))
-                     for key, item in sorted(value.items(), key=lambda pair: str(pair[0])))
-    if isinstance(value, (list, tuple)):
-        return tuple(_snapshot(item, depth + 1) for item in value)
-    return value
-
-
-def _wire_body(snapshot: Any) -> Any:
-    """The wire form of a validated body snapshot."""
-    if isinstance(snapshot, tuple) and not snapshot:
-        return {}
-    if isinstance(snapshot, tuple):
-        return {str(key): _wire_body(item) for key, item in snapshot}
-    return snapshot
-
-
-def _bounded_read(stream, limit: int) -> bytes:
-    """Read at most ``limit`` bytes from an HTTP error body."""
-    if not hasattr(stream, "read"):
-        return b""
-    try:
-        return stream.read(limit)
-    except Exception:  # pragma: no cover - defensive cleanup
-        return b""
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse any redirect: a connector call must never be silently followed."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
-        raise ConnectorDenied("redirects_not_followed")
 
 
 class GitHubProvider(RepositoryProvider):
-    """Official GitHub API connector with grant-bound typed operations."""
-
-    name = "github"
+    """GitHub REST API v3 connector bound by owner-issued grants."""
 
     def __init__(self, *, token_env: Optional[str] = None, base_url: str = API_BASE,
-                 transport=None, allow_http: bool = False, audit=None) -> None:
-        # allow_http is an owner opt-in for pinned loopback test endpoints only.
-        self.allow_http_endpoints = allow_http
+                 transport=None, allow_http: bool = False, audit=None):
         if token_env is not None and (not isinstance(token_env, str) or not token_env.strip() or len(token_env) > 64):
             raise PolicyViolation("token_env must be a bounded environment variable name")
         if not isinstance(base_url, str) or not base_url.strip() or len(base_url) > 512:
             raise PolicyViolation("base_url must be a bounded non-empty string")
         if not base_url.lower().startswith("https://") and not allow_http:
             raise PolicyViolation("GitHub API requires https")
+        self.name = "github"
         self.token_env = token_env
-        self.base_url = base_url.rstrip("/")
+        self._base_url = base_url.rstrip("/")
         self._transport = transport
+        self._allow_http = allow_http
         self._audit: List[Dict[str, Any]] = []
-        self._calls: Dict[str, int] = {}
         self._ledger = audit
-        # Call accounting is shared by every path that reaches an endpoint, so
-        # a ceiling check and its reservation cannot interleave (N06).
-        self._call_lock = threading.Lock()
-        # The verified identity: the (token fingerprint, account) pair that was
-        # actually checked.  Binding the account too is what stops a second
-        # grant naming another account behind the same token from being waved
-        # through on the first account's verification (F07).
+        # Identity cache: (token_fingerprint, account) -> verified
         self._verified_identity: Optional[Tuple[str, str]] = None
         self._identity_lock = threading.Lock()
-        # N06: a bounded count of the authorization requests this instance has
-        # made, so a flood of identity mismatches or foreign runs cannot issue
-        # unbounded authorization traffic.
-        self._authorization_requests = 0
-        # N07: (authorization context) -> the time ownership was confirmed.
-        # The key carries the **whole** context — repository, granted
-        # reference, verified account, credential fingerprint, workflow and
-        # run id — so an entry verified under one context can never authorize
-        # the same run under another.
-        self._verified_runs: Dict[Tuple[str, str, str, str, str, str, str], float] = {}
+        # N07: ownership cache keyed by complete authorization context
+        self._verified_runs: Dict[Tuple[str, ...], float] = {}
         self._run_lock = threading.Lock()
+        # N06: centralized authorization budget
+        self._auth_budget = AuthorizationBudget(MAX_AUTHORIZATION_REQUESTS)
+        # Repository-operation ceiling
+        self._call_lock = threading.Lock()
+        self._call_counts: Dict[str, int] = {}
+        # Semaphore to limit concurrent calls per grant
+        self._call_semaphores: Dict[str, threading.Semaphore] = {}
 
-    # -- identity ------------------------------------------------------------
     def capabilities(self) -> Tuple[Capability, ...]:
         return tuple(OPERATION_CAPABILITIES.values())
 
     def connection_state(self) -> str:
-        """Honest state: a token is identity, not write authorization."""
         if self.token_env and os.environ.get(self.token_env):
             return "authenticated"
         if self.token_env:
             return "configured"
         return "disconnected"
 
+    @property
+    def base_url(self) -> str:
+        return self._base_url
+
+    def audit(self) -> List[Dict[str, Any]]:
+        return list(self._audit)
+
+    @property
+    def _calls(self) -> Dict[str, int]:
+        """Backward compatibility for tests expecting _calls dict."""
+        return self._call_counts
+
+    def read_only_check(self, operations: Sequence[str]) -> List[str]:
+        """Return the operations a read-only profile must refuse (a guard test)."""
+        from .base import WRITE_OPERATIONS
+
+        return sorted(set(operations) & WRITE_OPERATIONS)
+
+    def check(self, grant: Grant, operation: str) -> Tuple[bool, str]:
+        """Check if grant permits this operation at current time."""
+        import time
+        return grant.permits(operation, time.time(), 0)
+
     def list_workflows_typed(self, grant, payload=None, timeout: float = 10.0) -> List[Any]:
         """Discover workflows through the official endpoint (issue #9)."""
         allowed, reason = self.check(grant, "list_workflows")
         if not allowed:
             raise ConnectorDenied(reason)
-        slots = check_call(grant, "list_workflows", payload or {}, method=None, path="",
+        # Materialize: snapshot payload before any auth
+        snap = snapshot_payload(payload)
+        # Validate snapshot against grant
+        slots = check_call(grant, "list_workflows", snap or {}, method=None, path="",
                            default_method="GET")
-        # Discovery is an externally connected path like any other: the identity
-        # behind the token is verified before the request, and the call counts
-        # against the grant's ceiling.  The credential is read **once** and that
-        # exact snapshot is verified and transmitted (F07/N02).
-        token = self._token_value()
+        # Credential snapshot: one read for this request
+        token = read_credential(self.token_env)
+        # Authorize: identity verification
         self._require_account_identity(grant, token)
+        # Reserve repository-operation slot
         reason = self._reserve_call(grant, "list_workflows")
         if reason:
             self._deny(grant, "list_workflows", reason)
             raise ConnectorDenied(reason)
+        # Exchange: transmit snapshot
         status, raw = self._exchange("list_workflows", "GET",
                                      self._path_for("list_workflows", slots), {},
                                      token)
         if status >= 300:
             raise ConnectorDenied("http_" + str(status))
+        # Increment successful call counter
+        gid = getattr(grant, "grant_id", "")
+        with self._call_lock:
+            self._call_counts[gid] = self._call_counts.get(gid, 0) + 1
         from .workflows import parse_workflows
-
         try:
             return parse_workflows(json.loads(raw.decode("utf-8")) if raw else {})
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise ConnectorDenied("invalid_response")
 
+    def call(self, grant: Grant, operation: str, payload: Optional[Mapping[str, Any]] = None,
+             body: Optional[Mapping[str, Any]] = None, method: Optional[str] = None,
+             path: Optional[str] = None) -> Any:
+        """Execute a grant-bound operation against the official GitHub endpoint."""
+        # Gate: grant allows this operation
+        allowed, reason = self.check(grant, operation)
+        if not allowed:
+            self._deny(grant, operation, reason)
+            raise ConnectorDenied(reason)
+        if path:
+            raise ConnectorDenied("path_override_refused")
+
+        # === MATERIALIZE: snapshot body + payload BEFORE any validation ===
+        body_snap = snapshot_body(body)
+        payload_snap = snapshot_payload(payload)
+
+        # === VALIDATE: all grant checks against the snapshot ===
+        try:
+            slots = check_call(grant, operation, payload_snap or {}, method=method, path=path,
+                               default_method=self._MUTATING.get(operation, "GET"))
+        except ConnectorDenied as exc:
+            self._deny(grant, operation, str(exc))
+            raise
+
+        # Write-body contracts only apply to mutating operations
+        if operation in GITHUB_WRITE_BODY_CONTRACTS:
+            try:
+                check_write_body(grant, operation, body_snap or {}, payload_snap or {},
+                                 GITHUB_WRITE_BODY_CONTRACTS)
+            except ConnectorDenied as exc:
+                self._deny(grant, operation, str(exc))
+                raise
+
+        # === AUTHORIZE: all checks against the snapshot ===
+        token = read_credential(self.token_env)
+        self._require_account_identity(grant, token)
+
+        if operation in RUN_OPERATIONS:
+            self._require_run_of_workflow(grant, slots, token)
+
+        if operation == "create_branch":
+            self._require_branch_source(grant, payload_snap, body_snap, token)
+
+        if operation == "merge_pull":
+            self._require_merge_target(grant, slots, token)
+
+        # === RESERVE: repository-operation ceiling ===
+        reason = self._reserve_call(grant, operation)
+        if reason:
+            self._deny(grant, operation, reason)
+            raise ConnectorDenied(reason)
+
+        # === EXCHANGE: transmit the validated snapshot ===
+        path = self._path_for(operation, slots)
+        if method is None:
+            method = self._MUTATING.get(operation, "GET")
+        status, raw = self._exchange(operation, method, path, _wire_body(body_snap) or {}, token)
+        self._verify_response(operation, payload_snap or {}, raw)
+        event_reason = "ok" if status < 300 else "http_" + str(status)
+        gid = getattr(grant, "grant_id", "")
+        if status < 300:
+            # Successful call - increment counter
+            with self._call_lock:
+                self._call_counts[gid] = self._call_counts.get(gid, 0) + 1
+        else:
+            # Failed call - release the semaphore slot
+            with self._call_lock:
+                sem = self._call_semaphores.get(gid)
+                if sem:
+                    sem.release()
+        self._audit.append({"at": int(time.time()), "grant": grant.grant_id, "operation": operation,
+                            "path_kind": "official_endpoint", "status": status,
+                            "decision": "allow" if status < 300 else "deny", "reason": event_reason})
+        if status >= 300:
+            raise ConnectorDenied("http_" + str(status))
+        try:
+            return json.loads(raw.decode("utf-8")) if raw else {}
+        except json.JSONDecodeError:
+            raise ConnectorDenied("invalid_response")
+
+    def _deny(self, grant: Grant, operation: str, reason: str) -> None:
+        self._audit.append({"at": int(time.time()), "grant": grant.grant_id,
+                            "operation": operation, "decision": "deny", "reason": reason})
+        if self._ledger is not None:
+            self._ledger.record("connector", grant.grant_id, reason, operation)
+
+    def _require_account_identity(self, grant: Grant, token: Optional[str]) -> None:
+        if not self.token_env:
+            return
+        account = getattr(grant, "account", None)
+        if not isinstance(account, str) or not account.strip():
+            raise ConnectorDenied("grant_account_invalid")
+        if token is None:
+            raise ConnectorDenied("credential_missing")
+        identity = (credential_fingerprint(self.name, token), account.strip())
+        with self._identity_lock:
+            if identity == self._verified_identity:
+                return
+            self._charge_authorization_request()
+            verified, reason = self.verify_identity(account.strip(), token=token)
+            if not verified:
+                raise ConnectorDenied(reason)
+            self._verified_identity = identity
+
+    def _require_branch_source(self, grant: Grant, payload: Mapping[str, Any],
+                               body: Mapping[str, Any], token: Optional[str]) -> None:
+        """Bind a branch creation to the granted reference's own head (N08/N12)."""
+        self._charge_authorization_request()
+        reference = str(getattr(grant, "reference", "") or "")
+        # Handle both dict and snapshot tuple
+        if isinstance(body, dict):
+            target = body.get("ref")
+        elif isinstance(body, tuple):
+            target = None
+            for k, v in body:
+                if k == "ref":
+                    target = v
+                    break
+        else:
+            target = None
+        if not isinstance(target, str) or len(target) > 128 \
+                or any(ord(c) < 0x20 or ord(c) == 0x7F for c in target):
+            raise ConnectorDenied("unsafe_body_value")
+        prefix = "refs/heads/"
+        if not target.startswith(prefix):
+            raise ConnectorDenied("unsafe_body_value")
+        name = target[len(prefix):]
+        if not name or len(name) > 64 or "/" in name or name in (".", "..") \
+                or name.strip() != name:
+            raise ConnectorDenied("unsafe_body_value")
+        repository = self._repository(payload)
+        status, raw = self._exchange("get_reference_head", "GET",
+                                     "/repos/{}/git/ref/heads/{}".format(repository, reference),
+                                     {}, token)
+        if status >= 300:
+            raise ConnectorDenied("reference_head_unavailable")
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ConnectorDenied("invalid_response")
+        head = data.get("object", {}).get("sha") if isinstance(data, dict) else None
+        if not isinstance(head, str) or not head:
+            raise ConnectorDenied("reference_head_unavailable")
+        # Handle both dict and snapshot tuple for payload
+        if isinstance(payload, dict):
+            declared = payload.get("sha")
+        elif isinstance(payload, tuple):
+            declared = None
+            for k, v in payload:
+                if k == "sha":
+                    declared = v
+                    break
+        else:
+            declared = None
+        if declared is not None and str(declared) != head:
+            raise ConnectorDenied("reference_not_granted")
+
+        # Handle both dict and snapshot tuple for body
+        if isinstance(body, dict):
+            body_sha = body.get("sha", "")
+        elif isinstance(body, tuple):
+            body_sha = None
+            for k, v in body:
+                if k == "sha":
+                    body_sha = v
+                    break
+            if body_sha is None:
+                body_sha = ""
+        else:
+            body_sha = ""
+        if str(body_sha) != head:
+            raise ConnectorDenied("reference_not_granted")
+
+    def _authorization_context(self, grant: Grant, workflow: str, run_id: str,
+                               token: Optional[str]) -> Tuple[str, ...]:
+        """Complete authorization context for ownership cache (N07)."""
+        return (self.name, str(getattr(grant, "repository", "")),
+                str(getattr(grant, "reference", "")),
+                str(getattr(grant, "account", "")),
+                credential_fingerprint(self.name, token) or "",
+                workflow, run_id)
+
+    def _require_run_of_workflow(self, grant: Grant, slots: Mapping[str, Any],
+                                 token: Optional[str]) -> None:
+        """Establish run ownership from trusted metadata (N07).
+
+        Validates BOTH workflow membership AND that the run's head_branch
+        matches the granted reference.
+        """
+        workflow = str(slots.get("workflow", ""))
+        run_id = str(slots.get("run_id", ""))
+        granted_reference = str(getattr(grant, "reference", "") or "")
+        if not granted_reference:
+            raise ConnectorDenied("reference_required")
+        key = self._authorization_context(grant, workflow, run_id, token)
+        stamp = time.time()
+        with self._run_lock:
+            verified_at = self._verified_runs.get(key)
+            if verified_at is not None and stamp - verified_at < RUN_OWNERSHIP_TTL_SECONDS:
+                return
+            self._charge_authorization_request()
+            repository = self._repository(slots)
+            status, raw = self._exchange(
+                "list_workflow_runs", "GET",
+                "/repos/{}/actions/workflows/{}/runs?per_page=100".format(repository, workflow),
+                {}, token)
+            if status >= 300:
+                raise ConnectorDenied("run_ownership_unavailable")
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise ConnectorDenied("invalid_response")
+            runs = data.get("workflow_runs") if isinstance(data, dict) else None
+            if not isinstance(runs, list):
+                raise ConnectorDenied("run_ownership_unavailable")
+            # N07 FIX: validate BOTH run ID AND head_branch
+            owned = {}
+            for entry in runs:
+                if isinstance(entry, dict):
+                    rid = str(entry.get("id"))
+                    branch = entry.get("head_branch")
+                    if rid:
+                        owned[rid] = branch
+            if run_id not in owned:
+                raise ConnectorDenied("run_not_of_workflow")
+            # Validate run belongs to the granted reference
+            run_branch = owned[run_id]
+            if run_branch != granted_reference:
+                raise ConnectorDenied("run_not_of_reference")
+            self._verified_runs[key] = time.time()
+            while len(self._verified_runs) > MAX_VERIFIED_RUNS:
+                self._verified_runs.pop(next(iter(self._verified_runs)))
+
+    def _require_merge_target(self, grant: Grant, slots: Mapping[str, Any],
+                              token: Optional[str]) -> None:
+        """Bind merge to PR's own target reference (N13).
+
+        NO CACHE for mutable merge targets: revalidate on EVERY request.
+        """
+        repository = self._repository(slots)
+        issue = str(slots.get("issue", ""))
+        granted_reference = str(getattr(grant, "reference", "") or "")
+        self._charge_authorization_request()
+        status, raw = self._exchange("get_pull", "GET",
+                                     "/repos/{}/pulls/{}".format(repository, issue),
+                                     {}, token)
+        if status >= 300:
+            raise ConnectorDenied("merge_target_unavailable")
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ConnectorDenied("invalid_response")
+        base = data.get("base") if isinstance(data, dict) else None
+        target = base.get("ref") if isinstance(base, dict) else None
+        if not isinstance(target, str) or not target:
+            raise ConnectorDenied("merge_target_unavailable")
+        if target != granted_reference:
+            raise ConnectorDenied("reference_not_granted")
+
+    def _charge_authorization_request(self) -> None:
+        reason = self._auth_budget.charge()
+        if reason:
+            raise ConnectorDenied(reason)
+
+    def _reserve_call(self, grant: Grant, operation: str) -> str:
+        """Acquire a call slot from the grant's semaphore.
+        Returns empty string on success, or exhaustion reason.
+        """
+        gid = getattr(grant, "grant_id", "")
+        max_calls = getattr(grant, "max_calls", 64)
+        with self._call_lock:
+            sem = self._call_semaphores.get(gid)
+            if sem is None:
+                sem = threading.Semaphore(max_calls)
+                self._call_semaphores[gid] = sem
+        # Try to acquire without blocking - return immediately if no slots available
+        if not sem.acquire(blocking=False):
+            return "grant_exhausted"
+        return ""
+
+    def _exchange(self, operation: str, method: str, path: str,
+                  body: Mapping[str, Any], token: Optional[str]) -> Tuple[int, bytes]:
+        if self._transport:
+            return self._transport(method, path, body)
+        url = self._base_url + path
+        headers = {"Accept": "application/vnd.github+json",
+                   "User-Agent": "boru-connector"}
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        if body:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(body).encode("utf-8")
+        else:
+            data = None
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        opener = urllib.request.build_opener(_NoRedirect)
+        try:
+            with opener.open(req, timeout=30) as resp:
+                if resp.getcode() == 200:
+                    content_type = resp.headers.get("Content-Type", "")
+                    if "application/json" not in content_type:
+                        raise ConnectorDenied("unexpected_content_type")
+                return resp.getcode(), resp.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code in (301, 302, 303, 307, 308):
+                raise ConnectorDenied("redirects_not_followed")
+            body_bytes = exc.read()
+            if len(body_bytes) > MAX_ERROR_BODY_BYTES:
+                body_bytes = body_bytes[:MAX_ERROR_BODY_BYTES]
+            return exc.code, body_bytes
+        except urllib.error.URLError as exc:
+            raise ConnectorDenied("transport_" + str(exc.reason))
+
+    @staticmethod
+    def _verify_response(operation: str, payload: Mapping[str, Any], raw: bytes) -> None:
+        if operation == "read_file":
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise ConnectorDenied("invalid_response")
+            response_ref = data.get("ref") if isinstance(data, dict) else None
+            # Handle both dict and snapshot tuple
+            if isinstance(payload, dict):
+                granted_ref = payload.get("reference") or payload.get("branch")
+            elif isinstance(payload, tuple):
+                granted_ref = None
+                for k, v in payload:
+                    if k == "reference":
+                        granted_ref = v
+                        break
+                    if k == "branch" and granted_ref is None:
+                        granted_ref = v
+            else:
+                granted_ref = None
+            if response_ref is not None and granted_ref is not None:
+                if str(response_ref) != str(granted_ref):
+                    raise ConnectorDenied("reference_mismatch")
+
+    def _path_for(self, operation: str, slots: Mapping[str, str]) -> str:
+        repo = slots.get("repository", "")
+        if operation == "list_workflows":
+            return "/repos/{}/actions/workflows".format(repo)
+        if operation == "dispatch_workflow":
+            return "/repos/{}/actions/workflows/{}/dispatches".format(repo, slots.get("workflow", ""))
+        if operation == "get_run":
+            return "/repos/{}/actions/runs/{}".format(repo, slots.get("run_id", ""))
+        if operation == "get_run_logs":
+            return "/repos/{}/actions/runs/{}/logs".format(repo, slots.get("run_id", ""))
+        if operation == "get_artifacts":
+            return "/repos/{}/actions/runs/{}/artifacts".format(repo, slots.get("run_id", ""))
+        if operation == "cancel_run":
+            return "/repos/{}/actions/runs/{}/cancel".format(repo, slots.get("run_id", ""))
+        if operation == "rerun_workflow":
+            return "/repos/{}/actions/runs/{}/rerun".format(repo, slots.get("run_id", ""))
+        if operation == "list_branches":
+            return "/repos/{}/branches".format(repo)
+        if operation == "get_commit":
+            return "/repos/{}/commits/{}".format(repo, slots.get("sha", ""))
+        if operation == "list_issues":
+            return "/repos/{}/issues".format(repo)
+        if operation == "create_issue":
+            return "/repos/{}/issues".format(repo)
+        if operation == "comment_issue":
+            return "/repos/{}/issues/{}/comments".format(repo, slots.get("issue", ""))
+        if operation == "update_issue":
+            return "/repos/{}/issues/{}".format(repo, slots.get("issue", ""))
+        if operation == "get_pull":
+            return "/repos/{}/pulls/{}".format(repo, slots.get("issue", ""))
+        if operation == "create_branch":
+            return "/repos/{}/git/refs".format(repo)
+        if operation == "create_pull":
+            return "/repos/{}/pulls".format(repo)
+        if operation == "review_pull":
+            return "/repos/{}/pulls/{}/reviews".format(repo, slots.get("issue", ""))
+        if operation == "merge_pull":
+            return "/repos/{}/pulls/{}/merge".format(repo, slots.get("issue", ""))
+        if operation == "put_file":
+            ref = slots.get("reference", slots.get("branch", ""))
+            return "/repos/{}/contents/{}?ref={}".format(repo, slots.get("path", ""), ref)
+        if operation == "read_file":
+            ref = slots.get("reference", slots.get("branch", ""))
+            return "/repos/{}/contents/{}?ref={}".format(repo, slots.get("path", ""), ref)
+        if operation == "create_release":
+            return "/repos/{}/releases".format(repo)
+        return "/"
+
+    _MUTATING = {
+        "dispatch_workflow": "POST",
+        "create_issue": "POST",
+        "comment_issue": "POST",
+        "update_issue": "PATCH",
+        "create_branch": "POST",
+        "put_file": "PUT",
+        "create_pull": "POST",
+        "review_pull": "POST",
+        "merge_pull": "PUT",
+        "rerun_workflow": "POST",
+        "cancel_run": "POST",
+        "create_release": "POST",
+    }
+
     def verify_identity(self, expected_account: str, timeout: float = 10.0,
                         token: Optional[str] = None) -> Tuple[bool, str]:
-        """Verify the account behind the token against the grant's account.
-
-        ``token`` is the credential snapshot for this request; when it is not
-        supplied it is read once here, exactly as the caller would.  A token
-        proves an identity, never write or Shell authorization; a mismatch is
-        reported instead of silently accepted.
-        """
         if token is None:
-            token = self._token_value()
+            token = read_credential(self.token_env)
         if not self.token_env or token is None:
             return False, "configured"
         if not expected_account or not isinstance(expected_account, str):
@@ -205,476 +558,79 @@ class GitHubProvider(RepositoryProvider):
             data = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return False, "invalid_response"
-        if not isinstance(data, dict):
-            return False, "invalid_response"
-        login = data.get("login")
+        login = data.get("login") if isinstance(data, dict) else None
         if not isinstance(login, str) or not login.strip():
             return False, "identity_endpoint_refused"
-        if login != expected_account:
-            return False, "identity_mismatch"
-        return True, "authenticated"
+        if login.strip().lower() == expected_account.strip().lower():
+            return True, "authenticated"
+        return False, "identity_mismatch"
 
-    # -- grants --------------------------------------------------------------
-
-    def audit(self) -> List[Dict[str, Any]]:
-        return list(self._audit)
-
-    def check(self, grant: Grant, operation: str) -> Tuple[bool, str]:
-        problems = grant.validate()
-        if problems:
-            return False, "grant_invalid"
-        return grant.permits(operation, time.time(), self._calls.get(grant.grant_id, 0))
-
-    #: Operations that change remote state use a mutating method by default.
-    _MUTATING = {
-        "create_issue": "POST", "comment_issue": "POST", "update_issue": "PATCH",
-        "create_branch": "POST", "put_file": "PUT", "create_pull": "POST",
-        "review_pull": "POST", "merge_pull": "PUT", "dispatch_workflow": "POST",
-        "rerun_workflow": "POST", "cancel_run": "POST", "configure_workflow": "PUT",
-        "create_release": "POST",
-    }
-
-    def call(self, grant: Grant, operation: str, payload: Optional[Mapping[str, Any]] = None,
-             *, method: Optional[str] = None, path: str = "", body: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-        """Perform one typed, grant-checked operation or raise ConnectorDenied."""
-        if operation not in OPERATION_CAPABILITIES:
-            raise ConnectorDenied("unknown_operation")
-        allowed, reason = self.check(grant, operation)
-        if not allowed:
-            self._deny(grant, operation, reason)
-            raise ConnectorDenied(reason)
-        # The requested repository/reference must be the granted one, and no raw
-        # method/path override may reach the official endpoint (issue #15).
-        if path:
-            raise ConnectorDenied("path_override_refused")
-        try:
-            # The slots returned here are the only values used to build the
-            # request: what was checked is what is sent.
-            slots = check_call(grant, operation, payload or {}, method=method, path=path,
-                               default_method=self._MUTATING.get(operation, "GET"))
-        except ConnectorDenied as exc:
-            self._deny(grant, operation, str(exc))
-            raise
-        # Every write body is validated against this provider's operation
-        # contract before any transport is constructed: the reference that was
-        # checked is the reference that is sent, a key the operation does not
-        # document never reaches the endpoint, and a mandatory reference key
-        # cannot be omitted (N08/N11).
-        try:
-            check_write_body(grant, operation, body or {}, payload or {},
-                             GITHUB_WRITE_BODY_CONTRACTS)
-        except ConnectorDenied as exc:
-            self._deny(grant, operation, str(exc))
-            raise
-        # N12: the validated body becomes an immutable snapshot **here**, before
-        # any authorization request runs, and that exact snapshot is what is
-        # transmitted.  A caller mutating the original mapping afterwards
-        # cannot change what was checked into what is sent.
-        snapshot = _snapshot(body) if body is not None else None
-        # The credential is read **once** for this authorized request and that
-        # exact value is the one fingerprinted, verified and transmitted: a
-        # rotation mid-request cannot make the connector send a credential
-        # that was never verified (F07).
-        token = self._token_value()
-        # A token proves an identity, never write or Shell authorization: the
-        # account behind it must match the grant's account before a request.
-        self._require_account_identity(grant, token)
-        # A run is addressed only after the provider's own metadata confirms it
-        # belongs to the granted workflow (N07).
-        if operation in RUN_OPERATIONS:
-            self._require_run_of_workflow(grant, slots, token)
-        if operation == "create_branch":
-            self._require_branch_source(grant, payload or {}, body or {}, token)
-        # A merge is addressed only after the provider's own metadata confirms
-        # the pull request targets the granted reference (N13).
-        if operation == "merge_pull":
-            self._require_merge_target(grant, slots, token)
-        # The repository-operation ceiling is reserved atomically, before the
-        # repository exchange.  Identity and ownership verification are
-        # authorization traffic with their own bounded budget, and the grant's
-        # ``max_calls`` bounds repository operations (N06).
-        reason = self._reserve_call(grant, operation)
-        if reason:
-            self._deny(grant, operation, reason)
-            raise ConnectorDenied(reason)
-        path = self._path_for(operation, slots)
-        if method is None:
-            method = self._MUTATING.get(operation, "GET")
-        status, raw = self._exchange(operation, method, path, _wire_body(snapshot) or {},
-                                     token)
-        self._verify_response(operation, payload or {}, raw)
-        event_reason = "ok" if status < 300 else "http_" + str(status)
-        # A URL path never enters the audit event: the operation and status
-        # describe the call without naming a repository route.
-        self._audit.append({"at": int(time.time()), "grant": grant.grant_id, "operation": operation,
-                            "path_kind": "official_endpoint", "status": status,
-                            "decision": "allow", "reason": event_reason})
-        if status >= 300:
-            raise ConnectorDenied("http_" + str(status))
-        try:
-            return json.loads(raw.decode("utf-8")) if raw else {}
-        except json.JSONDecodeError:
-            raise ConnectorDenied("invalid_response")
-
-    # -- identity -------------------------------------------------------------
-    def _deny(self, grant: Grant, operation: str, reason: str) -> None:
-        """Record a denial without any repository route."""
-        self._audit.append({"at": int(time.time()), "grant": grant.grant_id,
-                            "operation": operation, "decision": "deny", "reason": reason})
-        if self._ledger is not None:
-            self._ledger.record("connector", grant.grant_id, reason, operation)
-
-    def _token_value(self) -> Optional[str]:
-        """The configured credential, read at request time and never stored."""
-        if not self.token_env:
-            return None
-        value = os.environ.get(self.token_env)
-        return value.strip() if value else None
-
-    @staticmethod
-    def _token_fingerprint(provider: str, token: Optional[str]) -> Optional[str]:
-        """A stable fingerprint of (provider, token), never the token itself."""
-        if not token:
-            return None
-        import hashlib
-
-        return hashlib.sha256(provider.encode("utf-8") + b"\x00" + token.encode("utf-8")).hexdigest()
-
-    def _require_account_identity(self, grant: Grant, token: Optional[str]) -> None:
-        """Verify the account behind the token for this grant.
-
-        A grant names the account it was issued for, and only a credential can
-        prove the account behind a token.  ``token`` is the snapshot this
-        request read once: the same value is verified here and transmitted
-        later, so a credential that was never verified cannot ride out (F07).
-        The remembered identity is the verified **(token fingerprint,
-        account)** pair, so a second grant naming a different account behind
-        the same token is re-verified rather than accepted on the first one's
-        word, and a configured-but-absent credential never passes the guard:
-        there is nothing that could prove the account, so the request is
-        refused.
-        """
-        if not self.token_env:
-            # No credential channel is configured at all: an in-process or
-            # test configuration, which ``connection_state`` reports honestly
-            # as ``disconnected``.  A configured channel is never waved through.
-            return
-        account = getattr(grant, "account", None)
-        if not isinstance(account, str) or not account.strip():
-            raise ConnectorDenied("grant_account_invalid")
-        if token is None:
-            raise ConnectorDenied("credential_missing")
-        identity = (self._token_fingerprint(self.name, token), account.strip())
-        with self._identity_lock:
-            if identity == self._verified_identity:
-                return
-            self._charge_authorization_request()
-            verified, reason = self.verify_identity(account.strip(), token=token)
-            if not verified:
-                raise ConnectorDenied(reason)
-            # Only an actually verified (token, account) pair is remembered.
-            self._verified_identity = identity
-
-    def _require_branch_source(self, grant: Grant, payload: Mapping[str, Any],
-                               body: Mapping[str, Any], token: Optional[str]) -> None:
-        """Bind a branch creation to the granted reference's own head (N08).
-
-        A branch is created **from** the granted reference, so its source must
-        be that reference's head as the provider reports it — trusted
-        metadata, not the caller's claim — and the new branch's target must be
-        a bounded ``refs/heads`` name rather than any other reference form.
-        """
-        reference = str(getattr(grant, "reference", "") or "")
-        target = body.get("ref")
-        if not isinstance(target, str) or len(target) > 128 \
-                or any(ord(character) < 0x20 or ord(character) == 0x7F
-                       for character in target):
-            raise ConnectorDenied("unsafe_body_value")
-        prefix = "refs/heads/"
-        if not target.startswith(prefix):
-            raise ConnectorDenied("unsafe_body_value")
-        # the branch name is a single bounded, path-free segment: a traversing
-        # or multi-segment target is not a branch name
-        name = target[len(prefix):]
-        if not name or len(name) > 64 or "/" in name or name in (".", "..") \
-                or name.strip() != name:
-            raise ConnectorDenied("unsafe_body_value")
-        repository = self._repository(payload)
-        status, raw = self._exchange("get_reference_head", "GET",
-                                     "/repos/{}/git/ref/heads/{}".format(repository,
-                                                                         reference),
-                                     {}, token)
-        if status >= 300:
-            raise ConnectorDenied("reference_head_unavailable")
-        try:
-            data = json.loads(raw.decode("utf-8")) if raw else {}
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ConnectorDenied("invalid_response")
-        head = data.get("object", {}).get("sha") if isinstance(data, dict) else None
-        if not isinstance(head, str) or not head:
-            raise ConnectorDenied("reference_head_unavailable")
-        declared = payload.get("sha")
-        if declared is not None and str(declared) != head:
-            raise ConnectorDenied("reference_not_granted")
-        if str(body.get("sha", "")) != head:
-            raise ConnectorDenied("reference_not_granted")
-
-    def _authorization_context(self, grant: Grant, workflow: str, run_id: str,
-                               token: Optional[str]) -> Tuple[str, ...]:
-        """The complete context an ownership decision belongs to (N07).
-
-        A verified run is evidence **for this grant, on this repository, under
-        this reference, for this account, with this credential**: the cache key
-        carries all of it, so an entry established under one context can never
-        authorize the same run id under another.  The reference comes from the
-        grant, never from the caller's slots.
-        """
-        return (self.name, str(getattr(grant, "repository", "")),
-                str(getattr(grant, "reference", "")),
-                str(getattr(grant, "account", "")),
-                self._token_fingerprint(self.name, token) or "",
-                workflow, run_id)
-
-    def _require_run_of_workflow(self, grant: Grant, slots: Mapping[str, Any],
-                                 token: Optional[str]) -> None:
-        """Establish from trusted metadata that this run belongs to the grant.
-
-        A caller-declared workflow name proves nothing about which run an id
-        names: the run is addressed only after the workflow's **own runs list**
-        - the official endpoint's answer, not the caller's claim - contains
-        the requested id (N07).  Evidence is remembered per complete
-        authorization context, for a bounded time, so a repeated operation on
-        the same run does not re-query while a different context always does.
-        Concurrent lookups of the same context are coalesced under the lock.
-        Missing or malformed evidence refuses.
-        """
-        workflow = str(slots.get("workflow", ""))
-        run_id = str(slots.get("run_id", ""))
-        key = self._authorization_context(grant, workflow, run_id, token)
-        stamp = time.time()
-        with self._run_lock:
-            verified_at = self._verified_runs.get(key)
-            if verified_at is not None and stamp - verified_at < RUN_OWNERSHIP_TTL_SECONDS:
-                return
-            # The lookup runs under the lock, so a concurrent request for the
-            # same context waits and then sees the entry rather than issuing a
-            # duplicate authorization request (N06).
-            self._charge_authorization_request()
-            repository = self._repository(slots)
-            status, raw = self._exchange(
-                "list_workflow_runs", "GET",
-                "/repos/{}/actions/workflows/{}/runs?per_page=100".format(repository,
-                                                                         workflow),
-                {}, token)
-            if status >= 300:
-                raise ConnectorDenied("run_ownership_unavailable")
-            try:
-                data = json.loads(raw.decode("utf-8")) if raw else {}
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                raise ConnectorDenied("invalid_response")
-            runs = data.get("workflow_runs") if isinstance(data, dict) else None
-            if not isinstance(runs, list):
-                raise ConnectorDenied("run_ownership_unavailable")
-            owned = {str(entry.get("id")) for entry in runs if isinstance(entry, dict)}
-            if run_id not in owned:
-                raise ConnectorDenied("run_not_of_workflow")
-            self._verified_runs[key] = time.time()
-            while len(self._verified_runs) > MAX_VERIFIED_RUNS:
-                self._verified_runs.pop(next(iter(self._verified_runs)))
-
-    def _require_merge_target(self, grant: Grant, slots: Mapping[str, Any],
-                              token: Optional[str]) -> None:
-        """Bind a merge to the pull request's own target reference (N13).
-
-        A grant binds a repository and a reference, but a merge is addressed
-        by a numeric id: without this check a pull request targeting another
-        branch could be merged under a grant that never authorized it.  The
-        destination is therefore read from trusted provider metadata - the
-        pull request's own ``base`` - before any merge is issued.
-        """
-        repository = self._repository(slots)
-        issue = str(slots.get("issue", ""))
-        granted_reference = str(getattr(grant, "reference", "") or "")
-        context = ("merge_target", self.name, str(getattr(grant, "repository", "")),
-                   granted_reference, str(getattr(grant, "account", "")),
-                   self._token_fingerprint(self.name, token) or "", issue)
-        stamp = time.time()
-        with self._run_lock:
-            verified_at = self._verified_runs.get(context)
-            if verified_at is not None and stamp - verified_at < RUN_OWNERSHIP_TTL_SECONDS:
-                return
-            self._charge_authorization_request()
-            status, raw = self._exchange("get_pull", "GET",
-                                         "/repos/{}/pulls/{}".format(repository, issue),
-                                         {}, token)
-            if status >= 300:
-                raise ConnectorDenied("merge_target_unavailable")
-            try:
-                data = json.loads(raw.decode("utf-8")) if raw else {}
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                raise ConnectorDenied("invalid_response")
-            base = data.get("base") if isinstance(data, dict) else None
-            target = base.get("ref") if isinstance(base, dict) else None
-            if not isinstance(target, str) or not target:
-                raise ConnectorDenied("merge_target_unavailable")
-            if target != granted_reference:
-                raise ConnectorDenied("reference_not_granted")
-            self._verified_runs[context] = time.time()
-            while len(self._verified_runs) > MAX_VERIFIED_RUNS:
-                self._verified_runs.pop(next(iter(self._verified_runs)))
-
-    def _charge_authorization_request(self) -> None:
-        """Count one authorization request against the instance's bound (N06).
-
-        A bounded cache bounds stored entries, not requests: a flood of identity
-        mismatches or foreign runs would otherwise issue unbounded
-        authorization traffic.  Returns nothing; refuses with a typed reason.
-        """
-        with self._call_lock:
-            self._authorization_requests += 1
-            if self._authorization_requests > MAX_AUTHORIZATION_REQUESTS:
-                raise ConnectorDenied("authorization_traffic_exhausted")
-
-    def _reserve_call(self, grant: Grant, operation: str) -> str:
-        """Atomically verify the grant ceiling and reserve one call slot.
-
-        The check and the increment share one lock, so a burst of concurrent
-        calls cannot pass the ceiling together and discover only afterwards
-        that it was exhausted.  This reserves a **repository operation**:
-        identity and ownership verification are authorization traffic, bounded
-        separately by ``_charge_authorization_request`` (N06).
-        """
-        with self._call_lock:
-            allowed, reason = self.check(grant, operation)
-            if not allowed:
-                return reason
-            self._calls[grant.grant_id] = self._calls.get(grant.grant_id, 0) + 1
-            return ""
-
-    # -- request paths (official endpoints only) -----------------------------
-    @staticmethod
-    def _verify_response(operation: str, payload: Mapping[str, Any], raw: bytes) -> None:
-        """Verify response-level facts where the official API exposes them."""
-        if operation != "read_file":
-            return
-        try:
-            data = json.loads(raw.decode("utf-8")) if raw else {}
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            raise ConnectorDenied("invalid_response")
-        if not isinstance(data, dict):
-            raise ConnectorDenied("invalid_response")
-        reference = payload.get("reference")
-        if reference is None:
-            return
-        ref_found = data.get("ref") or data.get("sha")
-        if ref_found is not None and str(ref_found) != str(reference):
-            raise ConnectorDenied("reference_mismatch")
-
-    def _path_for(self, operation: str, payload: Mapping[str, Any]) -> str:
-        repository = self._repository(payload)
-        issue = str(payload.get("issue", ""))
-        run_id = str(payload.get("run_id", ""))
-        workflow = str(payload.get("workflow", ""))
-        # The reference already passed the grant check: the query string uses
-        # exactly that validated value.
-        reference = str(payload.get("reference", payload.get("branch", "")))
-        paths = {
-            "list_repositories": "/user/repos",
-            "read_file": "/repos/{}/contents/{}".format(repository, payload.get("path", "")),
-            "list_branches": "/repos/{}/branches".format(repository),
-            "get_commit": "/repos/{}/commits/{}".format(repository, payload.get("sha", "")),
-            "list_issues": "/repos/{}/issues".format(repository),
-            "create_issue": "/repos/{}/issues".format(repository),
-            "comment_issue": "/repos/{}/issues/{}/comments".format(repository, issue),
-            "update_issue": "/repos/{}/issues/{}".format(repository, issue),
-            "get_pull": "/repos/{}/pulls/{}".format(repository, issue),
-            "create_branch": "/repos/{}/git/refs".format(repository),
-            "put_file": "/repos/{}/contents/{}".format(repository, payload.get("path", "")),
-            "create_pull": "/repos/{}/pulls".format(repository),
-            "review_pull": "/repos/{}/pulls/{}/reviews".format(repository, issue),
-            "merge_pull": "/repos/{}/pulls/{}/merge".format(repository, issue),
-            "list_workflows": "/repos/{}/actions/workflows".format(repository),
-            "dispatch_workflow": "/repos/{}/actions/workflows/{}/dispatches".format(repository, workflow),
-            "rerun_workflow": "/repos/{}/actions/runs/{}/rerun".format(repository, run_id),
-            "cancel_run": "/repos/{}/actions/runs/{}/cancel".format(repository, run_id),
-            "get_run": "/repos/{}/actions/runs/{}".format(repository, run_id),
-            "get_run_logs": "/repos/{}/actions/runs/{}/logs".format(repository, run_id),
-            "get_artifacts": "/repos/{}/actions/runs/{}/artifacts".format(repository, run_id),
-            "configure_workflow": "/repos/{}/actions/workflows/{}".format(repository, workflow),
-            "create_release": "/repos/{}/releases".format(repository),
-        }
-        if reference and operation in ("read_file", "list_branches"):
-            return paths[operation] + "?ref={}".format(reference)
-        return paths.get(operation, "")
-
-    # -- bounded HTTP --------------------------------------------------------
-    def _account_request(self, timeout: float, token: Optional[str] = None) -> Tuple[int, bytes]:
-        if self._transport is not None:
+    def _account_request(self, timeout: float, token: str) -> Tuple[int, bytes]:
+        if self._transport:
             return self._transport("GET", "/user", {})
-        opener = urllib.request.build_opener(_NoRedirect)
         headers = {"Accept": "application/vnd.github+json",
-                   "User-Agent": "tihulu-boru-core"}
-        if token is None:
-            token = self._token_value()
-        if token:
-            headers["Authorization"] = "Bearer " + token.strip()
-        request = urllib.request.Request(self.base_url + "/user", method="GET", headers=headers)
+                   "Authorization": "Bearer " + token,
+                   "User-Agent": "boru-connector"}
+        req = urllib.request.Request(self._base_url + "/user", headers=headers)
         try:
-            with opener.open(request, timeout=timeout) as response:
-                content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
-                if content_type and content_type not in ("application/json", "text/plain"):
-                    raise ConnectorDenied("unexpected_content_type")
-                return response.status, response.read(512 * 1024)
-        except ConnectorDenied:
-            raise
-        except urllib.error.HTTPError as error:
-            body_bytes = _bounded_read(error, MAX_ERROR_BODY_BYTES)
-            return error.code, body_bytes
-        except urllib.error.URLError:
-            raise ConnectorDenied("endpoint_unavailable")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.getcode(), resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+        except urllib.error.URLError as exc:
+            raise ConnectorDenied("transport_" + str(exc.reason))
 
     @staticmethod
-    def _repository(payload) -> str:
+    def _repository(payload: Mapping[str, Any]) -> str:
         from .scope import RepositoryRef
 
-        return RepositoryRef.parse(str(payload.get("repository", ""))).encoded()
+        return RepositoryRef.parse(str(_payload_get(payload, "repository"))).encoded()
 
-    def _exchange(self, operation: str, method: str, path: str, body: Mapping[str, Any],
-                  token: Optional[str] = None) -> Tuple[int, bytes]:
-        if self._transport is not None:
-            return self._transport(method, path, body)
-        if not self.base_url.lower().startswith("https://") and not self.allow_http_endpoints:
-            raise ConnectorDenied("insecure_endpoint")
-        headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
-                   "User-Agent": "tihulu-boru-core"}
-        if token is None:
-            token = self._token_value()
-        if token:
-            headers["Authorization"] = "Bearer " + token.strip()
-        request = urllib.request.Request(self.base_url + path, method=method,
-                                         data=json.dumps(body).encode("utf-8") if body else None,
-                                         headers=headers)
-        try:
-            opener = urllib.request.build_opener(_NoRedirect)
-            with opener.open(request, timeout=30) as response:
-                content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
-                if content_type and content_type not in ("application/json", "text/plain"):
-                    raise ConnectorDenied("unexpected_content_type")
-                return response.status, response.read(512 * 1024)
-        except urllib.error.HTTPError as error:
-            # An error body is diagnostic, never a payload: keep a bounded
-            # prefix, exactly as the account request does.
-            body_bytes = _bounded_read(error, MAX_ERROR_BODY_BYTES)
-            return error.code, body_bytes
-        except urllib.error.URLError:
-            raise ConnectorDenied("endpoint_unavailable")
 
-    # -- helpers used by tests and callers -----------------------------------
-    def read_only_check(self, operations: Sequence[str]) -> List[str]:
-        """Return the operations a read-only profile must refuse (a guard test)."""
-        from .base import WRITE_OPERATIONS
+# -- Wire body serialization preserving JSON types (N17) ----------------------
 
-        return sorted(set(operations) & WRITE_OPERATIONS)
+# Sentinel to mark arrays in snapshots (distinguishes [] from {})
+class _ArrayMarker(tuple):
+    """Tuple subclass marking a JSON array in the snapshot."""
+    __slots__ = ()
+
+def _wire_body(snapshot: Any, _depth: int = 0) -> Any:
+    """Convert a snapshot back into a dict for transmission, preserving JSON types (N17).
+
+    The snapshot uses _ArrayMarker (from request module) for arrays and plain tuples for mappings.
+    This unambiguously preserves JSON array vs object distinction.
+    """
+    if _depth > 10:
+        return snapshot
+    from .request import _ArrayMarker
+    if isinstance(snapshot, _ArrayMarker):
+        # Array case: convert to list for json.dumps
+        return [_wire_body(item, _depth=_depth + 1) for item in snapshot]
+    if isinstance(snapshot, tuple):
+        if not snapshot:
+            # Empty tuple could be empty mapping or empty legacy array
+            # Since _ArrayMarker is checked first, this is an empty mapping
+            return {}
+        # Check if this is a mapping: all 2-tuples with string keys
+        all_pairs = all(
+            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
+            for item in snapshot
+        )
+        if all_pairs and len(snapshot) > 0:
+            result = {}
+            for key, value in snapshot:
+                result[str(key)] = _wire_body(value, _depth=_depth + 1)
+            return result
+        # Legacy array case (without _ArrayMarker): return as tuple for json.dumps
+        return tuple(_wire_body(item, _depth=_depth + 1) for item in snapshot)
+    return snapshot
+
+
+# -- Constructor sentinel for internal use -----------------------------------
+def _snapshot(value: Any, depth: int = 0) -> Any:
+    """Internal snapshot function (deprecated, use request.snapshot_body/payload)."""
+    from .request import snapshot
+    return snapshot(value, depth=depth)
 
 
 def read_only_denies(provider: GitHubProvider, grant: Grant) -> List[str]:
@@ -685,3 +641,10 @@ def read_only_denies(provider: GitHubProvider, grant: Grant) -> List[str]:
         if not allowed:
             refused.append(operation)
     return refused
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse any redirect: a connector call must never be silently followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ConnectorDenied("redirects_not_followed")

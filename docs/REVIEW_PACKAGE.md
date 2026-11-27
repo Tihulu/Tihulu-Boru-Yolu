@@ -5,7 +5,7 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 
 - Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 - Branch under review: `p1/boru-core-vertical-slice`
-- Code head under review: `785a60a46fe1d5b0e0065201e155fcf882c08043`
+- Code head under review: `7dabbdc6627506ea5dc214f78c21f84a6dbe545a`
   (the head this package describes; the pin must name this revision exactly, or
   every intervening change must live under `docs/` or `harness/` — the F20
   contract in `tests/test_rereview_regressions.py` asserts exactly that, and
@@ -29,7 +29,7 @@ git clone https://github.com/Tihulu/Tihulu-Boru-Yolu.git
 cd Tihulu-Boru-Yolu
 git checkout p1/boru-core-vertical-slice
 python3 scripts/check_project.py     # expected: PASS (30 documents + sample policy invariants)
-python3 -m unittest discover -s tests   # expected: Ran 782 tests ... OK
+python3 -m unittest discover -s tests   # expected: Ran 788 tests ... OK
 PYTHONPATH=. python3 tests/test_review_regressions.py   # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_rereview_regressions.py  # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_review3_regressions.py   # expected: Ran 26 tests ... OK
@@ -40,7 +40,7 @@ python3 -m boru doctor --state-dir local-state   # expected: overall: ok, live_a
 python3 -m boru demo                 # expected: state REVIEW, evidence_class simulated
 ~~~
 
-Observed result on the head commit: **PASS / 782 tests / exit 0** (local run of
+Observed result on the head commit: **PASS / 788 tests / exit 0** (local run of
 `check_project.py`, the full suite, `scripts/evidence.py`, `boru doctor` and
 `boru demo`); the same suite passed in CI on this head (the run recorded for it
 in `harness/build-log.md`). If any of these fail on your run, that is a finding.

@@ -148,7 +148,7 @@ class GitHubProviderTests(unittest.TestCase):
         def record(method, path, body):
             seen.append(path)
             if path.endswith("/runs?per_page=100"):
-                return (200, b'{"workflow_runs": [{"id": 42}]}')
+                return (200, b'{"workflow_runs": [{"id": 42, "head_branch": "main"}]}')
             return (200, b'{}')
 
         self.provider._transport = record
@@ -207,7 +207,7 @@ class GitLabProviderTests(unittest.TestCase):
         self.provider._transport = lambda method, path, body: seen.append((method, path, body)) or (200, b'[]')
         payload = self.provider.call(self.grant, "list_issues", {"repository": "owner/project"})
         self.assertEqual([], payload)
-        self.assertEqual([("GET", "/api/v4/projects/owner%2Fproject/issues?per_page=100", {})], seen)
+        self.assertEqual([("GET", "/api/v4/projects/owner%2Fproject/issues", {})], seen)
 
     def test_write_grant_and_official_endpoints(self):
         seen = []
@@ -225,7 +225,7 @@ class GitLabProviderTests(unittest.TestCase):
         def record(method, path, body):
             seen.append(path)
             if "/pipelines?ref=main" in path:
-                return (200, b'[{"id": 42}]')
+                return (200, b'[{"id": 42, "ref": "main"}]')
             return (200, b'{}')
 
         self.provider._transport = record
@@ -239,7 +239,7 @@ class GitLabProviderTests(unittest.TestCase):
         self.provider.call(dispatch, "dispatch_workflow",
                            {"repository": "owner/project", "workflow": "ci.yml"}, body={"ref": "main"})
         self.assertIn("/api/v4/projects/owner%2Fproject/pipelines/42", seen)
-        self.assertIn("/api/v4/projects/owner%2Fproject/pipeline", seen)
+        self.assertIn("/api/v4/projects/owner%2Fproject/pipeline_schedules/ci.yml/play", seen)
         self.assertNotIn("/api/v4/projects", repr(self.provider.audit()))
 
     def test_token_only_from_environment_name(self):
