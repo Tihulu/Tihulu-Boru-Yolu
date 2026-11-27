@@ -1772,3 +1772,46 @@ Skipped test: `test_doctor.OverallPrecedenceTests.test_all_ok_reads_ok` (CI host
 - **Gate 1 state:** All code-level findings from seventh review remediated. Tests: 791/791 PASS. PR #14 remains draft.
 - **Next action:** Request eighth independent review against exact code commit `1f842a46ff0b42740a00c9df374462a45a08ee94`. Gates 2–5 remain owner actions.
 
+
+---
+
+### 2026-11-27 — Eighth Independent Review: PASS / APPROVE (Gate 1 Closed)
+
+- **Reviewer:** GPT-6.2 Astra (independent)
+- **Code head:** `6346ff9340be4fd8f73441b0120c09a23c05e81f`
+- **Documentation pin:** `6346ff9340be4fd8f73441b0120c09a23c05e81f` (exact match)
+- **CI run:** `45944964745` — PASS (`validate`, 1m35s)
+- **Tests:** 796/796 PASS (local + CI); 3 consecutive local runs green
+
+**Eighth review dispositions (12/12 checklist items satisfied):**
+
+| Finding | Severity | Result |
+|---------|----------|--------|
+| N07 (GitLab workflow) | High | ✅ FIXED — positive ownership via `source` field |
+| N11/N17 (arrays/dispatch) | Medium | ✅ FIXED — `_ArrayMarker` preserves JSON arrays |
+| N12/N15 (canonical snapshots) | High | ✅ FIXED — `_DuplicateKey`/`_InvalidScalar` sentinels |
+| N13 (merge target) | High | ✅ FIXED — no cache, revalidates every request |
+| F15 (HTTP bounds) | Medium | ✅ FIXED — `_read_bounded` streaming reads |
+| N18 (polling atomicity) | Medium | ✅ FIXED — all validation+mutation under lock |
+| N06 (branch-source auth) | Medium | ✅ FIXED — charges auth budget |
+| N05/N16 (polling) | Medium | ✅ CLOSED — raw validation + pre-flight |
+| N10 (regression evidence) | Medium | ✅ FIXED — 5 fail-before/pass-after tests |
+| F20 (revision pin) | Info | ✅ FIXED — exact match, docs-only change |
+
+**Adversarial probes (isolated):**
+- Empty JSON array → `[]` ✅
+- Nested arrays/objects → preserved ✅
+- Canonical reference vs serialization → rejects non-canonical ✅
+- Dispatch input objects → accepted ✅
+- Polling capacity atomicity → deterministic ✅
+- F20 change-and-revert → rejected ✅
+- F20 divergent ancestry → rejected ✅
+
+**Checklist: 12/12 satisfied (100%)**
+
+**Gate 1 state:** CLOSED — PASS
+
+**HOLD gates unchanged:** host auth, OS confinement, live provider, clean machine, independent execution (DNS blocker).
+
+**Next actions (owner):** Gates 2–5 — provider registration/OAuth, disposable-repo pilot, clean-machine M01–M12, license/release approval.
+
