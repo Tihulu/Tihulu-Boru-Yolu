@@ -2155,3 +2155,38 @@ MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
   `tests/test_property_hostile_inputs.py` now runs 9 tests (5 existing + 4 new
   deny-floor properties). MOCK/STATIC only.
 - **Gate 1 state:** remains CLOSED — PASS. PR #14 stays draft.
+
+---
+
+### 2026-11-27 — Console loop hardened; three real defects fixed in `tui.run()` (head on `p1/boru-core-vertical-slice`)
+
+Auditing the one remaining uncovered path in the harness — the optional
+interactive `curses` loop — found three genuine defects in code this project wrote:
+
+1. **Unbounded `interval` (hang/DoS).** `curses.napms(int(interval * 1000))`
+   accepted any number: `interval=10**9` produced a ~31-year sleep, and a
+   negative value let the loop spin. Fixed by `_bounded_interval()`, clamped to
+   `[0.25s, 60s]`, with a non-finite or non-numeric value refused as
+   `PolicyViolation` rather than silently defaulted.
+2. **A failing `view_factory` ended the session.** The call sat inside the loop
+   with no guard, so one bad frame raised out of `curses.wrapper` and dropped the
+   operator to a single fallback print. Fixed by `_frame()`, which renders a
+   bounded "view unavailable" placeholder instead; proven by
+   `test_a_failing_view_factory_does_not_end_the_session`.
+3. **A small terminal crashed the loop.** `stdscr.addstr(0, 0, text[:cols-1])`
+   wrote a *multi-line* frame into a bounded window, which raises `curses.error`
+   once the text runs past the last row. Fixed by writing only the first line,
+   clipped to the width, and by wrapping `addstr`/`refresh`/`getch` so a resize
+   or an undersized terminal never ends the session; proven by
+   `test_a_small_terminal_never_raises_out_of_the_loop`.
+
+Also added: a refused non-callable `view_factory` (typed failure, not an
+AttributeError from inside curses) and `curs_set` guarded so a terminal without
+cursor control does not raise.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **854 tests OK**
+(846 + 8 new in `tests/test_harness.py::HarnessConsoleLoopTests`, which exercises
+the loop through an injected fake `curses` so a headless CI host proves the same
+behaviour a real terminal would show); `scripts/check_project.py` PASS;
+`python3 -m compileall -q boru` clean. MOCK/STATIC only. Gate 1 remains CLOSED —
+PASS; PR #14 stays draft.

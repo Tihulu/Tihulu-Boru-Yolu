@@ -21,6 +21,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from ..errors import PolicyViolation
+
 #: A rendered view is a small, bounded document.
 MAX_TITLE = 64
 MAX_NOTE = 160
@@ -242,40 +244,84 @@ def render(view: HarnessSnapshot) -> str:
     return "\n".join(lines)
 
 
-def run(view_factory, *, once: bool = False, interval: float = 2.0) -> int:
+#: The refresh interval is bounded so a caller cannot turn the console into a
+#: hang or a busy loop.
+MIN_INTERVAL_SECONDS = 0.25
+MAX_INTERVAL_SECONDS = 60.0
+DEFAULT_INTERVAL_SECONDS = 2.0
+
+
+def _bounded_interval(interval: Any) -> float:
+    """A bounded, finite refresh interval; anything else fails closed to typed."""
+    if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+        raise PolicyViolation("interval must be a number")
+    if interval != interval or interval in (float("inf"), float("-inf")):
+        raise PolicyViolation("interval must be finite")
+    return min(MAX_INTERVAL_SECONDS, max(MIN_INTERVAL_SECONDS, float(interval)))
+
+
+def run(view_factory, *, once: bool = False, interval: float = DEFAULT_INTERVAL_SECONDS) -> int:
     """Optional interactive loop. Disabled by default; ``once`` renders one frame.
 
     ``view_factory`` is a zero-arg callable returning a :class:`HarnessSnapshot`.
     The interactive path uses stdlib ``curses`` and is skipped gracefully on a
     headless host. It performs no I/O beyond the terminal and releases nothing.
+
+    Bounded and fail-soft: ``interval`` is clamped, a failing ``view_factory``
+    renders nothing for that frame instead of ending the session, and a terminal
+    too small for the frame never raises out of the loop.
     """
+    if not callable(view_factory):
+        raise PolicyViolation("view_factory must be callable")
+    delay = _bounded_interval(interval)
+
+    def _frame() -> str:
+        try:
+            return render(view_factory())
+        except Exception:
+            # A bad frame must never end an owner's observability session.
+            return "Boru Harness - view unavailable"
+
     if once:
-        print(render(view_factory()))
+        print(_frame())
         return 0
     try:
         import curses
     except Exception:
-        print(render(view_factory()))
+        print(_frame())
         return 0
 
     def _loop(stdscr):
-        curses.curs_set(0)
+        try:
+            curses.curs_set(0)
+        except Exception:
+            pass
         stdscr.nodelay(True)
         while True:
             stdscr.erase()
-            text = render(view_factory())
+            text = _frame()
             cols = getattr(curses, "COLS", 0) or 0
-            stdscr.addstr(0, 0, text[: cols - 1] if cols > 1 else "")
-            stdscr.refresh()
-            key = stdscr.getch()
+            # Only the first line of the frame, clipped to the terminal width:
+            # a multi-line frame written into a small window raises curses.error.
+            line = text.splitlines()[0] if text else ""
+            try:
+                stdscr.addstr(0, 0, line[: cols - 1] if cols > 1 else "")
+                stdscr.refresh()
+            except Exception:
+                # A resize or an undersized terminal must not end the session.
+                pass
+            try:
+                key = stdscr.getch()
+            except Exception:
+                key = -1
             if key in (ord("q"), ord("Q")):
                 break
-            curses.napms(int(interval * 1000))
+            curses.napms(int(delay * 1000))
 
     try:
         curses.wrapper(_loop)
     except Exception:
-        print(render(view_factory()))
+        print(_frame())
     return 0
 
 

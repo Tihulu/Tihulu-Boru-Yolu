@@ -289,6 +289,142 @@ class HarnessCoreWiringTests(unittest.TestCase):
         self.assertEqual(0, dict(view.budget)["ledger_denials"])
 
 
+class HarnessConsoleLoopTests(unittest.TestCase):
+    """The optional interactive loop is bounded, fail-soft and quits cleanly.
+
+    The loop is exercised with an injected fake ``curses`` so a headless CI host
+    can prove the behaviour a real terminal would show.
+    """
+
+    def _fake_curses(self, keys):
+        import types
+        fake = types.ModuleType("curses")
+        fake.COLS = 200
+        fake.curs_set = lambda *_: None
+        fake.napms = lambda *_: None
+        sequence = list(keys)
+
+        class _Screen:
+            def erase(self):
+                pass
+
+            def nodelay(self, flag):
+                pass
+
+            def addstr(self, y, x, text):
+                pass
+
+            def refresh(self):
+                pass
+
+            def getch(self):
+                return sequence.pop(0) if sequence else -1
+
+        fake.wrapper = lambda fn: fn(_Screen())
+        return fake
+
+    def _factory(self):
+        from boru.harness import tui
+        return lambda: tui.snapshot(policy_state={"optimization_mode": "AUTO"})
+
+    def test_once_renders_one_frame_and_returns_zero(self):
+        import io, contextlib
+        from boru.harness import tui
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = tui.run(self._factory(), once=True)
+        self.assertEqual(0, code)
+        self.assertIn("read-only observability", out.getvalue())
+
+    def test_quit_key_ends_the_loop(self):
+        import sys
+        from boru.harness import tui
+        fake = self._fake_curses([ord("q")])
+        sys.modules["curses"] = fake
+        try:
+            self.assertEqual(0, tui.run(self._factory()))
+        finally:
+            sys.modules.pop("curses", None)
+
+    def test_uppercase_quit_key_ends_the_loop(self):
+        import sys
+        from boru.harness import tui
+        fake = self._fake_curses([ord("Q")])
+        sys.modules["curses"] = fake
+        try:
+            self.assertEqual(0, tui.run(self._factory()))
+        finally:
+            sys.modules.pop("curses", None)
+
+    def test_a_failing_view_factory_does_not_end_the_session(self):
+        import sys
+        from boru.harness import tui
+        fake = self._fake_curses([-1, ord("q")])
+        sys.modules["curses"] = fake
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("one bad frame")
+            return tui.snapshot()
+
+        try:
+            self.assertEqual(0, tui.run(flaky))
+        finally:
+            sys.modules.pop("curses", None)
+        self.assertGreaterEqual(calls["n"], 1)
+
+    def test_a_small_terminal_never_raises_out_of_the_loop(self):
+        import sys, types
+        from boru.harness import tui
+        fake = self._fake_curses([ord("q")])
+        fake.COLS = 4  # far narrower than any frame
+
+        class _Tiny:
+            def erase(self):
+                pass
+
+            def nodelay(self, flag):
+                pass
+
+            def addstr(self, y, x, text):
+                if len(text) > 3:
+                    raise RuntimeError("addstr overflow")
+
+            def refresh(self):
+                pass
+
+            def getch(self):
+                return ord("q")
+
+        fake.wrapper = lambda fn: fn(_Tiny())
+        sys.modules["curses"] = fake
+        try:
+            self.assertEqual(0, tui.run(self._factory()))
+        finally:
+            sys.modules.pop("curses", None)
+
+    def test_an_unbounded_interval_is_clamped(self):
+        from boru.harness import tui
+        self.assertEqual(tui.MAX_INTERVAL_SECONDS, tui._bounded_interval(10 ** 9))
+        self.assertEqual(tui.MIN_INTERVAL_SECONDS, tui._bounded_interval(-5))
+        self.assertEqual(2.0, tui._bounded_interval(2.0))
+
+    def test_a_non_finite_or_non_numeric_interval_is_refused(self):
+        from boru.errors import PolicyViolation
+        from boru.harness import tui
+        for bad in (True, "2", None, float("inf"), float("nan")):
+            with self.assertRaises(PolicyViolation):
+                tui._bounded_interval(bad)
+
+    def test_a_non_callable_factory_is_refused(self):
+        from boru.errors import PolicyViolation
+        from boru.harness import tui
+        with self.assertRaises(PolicyViolation):
+            tui.run("not-callable", once=True)
+
+
 class ClaimVerificationTests(unittest.TestCase):
     """The post-hoc claim audit reports defects and repairs nothing."""
 
