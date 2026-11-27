@@ -406,6 +406,63 @@ class N06AuthorizationTrafficTests(unittest.TestCase):
             self.assertEqual(1, len(lookups))
             self.assertEqual(6 * ["allow"], results)
 
+    def test_n06_branch_source_lookup_charged_to_auth_budget(self):
+        # create_branch must charge the authorization budget for the
+        # reference-head lookup (N06). Exhausting the budget must refuse
+        # the branch creation before any transport is attempted.
+        from boru.connectors.github import MAX_AUTHORIZATION_REQUESTS
+        from boru.connectors.base import Grant, Capability
+        import time
+
+        calls = []
+
+        def transport(method, path, body):
+            calls.append((method, path))
+            if path == "/user":
+                return 200, json.dumps({"login": "owner"}).encode()
+            if "/git/ref/heads/main" in path:
+                # Return the head sha for the granted reference "main"
+                return 200, json.dumps({"object": {"sha": "a" * 40}}).encode()
+            if "/git/refs" in path and method == "POST":
+                return 200, json.dumps({"ref": "refs/heads/new-branch"}).encode()
+            return 200, b"{}"
+
+        provider = GitHubProvider(transport=transport)
+        # Grant with max_calls=10 to limit repository operations,
+        # but auth budget is separate (MAX_AUTHORIZATION_REQUESTS)
+        subject = connector_grant(
+            repository="owner/repo",
+            reference="main",
+            operations=("create_branch",),
+            capabilities=(Capability.CODE_PR_WRITE,),
+            max_calls=10,
+        )
+
+        # First, verify the call succeeds and charges the auth budget
+        # The sha in body must match the reference head (which is "a"*40)
+        payload = provider.call(subject, "create_branch",
+                                {"repository": "owner/repo",
+                                 "ref": "refs/heads/new-branch",
+                                 "sha": "a" * 40},
+                                {"ref": "refs/heads/new-branch", "sha": "a" * 40})
+        self.assertIn("refs/heads/new-branch", str(payload))
+
+        # The auth budget should have been charged once for the branch-source lookup
+        self.assertGreaterEqual(provider._auth_budget.count, 1)
+
+        # Now exhaust the auth budget by directly charging it
+        while provider._auth_budget.charge() is None:
+            pass
+
+        # Next create_branch should be refused due to auth budget exhaustion
+        with self.assertRaises(ConnectorDenied) as raised:
+            provider.call(subject, "create_branch",
+                          {"repository": "owner/repo",
+                           "ref": "refs/heads/new-branch-2",
+                           "sha": "a" * 40},
+                          {"ref": "refs/heads/new-branch-2", "sha": "a" * 40})
+        self.assertEqual("authorization_traffic_exhausted", str(raised.exception))
+
 
 class N05StrictValidationTests(unittest.TestCase):
     """N05: one strict event-id validator, on every path."""
@@ -477,6 +534,50 @@ class N12BodySnapshotTests(unittest.TestCase):
         self.assertEqual([("POST", "/repos/owner/repo/pulls",
                            {"title": "synthetic", "head": "feature", "base": "main"})],
                          self.seen)
+
+    def test_n15_validated_slots_does_not_reread_caller_mapping(self):
+        # validated_slots() must extract all slot values from the snapshot
+        # passed to check_call, not re-read the caller's original mapping
+        # after authorization has begun. A mutable mapping that changes
+        # during authorization must not affect the validated slots.
+        from boru.connectors.scope import check_call, validated_slots
+        from boru.connectors.base import Grant, Capability
+        import time
+
+        grant = connector_grant(
+            grant_id="test_n15",
+            repository="owner/repo",
+            reference="main",
+            operations=("create_branch",),
+            capabilities=(Capability.CODE_PR_WRITE,),
+            max_calls=64,
+            issued_at=time.time(),
+            expires_at=time.time() + 600,
+            workflow_ids=()
+        )
+
+        # Original payload with correct reference
+        payload = {"repository": "owner/repo", "reference": "main",
+                   "ref": "refs/heads/feature", "sha": "a" * 40}
+
+        # First validate - this snapshots the payload
+        slots = check_call(grant, "create_branch", payload, method=None, path="",
+                           default_method="POST")
+        # check_call returns validated slots from the snapshot
+        self.assertEqual("owner/repo", slots["repository"])
+        self.assertEqual("main", slots["reference"])
+        self.assertEqual("a" * 40, slots["sha"])
+
+        # Now mutate the original payload
+        payload["repository"] = "other/repo"
+        payload["reference"] = "develop"
+        payload["sha"] = "b" * 40
+
+        # The slots returned by check_call were from the snapshot,
+        # not the mutated values
+        self.assertEqual("owner/repo", slots["repository"])
+        self.assertEqual("main", slots["reference"])
+        self.assertEqual("a" * 40, slots["sha"])
 
 
 class N13MergeTargetTests(unittest.TestCase):
@@ -579,6 +680,46 @@ class N14ResourceMismatchTests(unittest.TestCase):
         self.assertNotIn(
             ("PUT", "/api/v4/projects/owner%2Fproject/pipeline_schedules/ci.yml"),
             self.paths)
+
+    def test_n17_json_array_preserved_in_transmission(self):
+        # _wire_body must preserve JSON arrays (not convert to objects)
+        # and empty arrays must serialize to [], not {}
+        from boru.connectors.request import snapshot
+        from boru.connectors.github import _wire_body
+        import json
+
+        # Empty array
+        snap = snapshot([])
+        wire = _wire_body(snap)
+        self.assertEqual([], wire, "empty array must serialize to []")
+        self.assertEqual("[]", json.dumps(wire))
+
+        # String array
+        snap = snapshot(["a", "b", "c"])
+        wire = _wire_body(snap)
+        self.assertEqual(["a", "b", "c"], wire)
+        self.assertEqual('["a", "b", "c"]', json.dumps(wire))
+
+        # Array of objects
+        snap = snapshot([{"name": "v1"}, {"name": "v2"}])
+        wire = _wire_body(snap)
+        self.assertEqual([{"name": "v1"}, {"name": "v2"}], wire)
+        self.assertEqual('[{"name": "v1"}, {"name": "v2"}]', json.dumps(wire))
+
+        # Nested: object with array field
+        snap = snapshot({"items": ["a", "b"], "tags": [{"name": "v1"}]})
+        wire = _wire_body(snap)
+        self.assertEqual({"items": ["a", "b"], "tags": [{"name": "v1"}]}, wire)
+        self.assertEqual('{"items": ["a", "b"], "tags": [{"name": "v1"}]}', json.dumps(wire))
+
+        # GitLab too
+        from boru.connectors.gitlab import _wire_body as gl_wire_body
+        snap = snapshot([])
+        wire = gl_wire_body(snap)
+        self.assertEqual([], wire, "GitLab empty array must serialize to []")
+        snap = snapshot(["source_branch"])
+        wire = gl_wire_body(snap)
+        self.assertEqual(["source_branch"], wire)
 
 
 class F20RevisionContractTests(unittest.TestCase):
