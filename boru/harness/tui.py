@@ -1,4 +1,4 @@
-"""Read-only local observability console for Boru Core (ADR 0005).
+"""Read-only local observability console for Boru Core (ADR 0006).
 
 Design references: OpenHawk's HawkEye TUI and LEO's ``leo tui``. This is the
 opposite of an authorization surface: it **renders** the state Boru Core already

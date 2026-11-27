@@ -71,6 +71,11 @@ in `harness/build-log.md`). If any of these fail on your run, that is a finding.
 | 17 | Typed contracts | `boru/types.py` | [link](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/boru/types.py) |
 | 18 | Orchestrator | `boru/core.py` | [link](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/boru/core.py) |
 | 19 | Durable state store | `boru/store.py` | [link](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/boru/store.py) |
+| 20 | Harness: command deny floor | `boru/harness/shell_policy.py` | [link](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/boru/harness/shell_policy.py) |
+| 21 | Harness: read-only observability | `boru/harness/tui.py` | [link](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/boru/harness/tui.py) |
+| 22 | Harness: post-hoc claim audit | `boru/harness/verify.py` | [link](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/boru/harness/verify.py) |
+| 23 | Harness: interactive owner review | `boru/harness/review.py` | [link](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/boru/harness/review.py) |
+| 24 | Harness architecture decision | `docs/ADRS/0006-harness-and-observability.md` | [link](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/docs/ADRS/0006-harness-and-observability.md) |
 
 ## 3. Invariant checklist (each with its test)
 

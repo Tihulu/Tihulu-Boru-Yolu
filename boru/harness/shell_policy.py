@@ -1,4 +1,4 @@
-"""Fail-closed command deny floor for the sandbox decision layer (ADR 0005).
+"""Fail-closed command deny floor for the sandbox decision layer (ADR 0006).
 
 `SandboxBroker.authorize()` decides whether a cloud-directed
 ``run_synthetic_command`` is permitted, but the sandbox itself is a *decision*

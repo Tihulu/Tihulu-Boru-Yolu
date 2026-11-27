@@ -1,4 +1,4 @@
-"""Interactive owner-review console for tasks awaiting a decision (ADR 0005).
+"""Interactive owner-review console for tasks awaiting a decision (ADR 0006).
 
 Design reference: LEO's approval gates. Boru already authorizes a review through
 `BoruCore.review(task_id, accept=...)`, and `boru queue` / `boru review` already

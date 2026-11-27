@@ -1818,10 +1818,10 @@ Skipped test: `test_doctor.OverallPrecedenceTests.test_all_ok_reads_ok` (CI host
 
 ---
 
-### 2026-11-27 — Native Boru Harness & Observability slice integrated (ADR 0005)
+### 2026-11-27 — Native Boru Harness & Observability slice integrated (ADR 0006)
 
 **Evaluation.** Three external projects were reviewed for adoption instead of
-reinvention, recorded in `docs/ADRS/0005-harness-and-observability.md`:
+reinvention, recorded in `docs/ADRS/0006-harness-and-observability.md`:
 
 1. `OrcunSamiTandogan/agent-orchestration-setup` — a desktop launcher bound to
    the Turkish e-Devlet **EVREN** identity service and NVIDIA/DeepSeek
@@ -1851,7 +1851,7 @@ the broker and the sandbox.
 | `boru/harness/shell_policy.py` | Pure, fail-closed **command deny floor** for the `run_synthetic_command` decision (LEO `deny_commands` + OpenHawk manifest idea). Never executes anything. |
 | `boru/harness/tui.py` | **Read-only** live observability over a pure, bounded, secret-free `snapshot()` (OpenHawk HawkEye / LEO `leo tui` pattern). No network listener, no third-party dependency. |
 | `boru/cli.py` | `boru harness view --once` and `boru harness policy-check --command-string ...` |
-| `docs/ADRS/0005-harness-and-observability.md` | The recorded evaluation and decision |
+| `docs/ADRS/0006-harness-and-observability.md` | The recorded evaluation and decision |
 
 **Security notes.**
 - A real defect was found and fixed during integration: the deny floor first
@@ -1925,7 +1925,7 @@ counts). MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
 
 ---
 
-### 2026-11-27 — Claim verification slice: `boru harness verify` (ADR 0005, third slice)
+### 2026-11-27 — Claim verification slice: `boru harness verify` (ADR 0006, third slice)
 
 Boru enforces its invariants *at transition time*. The third harness slice adds
 the complementary **post-hoc** check an owner asks later: "does the durable state
@@ -1953,7 +1953,7 @@ clean state. MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draf
 
 ---
 
-### 2026-11-27 — Interactive owner-review console: `boru harness review` (ADR 0005, slice 4)
+### 2026-11-27 — Interactive owner-review console: `boru harness review` (ADR 0006, slice 4)
 
 Boru already authorizes a review through `BoruCore.review()` and already exposes
 it as `boru queue` / `boru review` — one CLI invocation per decision. This slice
@@ -1988,3 +1988,24 @@ mutation to roll back; building it now would be speculative infrastructure.
 `boru harness review` on a clean state prints `no task awaits review` and
 `{"accepted": 0, "rejected": 0}`. MOCK/STATIC only. Gate 1 remains CLOSED — PASS;
 PR #14 stays draft.
+
+---
+
+### 2026-11-27 — Review-console head pushed and CI green (head `31c5d24`, run `45980442537`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`): `190a6e8..31c5d24`. Re-verified from the coordinator side with `git ls-remote` → remote head `31c5d24980bf62e41d7bc42215aa3d46682416cd`, identical to local.
+- **CI verified:** run `45980442537` on head `31c5d24` concluded **success** (`validate`, 1m35s), re-read directly from `gh run view`. Only a non-blocking Node.js 20 deprecation annotation.
+- **Code head under review:** `22475d24c387e7f936cfd5e52f3c26fcf32a280d` (the review-console commit); `31c5d24` is its documents-only re-pin family (`docs/REVIEW_PACKAGE.md` pin advanced to the full 40-char SHA and the 838-test set with the new `harness verify` / `harness review` commands) — the documentation-only path set the F20 contract allows.
+- **Local verification on this head:** `unittest discover -s tests` **838 tests OK**; `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean; `boru harness review` on a clean state prints `no task awaits review` and `{"accepted": 0, "rejected": 0}`. MOCK/STATIC only.
+- **Harness slice 4 complete.** The ADR 0006 scope is now delivered in full:
+  `shell_policy` (deny floor), `tui` (read-only observability wired to real Core
+  state), `verify` (post-hoc claim audit), `review` (interactive owner-review
+  console). Each is optional, disabled by default, and adds no authorization
+  surface; every restricted decision still routes through Core/broker/sandbox.
+- **Deliberately out of scope and recorded as such:** CoW snapshot/undo (there is
+  no local mutation path to roll back yet — the executor is read-only and the
+  sandbox is a decision layer), and any optional executor adapter to an external
+  agent framework (needs Gate 2+ live-provider acceptance and a new dependency
+  decision). Building either now would be speculative infrastructure.
+- **Gate 1 state:** remains CLOSED — PASS. PR #14 stays draft; nothing is merged or released and no HOLD gate was touched.
+- **Next action:** none required. Future harness work needs its own ADR and acceptance gate.

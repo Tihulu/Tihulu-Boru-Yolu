@@ -1,4 +1,4 @@
-"""Post-hoc claim verification for durable Boru state (ADR 0005).
+"""Post-hoc claim verification for durable Boru state (ADR 0006).
 
 Design reference: OpenHawk's ``claimcheck`` ("did the agent actually write the
 files it claimed?") and LEO's audited approvals. Boru already enforces its

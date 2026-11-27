@@ -408,7 +408,7 @@ def _harness(args) -> int:
 
     Neither action is an authorization decision: ``view`` renders state Boru
     Core already holds and releases nothing; ``policy-check`` reports the
-    fail-closed command floor without executing anything (ADR 0005).
+    fail-closed command floor without executing anything (ADR 0006).
     """
     if args.action == "policy-check":
         from .harness import shell_policy

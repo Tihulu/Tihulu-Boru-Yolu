@@ -1,4 +1,4 @@
-# ADR 0005 — Native Boru Harness & Observability (evaluation-driven)
+# ADR 0006 — Native Boru Harness & Observability (evaluation-driven)
 
 - Status: accepted (design + first vertical slice)
 - Date: 2026-11-27

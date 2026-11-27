@@ -1,4 +1,4 @@
-"""Negative regression tests for the Boru Harness slice (ADR 0005).
+"""Negative regression tests for the Boru Harness slice (ADR 0006).
 
 The harness is optional, disabled-by-default and read-only. These tests prove
 the two shipped primitives fail closed and never leak:
