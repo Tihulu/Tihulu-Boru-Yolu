@@ -5,7 +5,7 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 
 - Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 - Branch under review: `p1/boru-core-vertical-slice`
-- Code head under review: `22475d24c387e7f936cfd5e52f3c26fcf32a280d`
+- Code head under review: `9a8e7096503c935db2db2efe115d910b16c1a8ef`
   (the head this package describes; the pin must name this revision exactly, or
   every intervening change must live under `docs/` or `harness/` — the F20
   contract in `tests/test_rereview_regressions.py` asserts exactly that, and
