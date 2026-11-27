@@ -2256,3 +2256,41 @@ docstring reference — the bug class is closed in the package.
 **Tests observed:** `python3 -m unittest discover -s tests` → **860 tests OK**
 (858 + 2); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
 MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-27 — Mapping-read head pushed and CI green (head `b6f5b00`, run `46032289202`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`):
+  `359b348..b6f5b00`. Re-verified from the coordinator side with `git ls-remote` →
+  remote head `b6f5b007b10fddf14067f51d74aa02411cf59e02`, identical to local.
+- **CI verified:** run `46032289202` on head `b6f5b00` concluded **success**
+  (`validate`, 1m32s), re-read directly from `gh run view`.
+- **Code head under review:** `5195c0ba1c8c71bbd4f4829385d97262fe823c73`;
+  `b6f5b00` is its documents-only re-pin family (`docs/REVIEW_PACKAGE.md`).
+- **Local verification:** `unittest discover -s tests` **860 tests OK**;
+  `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean;
+  `boru harness view --once`, `harness policy-check`, `harness verify --json`
+  and `harness review` all behave as documented. MOCK/STATIC only.
+- **Gate 1 state:** remains CLOSED — PASS. PR #14 stays draft; nothing merged or
+  released; no HOLD gate touched.
+
+**Autonomous-audit tally for this session (code this project wrote, attacked
+rather than assumed correct):**
+
+| # | Defect | Class | Fix |
+|---|--------|-------|-----|
+| 1 | 12 host-denial/clobber commands passed the deny floor | authorization bypass | `HARDLINE_DENY` +10 patterns, paired matrix clean |
+| 2 | Unbounded `interval` in the console loop (~31-year sleep / spin) | DoS | clamped to `[0.25s, 60s]`, typed refusal |
+| 3 | A failing `view_factory` ended the observability session | availability | bounded placeholder frame |
+| 4 | A multi-line frame written into a small terminal raised `curses.error` | crash | first line only, clipped; guarded writes |
+| 5 | `Mapping`-shaped task records emitted a false `success_without_evidence` | false finding | duck-typed `_field()` |
+| 6 | `Mapping`-shaped listing rows emitted a false `unknown_task_state` | false finding | same `_field()` |
+| 7 | The audit reported the raw `task_id`, so a hostile id laundered a path | disclosure | `boru.audit.sanitize_identifier` |
+| 8 | Harness ADR filed under a duplicate number (`0005` taken) | traceability | renamed to `0006`, all refs updated |
+
+**Verified with no defect found** (negative evidence, recorded): the
+`boru.audit` sanitizer against 16 hostile subjects; the deny floor against 30,000
+ordinary commands (0 false positives); the regexes against pathological input
+(0.002s worst case, no catastrophic backtracking); the property invariant
+(typed outcome and deterministic answer on ~1,300 hostile commands).
