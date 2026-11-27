@@ -551,6 +551,78 @@ def checked_kinds(report):
     return [kind for kind, _ in report.findings]
 
 
+class ClaimVerificationMappingTests(unittest.TestCase):
+    """The audit reads any Mapping-shaped record, never emitting a false finding.
+
+    A security tool that cries wolf is its own harm: a legitimate
+    `MappingProxyType` (or any non-dict mapping) carrying real evidence must not
+    be reported as an unbacked success. The store returns plain dicts, but the
+    audit must not key its read on ``isinstance(x, dict)``.
+    """
+
+    def test_mapping_shaped_evidence_is_not_a_false_finding(self):
+        from types import MappingProxyType
+        from boru.harness import verify
+        core = type("C", (), {})()
+        core.store = type("S", (), {})()
+        core.store.by_state = lambda states: [{"task_id": "t-1", "state": "DONE"}]
+        core.store.get = lambda tid: MappingProxyType({
+            "task_id": tid, "state": "DONE",
+            "attempts": [{"provider": "mock"}],
+            "events": [{"reason": "sandbox_unavailable"}]})
+        core.audit = type("A", (), {})()
+        core.audit.recent = lambda limit=64: []
+        core.audit.count = lambda: 0
+        report = verify.verify_core(core)
+        self.assertTrue(report.ok, [(k, s) for k, s in report.findings])
+        self.assertEqual((), report.findings)
+
+    def test_mapping_shaped_failure_with_a_reason_is_not_a_false_finding(self):
+        from types import MappingProxyType
+        from boru.harness import verify
+        core = type("C", (), {})()
+        core.store = type("S", (), {})()
+        core.store.by_state = lambda states: [{"task_id": "t-2", "state": "FAILED"}]
+        core.store.get = lambda tid: MappingProxyType({
+            "task_id": tid, "state": "FAILED", "attempts": [],
+            "events": [{"reason": "sandbox_unavailable"}]})
+        core.audit = type("A", (), {})()
+        core.audit.recent = lambda limit=64: []
+        core.audit.count = lambda: 0
+        report = verify.verify_core(core)
+        self.assertTrue(report.ok, [(k, s) for k, s in report.findings])
+
+    def test_a_genuinely_unbacked_success_is_still_reported(self):
+        from types import MappingProxyType
+        from boru.harness import verify
+        core = type("C", (), {})()
+        core.store = type("S", (), {})()
+        core.store.by_state = lambda states: [{"task_id": "t-3", "state": "DONE"}]
+        core.store.get = lambda tid: MappingProxyType({
+            "task_id": tid, "state": "DONE", "attempts": [], "events": []})
+        core.audit = type("A", (), {})()
+        core.audit.recent = lambda limit=64: []
+        core.audit.count = lambda: 0
+        report = verify.verify_core(core)
+        self.assertFalse(report.ok)
+        kinds = [kind for kind, _ in report.findings]
+        self.assertIn("success_without_evidence", kinds)
+
+    def test_a_none_record_reads_as_absent_and_is_reported(self):
+        from boru.harness import verify
+        core = type("C", (), {})()
+        core.store = type("S", (), {})()
+        core.store.by_state = lambda states: [{"task_id": "t-4", "state": "DONE"}]
+        core.store.get = lambda tid: None
+        core.audit = type("A", (), {})()
+        core.audit.recent = lambda limit=64: []
+        core.audit.count = lambda: 0
+        report = verify.verify_core(core)
+        self.assertFalse(report.ok)
+        kinds = [kind for kind, _ in report.findings]
+        self.assertIn("success_without_evidence", kinds)
+
+
 class InteractiveReviewConsoleTests(unittest.TestCase):
     """The review console is fail-closed and routes every decision through Core."""
 

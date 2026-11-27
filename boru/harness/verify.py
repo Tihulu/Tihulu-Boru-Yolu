@@ -88,20 +88,37 @@ def _known_state(state: Any) -> bool:
     return isinstance(state, str) and state in KNOWN_STATES
 
 
+def _field(record: Any, key: str) -> Any:
+    """Read one field from a record, duck-typed.
+
+    The store returns plain dicts, but any ``Mapping``-shaped evidence (a
+    `MappingProxyType`, a row wrapper, a test double) must be read the same way:
+    keying the result on ``isinstance(x, dict)`` would treat a legitimate mapping
+    as empty and emit a **false finding**, which is its own harm in a security
+    audit. A ``None`` record reads as absent.
+    """
+    if record is None:
+        return None
+    getter = getattr(record, "get", None)
+    if callable(getter):
+        return getter(key)
+    return None
+
+
+def _entries(value: Any, limit: int) -> List[Any]:
+    """A bounded sequence of entries, or an empty list."""
+    if isinstance(value, (list, tuple)):
+        return list(value)[:limit]
+    return []
+
+
 def _has_attempt(task: Any) -> bool:
-    attempts = getattr(task, "get", lambda _k, _d=None: None)("attempts") \
-        if isinstance(task, dict) else None
-    if isinstance(attempts, (list, tuple)):
-        return len(list(attempts)[:MAX_ATTEMPTS]) > 0
-    return False
+    return len(_entries(_field(task, "attempts"), MAX_ATTEMPTS)) > 0
 
 
 def _has_reason(task: Any) -> bool:
-    events = task.get("events") if isinstance(task, dict) else None
-    if not isinstance(events, (list, tuple)):
-        return False
-    for event in list(events)[:MAX_EVENTS]:
-        reason = event.get("reason") if isinstance(event, dict) else None
+    for event in _entries(_field(task, "events"), MAX_EVENTS):
+        reason = _field(event, "reason")
         if isinstance(reason, str) and reason.strip():
             return True
     return False
@@ -109,7 +126,7 @@ def _has_reason(task: Any) -> bool:
 
 def _ledger_row_is_unsafe(row: Any) -> bool:
     """A ledger row is safe only when it carries a bounded, sanitized subject."""
-    subject = row.get("subject") if isinstance(row, dict) else None
+    subject = _field(row, "subject")
     if not isinstance(subject, str) or not subject.strip():
         return True
     for character in ("/", "\\", ":", "@", "%"):

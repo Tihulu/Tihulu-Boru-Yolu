@@ -2190,3 +2190,31 @@ the loop through an injected fake `curses` so a headless CI host proves the same
 behaviour a real terminal would show); `scripts/check_project.py` PASS;
 `python3 -m compileall -q boru` clean. MOCK/STATIC only. Gate 1 remains CLOSED —
 PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-27 — False-finding bug fixed in the claim audit (duck-typed record reads) (head on `p1/boru-core-vertical-slice`)
+
+Continuing the audit, the claim verifier was probed with evidence the store does
+not itself return. **Bug found:** `_has_attempt()`/`_has_reason()` read the task
+record with `isinstance(record, dict)`, so any `Mapping`-shaped record that is not
+a plain `dict` — a `MappingProxyType`, a row wrapper, a test double — was read as
+empty and emitted a **false** `success_without_evidence` finding against a task
+that had real attempt evidence.
+
+That is a genuine harm even though nothing is *denied*: a security tool that cries
+wolf trains operators to ignore it. The same class of bug existed in
+`_ledger_row_is_unsafe()`.
+
+**Fixed** by replacing all three reads with a duck-typed `_field(record, key)`
+(uses `.get` when present, `None` for an absent record) plus a bounded
+`_entries()` helper. Verified both directions:
+* a `MappingProxyType` task carrying `[{"provider": "mock"}]` → **ok, no finding**;
+* the same shape with `attempts: []` → **still reports** `success_without_evidence`;
+* a `None` record (an unreadable row) → reads as absent and is reported.
+
+Pinned by `tests/test_harness.py::ClaimVerificationMappingTests` (4 tests).
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **858 tests OK**
+(854 + 4); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
