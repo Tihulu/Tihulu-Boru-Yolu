@@ -4,16 +4,14 @@ Prepared for an independent reviewer. Every claim below is either a command you
 can run or a file/test you can read; nothing is asserted without a pointer.
 
 - Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
-- Branch under review: `p1/boru-core-vertical-slice`
-- Code head under review: `c90aa3390ae9b4a081f2d9374e2f2226a84e3583`
+- Branch under review: `feat/bridge-contracts-20261127` (new candidate; independent review HOLD)
+- Code head under review: `8e8a87f64190b7296a6dc77410556eb40cc2776b`
   (the head this package describes; the pin must name this revision exactly, or
   every intervening change must live under `docs/` or `harness/` — the F20
   contract in `tests/test_rereview_regressions.py` asserts exactly that, and
   ancestry alone is not accepted)
 - Pull request: https://github.com/Tihulu/Tihulu-Boru-Yolu/pull/14 (draft, not merged)
-- CI: the code head above is green in CI (the run recorded for it in
-  `harness/build-log.md`); the run for the head a reviewer checks out is the
-  evidence that counts.
+- CI: candidate exact-head CI is pending. The earlier PR #14 result is baseline evidence only.
 - Issue tracker: https://github.com/Tihulu/Tihulu-Boru-Yolu/issues
 - Ledger: [harness/build-log.md](https://github.com/Tihulu/Tihulu-Boru-Yolu/blob/p1/boru-core-vertical-slice/harness/build-log.md)
 
@@ -29,7 +27,7 @@ git clone https://github.com/Tihulu/Tihulu-Boru-Yolu.git
 cd Tihulu-Boru-Yolu
 git checkout p1/boru-core-vertical-slice
 python3 scripts/check_project.py     # expected: PASS (30 documents + sample policy invariants)
-python3 -m unittest discover -s tests   # expected: Ran 842 tests ... OK
+python3 -m unittest discover -s tests   # expected: baseline plus 13 new bridge tests; candidate execution pending
 PYTHONPATH=. python3 tests/test_review_regressions.py   # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_rereview_regressions.py  # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_review3_regressions.py   # expected: Ran 26 tests ... OK
@@ -43,10 +41,7 @@ python3 -m boru harness verify --json   # expected: {"checked": 0, "ok": true, "
 python3 -m boru harness review             # expected: no task awaits review; {"accepted": 0, "rejected": 0}
 ~~~
 
-Observed result on the head commit: **PASS / 842 tests / exit 0** (local run of
-`check_project.py`, the full suite, `scripts/evidence.py`, `boru doctor` and
-`boru demo`); the same suite passed in CI on this head (the run recorded for it
-in `harness/build-log.md`). If any of these fail on your run, that is a finding.
+Baseline PR #14 recorded 842 passing tests. This separate candidate adds 13 test methods; no candidate test run or independent verdict is claimed yet. If any test fails on your run, that is a finding.
 
 ## 2. What to review, in order
 
