@@ -2094,3 +2094,14 @@ MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
   MOCK/STATIC only.
 - **Gate 1 state:** remains CLOSED — PASS. No HOLD gate touched; PR #14 stays
   draft; nothing merged or released.
+
+
+---
+
+### 2026-11-27 - Isolated bridge metadata candidate (#17)
+
+- Branch: `feat/bridge-contracts-20261127`, parent `e1271d7060974aa6717fc187cf605ad51de218cf`. Existing draft PR #14 and its Gate 1 evidence are unchanged.
+- Added `boru/bridge_contracts.py`, `tests/test_bridge_contracts.py`, and `docs/BRIDGE_CONTRACT_CANDIDATE.md`.
+- Scope: strict capability metadata, immutable task ownership, bounded delegation history and cycle rejection. Not a transport, permission grant, or runtime security boundary. CLI-Anything is never required.
+- Tests authored; exact-head full suite and independent review pending. No host access or live provider action performed.
+- Next: verify candidate CI, then implement durable idempotency and authenticated grant-bound service operations on the separate branch. Preserve Gate 1 baseline and require new review before integration.
