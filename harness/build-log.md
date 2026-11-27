@@ -2138,3 +2138,20 @@ sanitizes `reason` and `detail_kind`, not only `subject`.
 **Tests observed:** `python3 -m unittest discover -s tests` → **846 tests OK**
 (842 + 4); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
 MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-27 — Property-verification head pushed and CI green (head `f85ff30`, run `46028723987`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`):
+  `e1271d7..f85ff30`. Re-verified from the coordinator side with `git ls-remote` →
+  remote head `f85ff30ab4adff488f8068974ab16e50c062c3ed`, identical to local.
+- **CI verified:** run `46028723987` on head `f85ff30` concluded **success**
+  (`validate`, 1m33s), re-read directly from `gh run view`.
+- **Code head under review:** `03fbc4b33c14744223f4d5da76a243beb20e5df0`;
+  `f85ff30` is its documents-only re-pin family (`docs/REVIEW_PACKAGE.md`).
+- **Local verification:** `unittest discover -s tests` **846 tests OK**;
+  `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+  `tests/test_property_hostile_inputs.py` now runs 9 tests (5 existing + 4 new
+  deny-floor properties). MOCK/STATIC only.
+- **Gate 1 state:** remains CLOSED — PASS. PR #14 stays draft.
