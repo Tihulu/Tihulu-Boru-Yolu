@@ -62,6 +62,10 @@ matrix is worth running; a `fail` row names exactly what to fix.
 
 Three commands produce the M01–M05 and M09 evidence for one image; the live
 rows (M06–M08, M10–M12) still need the owner and a real host.
+`python3 scripts/acceptance_matrix.py` walks the whole matrix, emits the five
+rows it can prove offline as **PASS** and every other row as **HOLD** with its
+command, expected output and what to record — so a skipped row is recorded as
+skipped, never as passed.
 
 ~~~bash
 scripts/install_boru.sh --dry-run          # M01: what would be created, nothing is
@@ -71,6 +75,10 @@ python3 scripts/listener_check.py --json   # M09: loopback-only, released, no th
 python3 scripts/evidence.py                # M05: the full evidence block (also runs the
                                            #      install -> demo -> uninstall round trip,
                                            #      M04, through the installed launcher)
+                                           #      add --json for a machine-readable block)
+python3 scripts/acceptance_matrix.py       # the M01-M12 report: auto-fills the five rows
+                                           #      this repository proves offline and lists the
+                                           #      exact command and record for every HOLD row
 ~~~
 
 Record in `harness/build-log.md` per image: the image name and date, the three

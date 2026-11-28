@@ -2505,3 +2505,50 @@ claimed here.
 
 **No repository change is required by this entry** — it records verification results.
 Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-28 — Executable acceptance matrix: `scripts/acceptance_matrix.py` (head on `p1/boru-core-vertical-slice`)
+
+`docs/OS_ACCEPTANCE.md` described M01–M12 in prose; an owner still had to
+hand-assemble the report. This closes that: the matrix is now a script.
+
+`scripts/acceptance_matrix.py` runs `listener_check.py`, `boru demo` and
+`evidence.py --json`, then walks all twelve rows and reports:
+
+* **PASS** only where the evidence it just produced actually says PASS — M01/M04
+  are proved by the evidence block's `install`/`uninstall`, M05 by its
+  `unit_tests` count, M03 by the demo reaching `REVIEW`, M09 by the listener
+  posture;
+* **HOLD** for every other row, each carrying its `note`, the exact command to
+  run and what to record — M02 (needs the Ubuntu image), M06–M08 (needs a live
+  host, provider and disposable profile), M10–M11 (the deterministic part runs in
+  CI, the live drill does not), M12 (needs a backup taken before M01).
+
+`--quick` correctly *downgrades* M01/M04/M05 to HOLD rather than claiming them
+from a suite that did not run, and `--json` emits the same content in a
+machine-readable form.
+
+**Three defects were found and fixed while building it:**
+1. `_evidence()` did not ask `evidence.py` for `--json`, so it parsed a Python
+   repr as JSON and silently returned `{"ok": false}` — every row would have been
+   reported HOLD. `evidence.py` already supported `--json`; my caller was not
+   requesting it.
+2. The first version marked M01 PASS on a dry run alone ("dry-run only") — a row
+   whose install had not been executed was being counted as proved. PASS is now
+   derived from the evidence block's own `PASS`/`SKIPPED` strings.
+3. Non-automatable rows carried no `detail`, so a HOLD row read as an ungrounded
+   assertion. Every HOLD row now carries its reason.
+
+`tests/test_acceptance_matrix.py` (11 tests) stubs the three evidence helpers and
+pins the contract: the row set, that every row carries a command/expected/record,
+that the five offline rows pass on full evidence and downgrade on quick evidence,
+that HOLD rows always carry a reason, that the summary counts match the rows, and
+that the JSON and human forms agree. One integration test runs the real script in
+`--quick` mode.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **876 tests OK**
+(865 + 11); `scripts/check_project.py` PASS; `python3 -m compileall -q scripts
+boru` clean. `python3 scripts/acceptance_matrix.py --quick` → 2 PASS / 10 HOLD;
+without `--quick` → 5 PASS / 7 HOLD. MOCK/STATIC only. Gate 1 remains CLOSED —
+PASS; PR #14 stays draft.
