@@ -2333,3 +2333,19 @@ unauthenticated accept.
 **Tests observed:** `python3 -m unittest discover -s tests` → **864 tests OK**
 (860 + 4); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
 MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-28 — Receipt-tag head pushed and CI green (head `a152484`, run `46132873900`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`):
+  `2032fc5..a152484`. Re-verified from the coordinator side with `git ls-remote` →
+  remote head `a1524846a550a79862127dacc485444d53d596ea`, identical to local.
+- **CI verified:** run `46132873900` on head `a152484` concluded **success**
+  (`validate`, 1m32s), re-read directly from `gh run view`.
+- **Code head under review:** `2c7d948b2cb9947f6dc1c45e0dc6b49b91f2b917`;
+  `a152484` is its documents-only re-pin family (`docs/REVIEW_PACKAGE.md`).
+- **Local verification:** `unittest discover -s tests` **864 tests OK**;
+  `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+  `tests/test_broker.py` now runs 21 tests (17 + 4 receipt-tag coverage).
+  MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
