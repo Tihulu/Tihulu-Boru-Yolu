@@ -5,7 +5,7 @@ can run or a file/test you can read; nothing is asserted without a pointer.
 
 - Repository: https://github.com/Tihulu/Tihulu-Boru-Yolu
 - Branch under review: `p1/boru-core-vertical-slice`
-- Code head under review: `098ca3f0df45fc916448a89f293cc6bbb9d09e9b`
+- Code head under review: `6ace3a57daa42dde5e977699eb17f8b40f48feef`
   (the head this package describes; the pin must name this revision exactly, or
   every intervening change must live under `docs/` or `harness/` — the F20
   contract in `tests/test_rereview_regressions.py` asserts exactly that, and
@@ -29,7 +29,7 @@ git clone https://github.com/Tihulu/Tihulu-Boru-Yolu.git
 cd Tihulu-Boru-Yolu
 git checkout p1/boru-core-vertical-slice
 python3 scripts/check_project.py     # expected: PASS (30 documents + sample policy invariants)
-python3 -m unittest discover -s tests   # expected: Ran 865 tests ... OK
+python3 -m unittest discover -s tests   # expected: Ran 876 tests ... OK
 PYTHONPATH=. python3 tests/test_review_regressions.py   # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_rereview_regressions.py  # expected: Ran 20 tests ... OK
 PYTHONPATH=. python3 tests/test_review3_regressions.py   # expected: Ran 26 tests ... OK
@@ -40,11 +40,12 @@ PYTHONPATH=. python3 tests/test_property_hostile_inputs.py   # expected: Ran 9 t
 python3 scripts/evidence.py          # expected: exit 0, overall all-PASS
 python3 -m boru doctor --state-dir local-state   # expected: overall: ok, live_acceptance: HOLD
 python3 -m boru demo                 # expected: state REVIEW, evidence_class simulated
+python3 scripts/acceptance_matrix.py      # expected: 5 PASS / 7 HOLD (offline-provable rows)
 python3 -m boru harness verify --json   # expected: {"checked": 0, "ok": true, "findings": []}
 python3 -m boru harness review             # expected: no task awaits review; {"accepted": 0, "rejected": 0}
 ~~~
 
-Observed result on the head commit: **PASS / 865 tests / exit 0** (local run of
+Observed result on the head commit: **PASS / 876 tests / exit 0** (local run of
 `check_project.py`, the full suite, `scripts/evidence.py`, `boru doctor` and
 `boru demo`); the same suite passed in CI on this head (the run recorded for it
 in `harness/build-log.md`). If any of these fail on your run, that is a finding.
