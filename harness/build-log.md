@@ -2417,3 +2417,49 @@ and vs pathological regex input (0.002s, no backtracking); ~1,300 hostile
 commands through the property invariant; 17 adversarial receipt shapes; and 13
 hostile executor targets against a directory seeded with real escape structures
 (0 escapes, 0 crashes).
+
+---
+
+### 2026-11-28 — Loopback service and consent/privacy gates verified; audit reaches diminishing returns (head on `p1/boru-core-vertical-slice`)
+
+Continuing the autonomous audit into the last three unaudited security-critical
+primitives. **All three verified with no defect** — negative evidence recorded:
+
+**`boru/broker_service.py` (loopback HTTP surface), 9 hostile frames + 5 forged
+identities:**
+* an oversized frame (`MAX_REQUEST_BYTES + 200`) gets **no reply** — the read is
+  bounded and the connection closes, so no memory is consumed and no decision is
+  issued;
+* an unterminated frame, an empty frame, garbage bytes, a JSON array, a JSON
+  string and `null` each get **silence** (connection closed without a reply) —
+  fail-closed by construction: a non-object request never reaches an authorization
+  decision;
+* a deeply nested frame and a NUL-bearing `task_id` return typed denials;
+* no worker id, unknown worker, empty secret, wrong secret and no secret each
+  return `{'decision': 'deny', 'reason': 'worker_invalid'}`;
+* binding anywhere other than `127.0.0.1`/`::1` is refused at construction
+  (already covered by `test_public_bind_is_refused`).
+
+**`boru/consent.py` (grant store), 12 adversarial queries:** wrong recipient, wrong
+task, wrong alias, wider level (L1/L2), empty recipient, empty alias, unknown
+level, path in alias, unknown grant and oversized grant id all return the correct
+answer; revocation and expiry both take effect; `check()` returns a proper `bool`
+(verified directly — an earlier probe display that suggested an int was an
+artifact of reusing one nonce across queries, which the store correctly refused as
+a replay).
+
+**`boru/privacy.py` (disclosure gate):** under `MINIMUM_NECESSARY` an L0 request
+HOLDs (`field_unavailable`) while L1 and L2 are denied; every private-carrying
+field name (`raw_stdout`, `environment`, `api_key`, `home_path`, `file_contents`)
+is refused before any value is inspected.
+
+**Audit conclusion.** Ten modules have now been adversarially probed. The last four
+(executor, consent, privacy, broker_service) all came back clean, which is the
+expected outcome of the eight review rounds having genuinely fixed those
+primitives. The audit has reached diminishing returns: continuing it would re-derive
+already-proven invariants rather than find new defects. The remaining work is
+Gates 2–5, which are owner actions (live provider credentials, real hosts, legal
+sign-off) and not convertible by code or CI.
+
+**No repository change is required by this entry** — it records verification
+results. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
