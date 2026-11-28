@@ -72,6 +72,26 @@ A local Jan-only pipeline can operate without internet once required packages/mo
 
 Typical development ports: Jan API `1337` (verify locally), Kandev `38429`, Langflow `7860`. These are *examples*, not claims about active processes. Do not expose interfaces via `0.0.0.0`, Docker unqualified port publishing, Tailscale, SSH reverse tunnel or a reverse proxy without a separate authenticated network plan.
 
+## Boru Core user-space install (P10 slice)
+
+The P1 slice ships user-space installer scripts that never require sudo, never
+register a service, and never enable autostart:
+
+~~~bash
+scripts/install_boru.sh --dry-run
+scripts/install_boru.sh --target ~/.local/share/tihulu-boru \
+                        --state-dir ~/.local/state/tihulu-boru \
+                        --bin-dir ~/.local/bin
+boru demo
+scripts/uninstall_boru.sh --target ~/.local/share/tihulu-boru \
+                          --state-dir ~/.local/state/tihulu-boru \
+                          --bin-dir ~/.local/bin
+~~~
+
+`tests/test_install_scripts.py` runs the install/run/uninstall round trip on a
+temporary directory. Clean-machine acceptance on Pop!_OS 24.04 and Ubuntu LTS
+remains HOLD (see `docs/ACCEPTANCE.md`).
+
 ## Rollback
 
 Stop **only** newly launched Kandev/Langflow/Boru services; remove their dedicated test virtual environment/state after backing up any desired test work. Leave Jan weights, Jan service, OpenCode configuration, providers, active sessions and unrelated apps untouched. No automatic service restart on uninstall.

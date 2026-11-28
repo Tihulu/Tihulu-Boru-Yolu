@@ -21,6 +21,12 @@ REQUIRED_DOCS = [
     "docs/ADRS/0002-shell-execution-profiles.md",
     "docs/ADRS/0003-boru-core-independence.md",
     "docs/ADRS/0004-preserve-modes-and-privacy.md", "examples/visual-flow.mmd",
+    "docs/ADRS/0005-boru-core-runtime-slice.md", "docs/BORU_CORE.md",
+    "docs/JAN_PILOT.md", "docs/AI_PROVIDER_CONNECTIONS.md",
+    "docs/OS_ACCEPTANCE.md", "docs/SECURITY_REVIEW_REQUEST.md",
+    "docs/RE_REVIEW_REQUEST.md", "docs/REVIEW_PACKAGE.md",
+    "docs/REVIEW_FINDINGS.md",
+    "docs/OWNER_GATE_GUIDE.md",
 ]
 
 
@@ -80,17 +86,53 @@ def validate_example(c: dict) -> list[str]:
     return errors
 
 
+def scan_english_text() -> list[str]:
+    """Every tracked text file must be English outside the localization set.
+
+    The product's user-facing dashboard localization is in product scope; the
+    predicate lives in ``boru.i18n`` so the rule and its enforcement share one
+    definition.
+    """
+    import sys
+
+    sys.path.insert(0, str(ROOT))
+
+    from boru.i18n import REPOSITORY_TEXT_EXEMPT, is_repository_english, repository_files
+
+    problems = []
+    for name in repository_files(ROOT):
+        if name in REPOSITORY_TEXT_EXEMPT:
+            continue
+        path = ROOT / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if not is_repository_english(text):
+            problems.append("non-English text outside the localization set: " + name)
+    return problems
+
+
 def main() -> int:
     problems = []
     for name in REQUIRED_DOCS:
         if not (ROOT / name).is_file():
-            problems.append("missing: " + name)
+            problems.append("missing required document: " + name)
+    for required in ("boru/types.py", "boru/core.py", "boru/cli.py", "boru/__main__.py"):
+        if not (ROOT / required).is_file():
+            problems.append("missing Boru Core source: " + required)
     config_path = ROOT / "examples/boru-yolu.example.json"
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
         problems.extend(validate_example(config))
     except (OSError, json.JSONDecodeError) as exc:
         problems.append("sample config invalid: " + type(exc).__name__)
+    try:
+        problems.extend(scan_english_text())
+    except Exception as exc:  # pragma: no cover - git unavailable outside a checkout
+        problems.append("English-text scan unavailable: " + type(exc).__name__)
     if problems:
         for problem in problems:
             print("FAIL:", problem)

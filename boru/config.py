@@ -1,0 +1,380 @@
+"""Versioned runtime configuration for Boru Core.
+
+Safety defaults mirror ADR-0002/ADR-0004: ``LOCAL_ONLY`` inference,
+``LOCAL_ISOLATED`` execution, ``MINIMUM_NECESSARY`` disclosure, no network, no
+autostart, no credentials.  An endpoint or model allowlist must be stated
+explicitly; nothing is discovered or inferred from the host.
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+from dataclasses import dataclass, field
+from typing import Any, List, Optional, Tuple
+
+from .boundary import BOUNDARIES, DATA_CLASSES, RECIPIENTS, Classification
+from .errors import ConfigurationError
+from .policy import Policy
+from .resources import DEFAULT_MODE, ResourceMode, ResourceProfile, profile_for
+
+CONFIG_VERSION = 1
+QUEUE_LIMIT = 16
+MAX_RECORDS = 1024
+#: Boru Core never accepts unbounded work, including from its own configuration.
+MAX_PROVIDERS = 32
+MAX_CLASSIFICATIONS = 64
+REQUEST_TIMEOUT = 30.0
+MAX_OUTPUT_TOKENS = 256
+
+_SUPPORTED_CAPABILITIES = ("text",)
+
+
+def _bool(value: Any, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise ConfigurationError(label + " must be a boolean")
+    return value
+
+
+def _int(value: Any, label: str, low: int, high: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ConfigurationError(label + " must be an integer between {} and {}".format(low, high))
+    return value
+
+
+def _positive_float(value: Any, label: str, low: float, high: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= float(value) <= high:
+        raise ConfigurationError(label + " must be a finite number between {} and {}".format(low, high))
+    return float(value)
+
+
+def _text(value: Any, label: str, limit: int = 256) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        raise ConfigurationError(label + " must be a bounded non-empty string")
+    return value
+
+
+@dataclass(frozen=True)
+class ProviderConfig:
+    """Bounded description of one configured provider.
+
+    ``api_key_env`` names an environment variable; credential values are never
+    stored in configuration, logs or prompts.
+    """
+
+    kind: str
+    endpoint: Optional[str] = None
+    local_model_ids: Tuple[str, ...] = ()
+    tool_execution_disabled: bool = True
+    allow_http: bool = False
+    api_key_env: Optional[str] = None
+    #: Opt-in model listing through the provider API. Disabled by default
+    #: because a local endpoint may also serve remote providers.
+    allow_discovery: bool = False
+    #: Accept a provider that reports the on-disk model path instead of the ID.
+    model_response_is_path: bool = False
+
+    def validate(self) -> List[str]:
+        errors: List[str] = []
+        if self.kind not in ("mock", "jan", "cloud"):
+            errors.append("unknown provider kind")
+        if self.kind == "cloud":
+            if not isinstance(self.endpoint, str) or not self.endpoint.strip():
+                errors.append("cloud provider requires an explicit https endpoint")
+            elif not self.endpoint.strip().lower().startswith("https://") and not self.allow_http:
+                errors.append("cloud endpoints require https unless http is explicitly allowed")
+            if not self.local_model_ids:
+                errors.append("cloud provider requires an explicit model allowlist")
+        if self.kind != "cloud" and self.tool_execution_disabled is not True:
+            errors.append("tool_execution_disabled must be True; Boru Core text-only transport refuses remote tool execution")
+        if not isinstance(self.allow_http, bool):
+            errors.append("allow_http must be a boolean")
+        for name in ("allow_discovery", "model_response_is_path"):
+            if not isinstance(getattr(self, name), bool):
+                errors.append(name + " must be a boolean")
+        if self.api_key_env is not None and (
+            not isinstance(self.api_key_env, str) or not self.api_key_env.strip() or len(self.api_key_env) > 64
+        ):
+            errors.append("api_key_env must be a bounded environment variable name")
+        if self.kind == "jan":
+            if not isinstance(self.endpoint, str) or not self.endpoint.strip():
+                errors.append("Jan provider requires an explicit endpoint")
+            if not self.local_model_ids:
+                errors.append("Jan provider requires an explicit local model allowlist")
+            if not _is_loopback_endpoint(self.endpoint):
+                errors.append("Jan provider endpoint must be a numeric loopback address")
+        return errors
+
+
+def _is_loopback_endpoint(endpoint: Any) -> bool:
+    """Cheap, dependency-free loopback check used only for fail-fast config."""
+    if not isinstance(endpoint, str):
+        return False
+    try:
+        from urllib.parse import urlsplit
+        import ipaddress
+
+        parts = urlsplit(endpoint.strip())
+        return ipaddress.ip_address(parts.hostname).is_loopback
+    except Exception:
+        return False
+
+
+@dataclass(frozen=True)
+class ClassificationSpec:
+    """One declared outbound direction (issue #9 tracer)."""
+
+    boundary: str
+    recipient: str
+    data_class: str = "none"
+    grant_ref: Optional[str] = None
+    task_id: Optional[str] = None
+
+    def validate(self) -> List[str]:
+        errors: List[str] = []
+        if self.boundary not in BOUNDARIES:
+            errors.append("unknown boundary")
+        if self.recipient not in RECIPIENTS:
+            errors.append("unknown recipient")
+        if self.data_class not in DATA_CLASSES:
+            errors.append("unknown data class")
+        if self.data_class != "none" and not isinstance(self.grant_ref, str):
+            errors.append("a data-carrying classification needs a grant reference")
+        if self.data_class == "L2" and self.recipient != "cloud":
+            errors.append("L2 disclosure is only defined for a cloud recipient")
+        if self.task_id is not None and (not isinstance(self.task_id, str) or not self.task_id.strip()
+                                          or len(self.task_id) > 128):
+            errors.append("task_id must be a bounded non-empty string")
+        return errors
+
+    def to_classification(self) -> Classification:
+        return Classification(boundary=self.boundary, recipient=self.recipient,
+                              data_class=self.data_class, grant_ref=self.grant_ref)
+
+
+@dataclass(frozen=True)
+class CoreConfig:
+    """Complete runtime configuration."""
+
+    version: int = CONFIG_VERSION
+    policy: Policy = field(default_factory=Policy)
+    queue_limit: int = QUEUE_LIMIT
+    max_records: int = MAX_RECORDS
+    request_timeout: float = REQUEST_TIMEOUT
+    max_output_tokens: int = MAX_OUTPUT_TOKENS
+    providers: Tuple[ProviderConfig, ...] = ()
+    description: str = ""
+    cooldown_seconds: float = 60.0
+    max_context_chars: int = 32 * 1024
+    #: Declared outbound directions. An undeclared direction is refused before
+    #: any network call (issue #9).
+    classifications: Tuple["ClassificationSpec", ...] = ()
+    #: Resource profile: a performance knob (PERFORMANCE / BALANCED /
+    #: RESOURCE_OPTIMIZED / CUSTOM). It is not an authorization axis and can
+    #: never widen policy, inference, execution or disclosure rights.
+    resource_mode: str = DEFAULT_MODE.value
+    #: Owner bounds for CUSTOM; ignored for a named mode.
+    resource_overrides: Any = field(default_factory=dict)
+
+    def validate(self) -> List[str]:
+        errors: List[str] = []
+        if not isinstance(self.description, str) or len(self.description) > 512:
+            errors.append("description must be a bounded string")
+        if self.version != CONFIG_VERSION:
+            errors.append("unsupported configuration version")
+        errors.extend(self.policy.validate())
+        for name, value, low, high in (
+            ("queue_limit", self.queue_limit, 1, 256),
+            ("max_records", self.max_records, 1, 100000),
+            ("max_output_tokens", self.max_output_tokens, 1, 8192),
+        ):
+            errors.extend(_int_errors(value, name, low, high))
+        errors.extend(_float_errors(self.request_timeout, "request_timeout", 0.1, 120.0))
+        if self.max_records < self.queue_limit:
+            errors.append("max_records must not be smaller than queue_limit")
+        errors.extend(_float_errors(self.cooldown_seconds, "cooldown_seconds", 1.0, 3600.0))
+        errors.extend(_int_errors(self.max_context_chars, "max_context_chars", 256, 1 << 20))
+        if len(self.classifications) > MAX_CLASSIFICATIONS:
+            errors.append("at most {} outbound directions may be declared".format(
+                MAX_CLASSIFICATIONS))
+        for spec in self.classifications:
+            errors.extend(spec.validate())
+        try:
+            self.resource_profile()
+        except ConfigurationError as exc:
+            errors.append(str(exc))
+        if not self.providers:
+            errors.append("at least one provider must be configured")
+        if len(self.providers) > MAX_PROVIDERS:
+            errors.append("at most {} providers may be configured".format(MAX_PROVIDERS))
+        for provider in self.providers:
+            errors.extend(provider.validate())
+        return errors
+
+    def resource_profile(self) -> ResourceProfile:
+        """The resolved resource profile for this configuration."""
+        if not isinstance(self.resource_mode, str):
+            raise ConfigurationError("resource_mode must be a string")
+        try:
+            mode = ResourceMode(self.resource_mode.strip().upper())
+        except ValueError:
+            raise ConfigurationError("unknown resource mode: " + str(self.resource_mode))
+        overrides = dict(self.resource_overrides or {}) if isinstance(self.resource_overrides, dict) else None
+        if overrides is None:
+            raise ConfigurationError("resource_overrides must be an object")
+        if not overrides:
+            return profile_for(mode)
+        # Overrides are owner bounds: they relabel the profile as CUSTOM, so a
+        # named mode can never be silently half-edited.
+        base = profile_for(mode) if mode is not ResourceMode.CUSTOM else ResourceProfile(mode=mode)
+        return base.with_overrides(**overrides)
+
+    def assert_valid(self) -> None:
+        errors = self.validate()
+        if errors:
+            raise ConfigurationError("; ".join(sorted(set(errors))))
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> "CoreConfig":
+        if not isinstance(raw, dict):
+            raise ConfigurationError("configuration must be an object")
+        allowed = {"version", "policy", "queue_limit", "max_records", "request_timeout",
+                   "max_output_tokens", "providers", "description", "cooldown_seconds",
+                   "max_context_chars", "classifications"}
+        unknown = sorted(set(raw) - allowed)
+        if unknown:
+            raise ConfigurationError("unknown configuration field")
+        if len(json.dumps(raw, default=str, sort_keys=True)) > 256 * 1024:
+            raise ConfigurationError("configuration exceeds the bounded size")
+        policy_raw = raw.get("policy", {})
+        if not isinstance(policy_raw, dict):
+            raise ConfigurationError("policy must be an object")
+        policy_fields = {
+            "optimization_mode", "inference_scope", "execution_profile", "disclosure_policy",
+            "cloud_shell_enabled", "cloud_shell_sandbox_required", "cloud_shell_live_consent_required",
+            "raw_tool_output_to_cloud", "recipient_bound_consent_required", "max_result_fields",
+            "max_agents", "max_retries", "cloud_fallback_enabled",
+        }
+        unknown_policy = sorted(set(policy_raw) - policy_fields)
+        if unknown_policy:
+            raise ConfigurationError("unknown policy field")
+        policy = Policy(**policy_raw)
+        providers_raw = raw.get("providers", [])
+        if not isinstance(providers_raw, list) or not providers_raw:
+            raise ConfigurationError("providers must be a non-empty list")
+        providers = []
+        for entry in providers_raw:
+            if not isinstance(entry, dict):
+                raise ConfigurationError("provider entries must be objects")
+            unknown_entry = sorted(set(entry) - {"kind", "endpoint", "local_model_ids",
+                                                 "tool_execution_disabled", "allow_http", "api_key_env",
+                                                 "allow_discovery", "model_response_is_path"})
+            if unknown_entry:
+                raise ConfigurationError("unknown provider field")
+            models = entry.get("local_model_ids", [])
+            if not isinstance(models, list):
+                raise ConfigurationError("local_model_ids must be a list")
+            for model in models:
+                _text(model, "model id", 128)
+            providers.append(
+                ProviderConfig(
+                    kind=_text(entry.get("kind", ""), "provider kind"),
+                    endpoint=entry.get("endpoint"),
+                    local_model_ids=tuple(models),
+                    tool_execution_disabled=_bool(entry.get("tool_execution_disabled", True), "tool_execution_disabled"),
+                    allow_http=_bool(entry.get("allow_http", False), "allow_http"),
+                    api_key_env=entry.get("api_key_env"),
+                    allow_discovery=_bool(entry.get("allow_discovery", False), "allow_discovery"),
+                    model_response_is_path=_bool(entry.get("model_response_is_path", False), "model_response_is_path"),
+                )
+            )
+        specs_raw = raw.get("classifications", [])
+        if not isinstance(specs_raw, list):
+            raise ConfigurationError("classifications must be a list")
+        specs = []
+        for entry in specs_raw:
+            if not isinstance(entry, dict):
+                raise ConfigurationError("classification entries must be objects")
+            unknown_entry = sorted(set(entry) - {"boundary", "recipient", "data_class",
+                                                "grant_ref", "task_id"})
+            if unknown_entry:
+                raise ConfigurationError("unknown classification field")
+            specs.append(ClassificationSpec(
+                boundary=_text(entry.get("boundary", ""), "boundary", 64),
+                recipient=_text(entry.get("recipient", ""), "recipient", 32),
+                data_class=entry.get("data_class", "none"),
+                grant_ref=entry.get("grant_ref"),
+                task_id=entry.get("task_id"),
+            ))
+        config = cls(
+            version=_int(raw.get("version", CONFIG_VERSION), "version", 1, 1),
+            policy=policy,
+            queue_limit=_int(raw.get("queue_limit", QUEUE_LIMIT), "queue_limit", 1, 256),
+            max_records=_int(raw.get("max_records", MAX_RECORDS), "max_records", 1, 100000),
+            request_timeout=_positive_float(raw.get("request_timeout", REQUEST_TIMEOUT), "request_timeout", 0.1, 120.0),
+            max_output_tokens=_int(raw.get("max_output_tokens", MAX_OUTPUT_TOKENS), "max_output_tokens", 1, 8192),
+            providers=tuple(providers),
+            description=_text(raw.get("description", ""), "description", 512) if raw.get("description") else "",
+            cooldown_seconds=_positive_float(raw.get("cooldown_seconds", 60.0), "cooldown_seconds", 1.0, 3600.0),
+            max_context_chars=_int(raw.get("max_context_chars", 32 * 1024), "max_context_chars", 256, 1 << 20),
+            classifications=tuple(specs),
+        )
+        config.assert_valid()
+        return config
+
+    def to_dict(self) -> dict:
+        return {
+            "version": self.version,
+            "policy": self.policy.as_dict(),
+            "queue_limit": self.queue_limit,
+            "max_records": self.max_records,
+            "request_timeout": self.request_timeout,
+            "max_output_tokens": self.max_output_tokens,
+            "providers": [
+                {"kind": p.kind, "endpoint": p.endpoint, "local_model_ids": list(p.local_model_ids),
+                 "tool_execution_disabled": p.tool_execution_disabled, "allow_http": p.allow_http,
+                 "api_key_env": p.api_key_env, "allow_discovery": p.allow_discovery,
+                 "model_response_is_path": p.model_response_is_path}
+                for p in self.providers
+            ],
+            "description": self.description,
+            "cooldown_seconds": self.cooldown_seconds,
+            "max_context_chars": self.max_context_chars,
+            "classifications": [
+                {"boundary": spec.boundary, "recipient": spec.recipient, "data_class": spec.data_class,
+                 "grant_ref": spec.grant_ref, "task_id": spec.task_id}
+                for spec in self.classifications
+            ],
+        }
+
+    @classmethod
+    def from_file(cls, path: str) -> "CoreConfig":
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                raw = json.load(handle)
+        except json.JSONDecodeError as exc:
+            raise ConfigurationError("configuration is not valid JSON")
+        except OSError:
+            raise ConfigurationError("configuration cannot be read")
+        return cls.from_dict(raw)
+
+
+def _int_errors(value: Any, label: str, low: int, high: int) -> List[str]:
+    try:
+        _int(value, label, low, high)
+    except ConfigurationError as exc:
+        return [str(exc)]
+    return []
+
+
+def _float_errors(value: Any, label: str, low: float, high: float) -> List[str]:
+    try:
+        _positive_float(value, label, low, high)
+    except ConfigurationError as exc:
+        return [str(exc)]
+    return []
+
+
+def default_config() -> CoreConfig:
+    """Offline default: mock provider only, no network, no state file."""
+    return CoreConfig(providers=(ProviderConfig(kind="mock"),))

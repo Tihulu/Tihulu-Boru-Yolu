@@ -1,0 +1,339 @@
+"""OAuth PKCE flow tests (P7): loopback listener, state/nonce, token handles.
+
+All provider interaction is against a test-owned loopback endpoint. No provider
+is connected and no credential is used.
+"""
+import json
+import threading
+import time
+import unittest
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from boru.auth import OAuthClientConfig, OAuthFlow, PkcePair, TokenVault, constant_time_equals
+from boru.auth.oauth import MAX_ATTEMPTS
+from boru.errors import ConfigurationError
+
+
+def config(**overrides):
+    base = dict(provider="test-provider", issuer="https://accounts.example.test",
+                authorization_endpoint="https://accounts.example.test/authorize",
+                token_endpoint="https://accounts.example.test/token",
+                client_id="test-client", redirect_uri="http://127.0.0.1:0/callback",
+                scopes=("openid", "email"))
+    base.update(overrides)
+    return OAuthClientConfig(**base)
+
+
+class _StubToken(BaseHTTPRequestHandler):
+    """Test-owned token endpoint stub."""
+
+    bodies: list = []
+    status = 200
+    payload = {"access_token": "stub-access-token", "expires_in": 3600, "scope": "openid email"}
+
+    def log_message(self, *args):
+        return
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        type(self).bodies.append(self.rfile.read(length).decode("utf-8"))
+        raw = json.dumps(type(self).payload).encode("utf-8")
+        self.send_response(type(self).status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+
+class ConfigValidationTests(unittest.TestCase):
+    def test_https_only_endpoints(self):
+        for bad in (dict(authorization_endpoint="http://insecure.test/authorize"),
+                    dict(token_endpoint="http://insecure.test/token")):
+            with self.assertRaises(Exception):
+                config(**bad)
+
+    def test_redirect_must_be_loopback(self):
+        for bad in ("https://evil.example/callback", "http://8.8.8.8:9000/callback", "notaurl"):
+            with self.assertRaises(Exception):
+                config(redirect_uri=bad)
+
+    def test_fields_are_bounded_and_unique(self):
+        with self.assertRaises(Exception):
+            config(scopes=("openid", "openid"))
+        with self.assertRaises(Exception):
+            config(client_id="")
+        with self.assertRaises(Exception):
+            config(client_secret_env="x" * 200)
+
+    def test_bounded_scopes_are_sorted(self):
+        self.assertEqual(("email", "openid"), tuple(sorted(config(scopes=("openid", "email")).scopes)))
+
+
+class PkceTests(unittest.TestCase):
+    def test_challenge_is_derived_from_verifier(self):
+        pair = PkcePair.generate()
+        self.assertEqual("S256", pair.method)
+        self.assertTrue(43 <= len(pair.verifier) <= 128)
+        self.assertEqual(pair.challenge, PkcePair.from_verifier(pair.verifier).challenge)
+
+    def test_bad_verifier_rejected(self):
+        for bad in ("short", "x" * 200, 5):
+            with self.assertRaises(Exception):
+                PkcePair.from_verifier(bad)
+
+    def test_constant_time_compare(self):
+        self.assertTrue(constant_time_equals("state", "state"))
+        self.assertFalse(constant_time_equals("state", "other"))
+        self.assertFalse(constant_time_equals("state", 5))
+
+
+class AuthorizationUrlTests(unittest.TestCase):
+    def test_url_is_pkce_and_state_bound(self):
+        flow = OAuthFlow(config())
+        url, attempt = flow.start()
+        for expected in ("response_type=code", "client_id=test-client", "code_challenge=",
+                         "code_challenge_method=S256", "state=", "nonce=", "redirect_uri=",
+                         "scope=email%20openid"):
+            self.assertIn(expected, url, expected)
+        self.assertTrue(attempt.pkce.verifier)
+        self.assertTrue(attempt.state)
+        self.assertTrue(attempt.nonce)
+        self.assertEqual("S256", attempt.pkce.method)
+
+    def test_two_attempts_have_distinct_state(self):
+        flow = OAuthFlow(config())
+        _, first = flow.start()
+        _, second = flow.start()
+        self.assertNotEqual(first.state, second.state)
+        self.assertNotEqual(first.nonce, second.nonce)
+
+    def test_unknown_attempt_is_refused(self):
+        from boru.errors import PolicyViolation
+
+        flow = OAuthFlow(config())
+        _, attempt = flow.start()
+        other = OAuthFlow(config())
+        _, other_attempt = other.start()
+        with self.assertRaises(PolicyViolation):
+            flow.serve_redirect(other_attempt, timeout=0.1)
+
+    def test_loopback_listener_is_required(self):
+        from boru.errors import PolicyViolation
+
+        flow = OAuthFlow(config())
+        _, attempt = flow.start()
+        cfg = OAuthClientConfig(provider="p", issuer="https://i.test",
+                                authorization_endpoint="https://i.test/authorize",
+                                token_endpoint="https://i.test/token", client_id="c",
+                                redirect_uri="http://0.0.0.0:9100/callback",
+                                scopes=("openid",), allow_insecure_redirect=True)
+        attempt.config = cfg
+        with self.assertRaises(PolicyViolation):
+            flow.serve_redirect(attempt, timeout=0.1)
+
+
+class RedirectCaptureTests(unittest.TestCase):
+    """Loopback redirect capture: exact state, single response, no public bind."""
+
+    def build(self):
+        config_obj = OAuthClientConfig(provider="test-provider",
+                                       issuer="https://accounts.example.test",
+                                       authorization_endpoint="https://accounts.example.test/authorize",
+                                       token_endpoint="https://accounts.example.test/token",
+                                       client_id="test-client",
+                                       redirect_uri="http://127.0.0.1:0/callback",
+                                       scopes=("openid",))
+        return OAuthFlow(config_obj)
+
+    def wait_listening(self, attempt, timeout=15):
+        self.assertTrue(attempt.listening.wait(timeout))
+        return attempt.redirect_port
+
+    @staticmethod
+    def deliver(port, code, state, error=None):
+        query = "error={}&state={}".format(error, state) if error else "code={}&state={}".format(code, state)
+        request = urllib.request.Request("http://127.0.0.1:{}/callback?{}".format(port, query))
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                response.read()
+        except urllib.error.HTTPError:
+            pass
+
+    def serve_async(self, flow, attempt):
+        outcome = {}
+
+        def run():
+            try:
+                outcome["code"] = flow.serve_redirect(attempt, timeout=25)
+            except Exception as error:  # stored, asserted on the test thread
+                outcome["error"] = error
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return outcome, thread
+
+    def test_redirect_captures_code_with_exact_state(self):
+        flow = self.build()
+        _, attempt = flow.start()
+        outcome, thread = self.serve_async(flow, attempt)
+        self.deliver(self.wait_listening(attempt), "delivered-code", attempt.state)
+        thread.join(timeout=30)
+        self.assertNotIn("error", outcome)
+        self.assertEqual("delivered-code", outcome.get("code"))
+        self.assertTrue(attempt.finished.is_set())
+        self.assertTrue(attempt.code.startswith("delivered-code"))
+
+    def test_state_mismatch_is_denied(self):
+        from boru.errors import PolicyViolation
+
+        flow = self.build()
+        _, attempt = flow.start()
+        outcome, thread = self.serve_async(flow, attempt)
+        self.deliver(self.wait_listening(attempt), "delivered-code", "wrong-state")
+        thread.join(timeout=30)
+        self.assertIsInstance(outcome.get("error"), PolicyViolation)
+        self.assertIsNone(attempt.code)
+
+    def test_provider_error_is_denied(self):
+        from boru.errors import PolicyViolation
+
+        flow = self.build()
+        _, attempt = flow.start()
+        outcome, thread = self.serve_async(flow, attempt)
+        self.deliver(self.wait_listening(attempt), None, attempt.state, error="access_denied")
+        thread.join(timeout=30)
+        self.assertIsInstance(outcome.get("error"), PolicyViolation)
+        self.assertIsNone(attempt.code)
+
+    def test_timeout_denies(self):
+        from boru.errors import PolicyViolation
+
+        flow = self.build()
+        _, attempt = flow.start()
+        with self.assertRaises(PolicyViolation):
+            flow.serve_redirect(attempt, timeout=0.2)
+
+    def test_busy_port_is_refused(self):
+        from boru.errors import PolicyViolation
+
+        blocker = ThreadingHTTPServer(("127.0.0.1", 0), _StubToken)
+        busy = blocker.server_address[1]
+        try:
+            config_obj = OAuthClientConfig(provider="test-provider",
+                                           issuer="https://accounts.example.test",
+                                           authorization_endpoint="https://accounts.example.test/authorize",
+                                           token_endpoint="https://accounts.example.test/token",
+                                           client_id="test-client",
+                                           redirect_uri="http://127.0.0.1:{}/callback".format(busy),
+                                           scopes=("openid",))
+            flow = OAuthFlow(config_obj)
+            _, attempt = flow.start()
+            with self.assertRaises(PolicyViolation):
+                flow.serve_redirect(attempt, timeout=2)
+        finally:
+            blocker.server_close()  # never started, so no shutdown() is needed
+
+
+class TokenVaultTests(unittest.TestCase):
+    def test_handles_never_carry_token_values(self):
+        vault = TokenVault()
+        entry = vault.register("tok-1", provider="test", account="client", scopes=("openid",),
+                               expires_at=None, security_level="UNKNOWN")
+        payload = json.dumps(entry.to_dict())
+        self.assertNotIn("stub-access-token", payload)
+        self.assertEqual("UNKNOWN", entry.security_level)
+
+    def test_revocation(self):
+        vault = TokenVault()
+        vault.register("tok-2", provider="test", account="client", scopes=("openid",), expires_at=None)
+        self.assertEqual("REVOKED", vault.revoke("tok-2").security_level)
+        with self.assertRaises(Exception):
+            vault.revoke("missing")
+
+    def test_vault_paths_are_owner_only(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp(prefix="boru-vault-")
+        os.chmod(root, 0o700)
+        try:
+            path = os.path.join(root, "handles.json")
+            vault = TokenVault(path)
+            vault.register("tok-3", provider="test", account="client", scopes=("openid",), expires_at=None)
+            with open(path, "r", encoding="utf-8") as handle:
+                stored = json.load(handle)
+            self.assertEqual("tok-3", stored[0]["handle"])
+            from stat import S_IMODE
+
+            self.assertEqual(0, S_IMODE(os.stat(path).st_mode) & 0o077)
+        finally:
+            import shutil
+
+            shutil.rmtree(root, ignore_errors=True)
+
+
+class HardeningTests(unittest.TestCase):
+    """Regressions for the auth-slice self-review findings."""
+
+    def test_attempt_registry_is_bounded(self):
+        flow = OAuthFlow(config())
+        for _ in range(20):
+            flow.start()
+        self.assertLessEqual(len(flow._attempts), MAX_ATTEMPTS)
+
+    def test_vault_metadata_is_bounded(self):
+        vault = TokenVault()
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p" * 200, account="a", scopes=("openid",),
+                           expires_at=None)
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a", scopes=("s" * 200,),
+                           expires_at=None)
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a",
+                           scopes=tuple("s{}".format(i) for i in range(40)), expires_at=None)
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a", scopes=("openid",),
+                           expires_at=float("nan"))
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a", scopes=("openid",),
+                           expires_at=float("inf"))
+        with self.assertRaises(ConfigurationError):
+            vault.register("tok-x", provider="p", account="a", scopes=("openid",),
+                           expires_at=10 ** 12, now=time.time())
+        stamp = time.time()
+        entry = vault.register("tok-ok", provider="test", account="client", scopes=("openid",),
+                               expires_at=stamp + 3600, now=stamp)
+        self.assertEqual(stamp + 3600, entry.expires_at)
+
+    def test_persisted_vault_entries_are_validated_on_load(self):
+        import os
+        import tempfile
+
+        root = tempfile.mkdtemp(prefix="boru-vault-load-")
+        os.chmod(root, 0o700)
+        try:
+            path = os.path.join(root, "handles.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump([{"handle": "tok-1", "provider": "p" * 400, "account": "a",
+                            "scopes": ["openid"], "expires_at": None,
+                            "security_level": "UNKNOWN"}], handle)
+            with self.assertRaises(ConfigurationError):
+                TokenVault(path)
+        finally:
+            import shutil
+
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_client_config_defines_post_init_once(self):
+        import boru.auth.oauth as module
+
+        source = open(module.__file__, "r", encoding="utf-8").read()
+        self.assertEqual(1, source.count("def __post_init__"),
+                         "a second definition would shadow the first")
+
+
+if __name__ == "__main__":
+    unittest.main()

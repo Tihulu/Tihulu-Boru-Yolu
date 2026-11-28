@@ -20,7 +20,7 @@
 - **No raw private terminal output to cloud by default.** Trusted local filtering must run *before* remote delivery. Deny/HOLD on policy ambiguity or unavailable broker. No prompt-only authorization.
 - Up to six *logical* agents, bounded by actual RAM/VRAM/rate/budget limits. Never assume six large local models can coexist or unload models used by unrelated sessions.
 - Use officially supported authentication/API methods only. Login identity is not authorization for model inference or subscription billing. No cookie/token scraping from ChatGPT, Gemini, Claude, Codex or OpenCode.
-- All GitHub repository documentation, source comments, test names, commit messages, issues and PR text must be **English**. Keep user-facing TR/EN/DE localization in product scope.
+- All GitHub repository documentation, source comments, test names, commit messages, issues and PR text must be **English**. Keep user-facing TR/EN/DE localization in product scope: the dashboard label table (`boru/i18n.py`) and its test are the only exempt files. The rule is enforced, not just stated - `scripts/check_project.py` scans every tracked file and `tests/test_repository_language.py` runs the same predicate in CI, so a non-English string in a source, doc, script or example fails the build.
 
 ## Development authority and boundaries
 - May inspect and modify **this repository's development branch/worktree** and run local, harmless build/unit tests in a disposable environment if tooling and permissions permit.

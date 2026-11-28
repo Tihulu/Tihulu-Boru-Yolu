@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "description": "Minimal offline-runnable Boru Core example (P1 slice). LOCAL_ONLY, LOCAL_ISOLATED, MINIMUM_NECESSARY. Outbound directions are declared here; an undeclared direction is refused before any call (issue #9). No credentials, no autostart.",
+  "policy": {
+    "optimization_mode": "AUTO",
+    "inference_scope": "LOCAL_ONLY",
+    "execution_profile": "LOCAL_ISOLATED",
+    "disclosure_policy": "MINIMUM_NECESSARY",
+    "max_agents": 6,
+    "max_retries": 2,
+    "cloud_fallback_enabled": false
+  },
+  "queue_limit": 16,
+  "max_records": 1024,
+  "request_timeout": 30.0,
+  "max_output_tokens": 256,
+  "providers": [
+    {
+      "kind": "mock",
+      "tool_execution_disabled": true
+    }
+  ],
+  "classifications": [
+    {
+      "boundary": "model_inference",
+      "recipient": "local",
+      "data_class": "none"
+    }
+  ]
+}
