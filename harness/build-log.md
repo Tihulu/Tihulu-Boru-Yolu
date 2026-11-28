@@ -2552,3 +2552,33 @@ that the JSON and human forms agree. One integration test runs the real script i
 boru` clean. `python3 scripts/acceptance_matrix.py --quick` → 2 PASS / 10 HOLD;
 without `--quick` → 5 PASS / 7 HOLD. MOCK/STATIC only. Gate 1 remains CLOSED —
 PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-28 — Acceptance-matrix head pushed and CI green (head `b855c4b`, run `46145305442`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`):
+  `8e503d7..b855c4b`. Re-verified from the coordinator side with `git ls-remote` →
+  remote head `b855c4b0b485887cb51a9d92e55f0b33be43648c`, identical to local.
+- **CI verified:** run `46145305442` on head `b855c4b` concluded **success**
+  (`validate`, 1m33s), re-read directly from `gh run view`.
+- **Code head under review:** `6ace3a57daa42dde5e977699eb17f8b40f48feef`;
+  `b855c4b` is its documents-only re-pin family (`docs/REVIEW_PACKAGE.md`,
+  `docs/OS_ACCEPTANCE.md`, `harness/build-log.md`).
+- **Local verification:** `python3 scripts/acceptance_matrix.py` → **5 PASS / 7 HOLD**
+  (full) and **2 PASS / 10 HOLD** (`--quick`, correctly downgrading the rows whose
+  suite did not run); `unittest discover -s tests` **876 tests OK**;
+  `scripts/check_project.py` PASS; `python3 -m compileall -q scripts boru` clean.
+  `tests/test_acceptance_matrix.py` runs 11 tests in **0.7 s** (the evidence
+  helpers are stubbed; only one test invokes the real script, in `--quick` mode).
+- **Gate 1 state:** remains CLOSED — PASS. PR #14 stays draft; nothing merged or
+  released; no HOLD gate touched.
+
+**Total code-doable work is complete.** Gate 1 is closed with eight review rounds
+remediated and ten security-critical modules adversarially audited; Gate 3's
+offline half and Gate 4's automatable rows are reproducible single commands,
+CI-protected, and now walkable as one M01–M12 report. What remains — Gate 2
+registration, Gate 3's live half, Gate 4's M02/M06–M08/M10–M12 rows, Gate 5
+licensing — needs the owner's credentials, a real host, or a legal decision, and
+is not convertible by code or CI. Each remaining row already has an exact command
+printed by the acceptance matrix.
