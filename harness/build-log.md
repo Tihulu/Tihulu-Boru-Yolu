@@ -2463,3 +2463,45 @@ sign-off) and not convertible by code or CI.
 
 **No repository change is required by this entry** — it records verification
 results. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-28 — Gate 3/4 offline acceptance verified end-to-end and CI-protected (head on `p1/boru-core-vertical-slice`)
+
+Continuing autonomously past the security audit, the two owner gates that have a
+**code-reproducible portion** were verified rather than assumed:
+
+**Gate 3 — connector pilot, offline portion (`scripts/connector_pilot.py`)**
+* With no token environment variable set: refuses `not_ready` — "the token
+  environment variable is not set" — **before any outbound request**.
+* With a fake token set and `--dry-run`: `credential: present`, `dry_run: true`,
+  `note: "no outbound request was made"`, and all four out-of-scope grant denials
+  are proven: `other_reference → reference_not_granted`,
+  `other_repository → repository_not_granted`,
+  `ungranted_operation → operation_not_granted`,
+  `ungranted_workflow → workflow_required`.
+* CI-protected by `tests/test_connector_pilot.py` (4 tests), which is part of the
+  865-test suite.
+
+**Gate 4 — OS acceptance, the automatable rows**
+* `scripts/listener_check.py --json` → `bound_address_class: loopback`,
+  `bound_is_loopback: true`, `public_bind_refused: true`,
+  `port_released_after_stop: true`, `no_thread_survives_stop: true` (M09).
+* `python3 scripts/install_boru.sh --dry-run` → prints the exact target/state/bin
+  paths and creates nothing (M01 pre-flight).
+* `python3 scripts/evidence.py` → `static_manifest: PASS`, `unit_tests: PASS (865)`,
+  `offline_demo: PASS`, `install: PASS`, `demo: PASS`, `uninstall: PASS` (M01–M05),
+  with `live_acceptance: HOLD` and the note "MOCK/STATIC evidence only; live gates
+  require owner approval."
+* CI-protected by `tests/test_install_scripts.py`, which exercises the launcher and
+  `harness resources` through the installed tree.
+
+**Conclusion.** Everything a clean machine can verify **without owner credentials or
+a live provider** is reproducible in one command each and protected by the suite.
+What remains is genuinely external: M06–M08 and M10–M12 need a real host and a live
+provider; Gates 2, 3's live half and 5 need owner credentials, a disposable
+repository and legal sign-off. Those are not convertible by code or CI and are not
+claimed here.
+
+**No repository change is required by this entry** — it records verification results.
+Gate 1 remains CLOSED — PASS; PR #14 stays draft.
