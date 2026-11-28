@@ -2376,3 +2376,44 @@ single-segment and multi-segment forms.
 **Tests observed:** `python3 -m unittest discover -s tests` → **865 tests OK**
 (864 + 1); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
 MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-28 — Executor head pushed and CI green (head `587dac4`, run `46133570804`)
+
+- **Push executed by authorized local agent** (`jan-local/Qwen3_6-35B-A3B-UD-IQ4_XS`):
+  `731e8ed..587dac4`. Re-verified from the coordinator side with `git ls-remote` →
+  remote head `587dac4913d075c9b9e3d944c042dfccf0a13f2f`, identical to local.
+- **CI verified:** run `46133570804` on head `587dac4` concluded **success**
+  (`validate`, 1m44s), re-read directly from `gh run view`.
+- **Code head under review:** `098ca3f0df45fc916448a89f293cc6bbb9d09e9b`;
+  `587dac4` is its documents-only re-pin family (`docs/REVIEW_PACKAGE.md`).
+- **Local verification:** `unittest discover -s tests` **865 tests OK**;
+  `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+  `tests/test_executor.py` now runs 22 tests (21 + 1 sibling-symlink escape).
+  MOCK/STATIC only.
+- **Gate 1 state:** remains CLOSED — PASS. PR #14 stays draft; nothing merged or
+  released; no HOLD gate touched.
+
+**Autonomous audit — cumulative tally (code this project wrote, attacked rather
+than assumed correct):**
+
+| # | Defect | Class | Fix |
+|---|--------|-------|-----|
+| 1 | 12 host-denial/clobber commands passed the deny floor | authorization bypass | `HARDLINE_DENY` +10 patterns |
+| 2 | Unbounded `interval` in the console loop | DoS | clamped + typed refusal |
+| 3 | A failing `view_factory` ended the session | availability | bounded placeholder |
+| 4 | Multi-line frame into a small terminal raised `curses.error` | crash | first line, clipped, guarded |
+| 5 | `Mapping`-shaped records → false finding | false finding | duck-typed `_field()` |
+| 6 | `Mapping`-shaped listing rows → false finding | false finding | same |
+| 7 | Audit reported the raw `task_id` | disclosure | ledger sanitizer |
+| 8 | `issued_at` not covered by the receipt tag | soundness | added to signed payload |
+| 9 | Harness ADR filed under a duplicate number | traceability | renamed to `0006` |
+| 10 | Sibling-symlink escape had no test | coverage gap | test added |
+
+**Verified no defect** (negative evidence): the `boru.audit` sanitizer vs 16
+hostile subjects; the deny floor vs 30,000 ordinary commands (0 false positives)
+and vs pathological regex input (0.002s, no backtracking); ~1,300 hostile
+commands through the property invariant; 17 adversarial receipt shapes; and 13
+hostile executor targets against a directory seeded with real escape structures
+(0 escapes, 0 crashes).
