@@ -385,7 +385,7 @@ class Broker:
         tag = sign(self.key, task_id=request.task_id, operation=request.operation,
                    alias=token, worker_id=request.worker.worker_id,
                    grant_id=request.grant_id, nonce=request.nonce, expires_at=expiry,
-                   fields=allowed, target=request.target or "")
+                   fields=allowed, target=request.target or "", issued_at=stamp)
         return AuthorizationReceipt(
             receipt_id="br-{}-{}".format(request.task_id, request.operation),
             operation=request.operation, resource_alias=token,

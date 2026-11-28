@@ -5,6 +5,7 @@ import unittest
 from boru.broker import (
     ALLOWED_OPERATIONS, Broker, OperationRequest, ScopeAllowlist, WorkerIdentity,
 )
+from boru.authorization import AuthorizationReceipt, derive_key, sign
 from boru.consent import ConsentStore
 from boru.errors import PolicyViolation
 
@@ -164,6 +165,104 @@ class BrokerTests(unittest.TestCase):
             self.assertTrue(WorkerIdentity("w1", scopes=scopes).validate())
         # an empty scope is a worker with no permissions, never a wider one
         self.assertEqual((), WorkerIdentity("w1", scopes=()).scopes)
+
+
+class ReceiptTagCoverageTests(unittest.TestCase):
+    """Every field a receipt carries is authenticated by its tag.
+
+    The tag previously covered the operation, alias, worker, grant, nonce,
+    expiry, fields and target but **not `issued_at`**, so a receipt's issue
+    timestamp could be rewritten in transit without failing the tag. It is now
+    part of the signed payload.
+    """
+
+    KEY = "a" * 64
+
+    def setUp(self):
+        self.key = derive_key(self.KEY)
+        self.now = 1_700_000_000.0
+        self.token = "r-" + "ab" * 8
+        self.fields = ("exists",)
+
+    def _tag(self, **over):
+        base = dict(task_id="t1", operation="probe_path_alias", alias=self.token,
+                    worker_id="w1", grant_id="g1", nonce="n1", expires_at=self.now + 60,
+                    fields=self.fields, target="", issued_at=self.now)
+        base.update(over)
+        return sign(self.key, **base)
+
+    def _receipt(self, **over):
+        base = dict(receipt_id=self.token, operation="probe_path_alias",
+                    resource_alias=self.token, task_id="t1", worker_id="w1",
+                    grant_id="g1", issued_at=self.now, expires_at=self.now + 60,
+                    nonce="n1", allowed_fields=self.fields, target="",
+                    decision="allow", authentication_tag=self._tag())
+        base.update(over)
+        return AuthorizationReceipt(**base)
+
+    def _verify(self, receipt):
+        return receipt.verify(self.key, now=self.now, requested_fields=self.fields)
+
+    def test_a_well_formed_receipt_verifies(self):
+        self.assertIsNone(self._verify(self._receipt()))
+
+    def test_a_tampered_issued_at_is_refused_even_with_the_valid_tag(self):
+        # The attacker keeps the genuine tag and rewrites only issued_at.
+        receipt = self._receipt()
+        for tampered in (self.now + 10, self.now + 30, self.now - 999):
+            forged = AuthorizationReceipt(
+                receipt_id=receipt.receipt_id, operation=receipt.operation,
+                resource_alias=receipt.resource_alias, task_id=receipt.task_id,
+                worker_id=receipt.worker_id, grant_id=receipt.grant_id,
+                issued_at=tampered, expires_at=receipt.expires_at,
+                nonce=receipt.nonce, allowed_fields=receipt.allowed_fields,
+                target=receipt.target, decision=receipt.decision,
+                authentication_tag=receipt.authentication_tag)
+            with self.assertRaises(PolicyViolation) as ctx:
+                self._verify(forged)
+            self.assertIn("authentication failed", str(ctx.exception))
+
+    def test_issued_at_rounding_cannot_forge_a_tag(self):
+        # A float re-encode of the same instant must still verify, but a
+        # different instant must not.
+        same = self._receipt()
+        self.assertIsNone(self._verify(same))
+        other = self._receipt(issued_at=self.now,
+                              authentication_tag=self._tag(issued_at=self.now + 0.000001))
+        with self.assertRaises(PolicyViolation):
+            self._verify(other)
+
+    def test_the_broker_issues_a_receipt_whose_tag_covers_issued_at(self):
+        # A real broker-issued receipt verifies, and one whose issued_at is
+        # shifted while its genuine tag is kept is refused.
+        broker = Broker(worker=WorkerIdentity("w1", scopes=("demo",)),
+                        scopes=ScopeAllowlist({"demo": "/tmp"}),
+                        consent=ConsentStore(), consent_recipient="w1")
+        consent = broker.consent
+        consent.grant(grant_id="g", recipient="w1", task_id="t",
+                      field_name="probe_path_alias", alias="demo", level="L0",
+                      expires_at=time.time() + 60, nonce="n")
+        decision, receipt, _reason = broker.authorize(OperationRequest(
+            operation="probe_path_alias", resource_alias="demo", requester="owner",
+            task_id="t", worker=WorkerIdentity("w1", scopes=("demo",)),
+            fields=("exists",), nonce="n", grant_id="g"), requested_fields=("exists",))
+        self.assertEqual("allow", decision)
+        self.assertIsNotNone(receipt)
+        forged = AuthorizationReceipt(
+            receipt_id=receipt.receipt_id, operation=receipt.operation,
+            resource_alias=receipt.resource_alias, task_id=receipt.task_id,
+            worker_id=receipt.worker_id, grant_id=receipt.grant_id,
+            issued_at=receipt.issued_at + 5, expires_at=receipt.expires_at,
+            nonce=receipt.nonce, allowed_fields=receipt.allowed_fields,
+            target=receipt.target, decision=receipt.decision,
+            authentication_tag=receipt.authentication_tag)
+        with self.assertRaises(PolicyViolation) as ctx:
+            forged.verify(broker.key, now=time.time(),
+                          requested_fields=receipt.allowed_fields)
+        self.assertIn("authentication failed", str(ctx.exception))
+        # And the untouched receipt still verifies.
+        receipt.verify(broker.key, now=time.time(),
+                       requested_fields=receipt.allowed_fields)
 
 
 if __name__ == "__main__":

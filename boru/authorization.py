@@ -41,9 +41,17 @@ def derive_key(secret: str) -> bytes:
 
 
 def sign(key: bytes, *, task_id: str, operation: str, alias: str, worker_id: str, grant_id: str,
-         nonce: str, expires_at: float, fields: Sequence[str], target: str = "") -> str:
+         nonce: str, expires_at: float, fields: Sequence[str], target: str = "",
+         issued_at: float = 0.0) -> str:
+    """Authenticate exactly the fields the receipt carries.
+
+    ``issued_at`` is part of the signed payload so no field a receipt carries can
+    be rewritten in transit without failing the tag. It is rounded to the same
+    precision as ``expires_at`` so a float re-encode cannot change the tag.
+    """
     payload = _canonical([RECEIPT_REVISION, task_id, operation, alias, worker_id, grant_id,
-                          nonce, round(float(expires_at), 6), list(fields), target])
+                          nonce, round(float(expires_at), 6), list(fields), target,
+                          round(float(issued_at), 6)])
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
@@ -157,6 +165,7 @@ class AuthorizationReceipt:
         expected = sign(key, task_id=self.task_id, operation=self.operation,
                         alias=self.resource_alias, worker_id=self.worker_id,
                         grant_id=self.grant_id, nonce=self.nonce, expires_at=self.expires_at,
-                        fields=self.allowed_fields, target=self.target)
+                        fields=self.allowed_fields, target=self.target,
+                        issued_at=self.issued_at)
         if not hmac.compare_digest(expected, self.authentication_tag):
             raise PolicyViolation("receipt authentication failed")

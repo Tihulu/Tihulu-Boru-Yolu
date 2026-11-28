@@ -2294,3 +2294,42 @@ rather than assumed correct):**
 ordinary commands (0 false positives); the regexes against pathological input
 (0.002s worst case, no catastrophic backtracking); the property invariant
 (typed outcome and deterministic answer on ~1,300 hostile commands).
+
+---
+
+### 2026-11-28 — Receipt tag now authenticates `issued_at` (head on `p1/boru-core-vertical-slice`)
+
+Continuing the autonomous audit into the core authorization primitive, the HMAC
+receipt payload was inspected. **Finding:** `AuthorizationReceipt.sign()` covered
+the task, operation, opaque alias token, worker, grant, nonce, expiry, fields and
+target — but **not `issued_at`**. A receipt's issue timestamp could therefore be
+rewritten in transit while the genuine tag still matched.
+
+**Impact assessed honestly:** `verify()` reads `issued_at` only for the internal
+ordering invariant (`expires_at must follow issued_at`) and never for a security
+decision, so the gap was not exploitable for privilege — an attacker cannot extend
+`expires_at`, which *is* signed. It was still a soundness defect: a field the
+receipt carries should not be unauthenticated.
+
+**Fixed** by adding `issued_at` to the signed payload (rounded to the same 6-decimal
+precision as `expires_at`, so a float re-encode cannot change the tag) and updating
+both call sites — `verify()` and `Broker._issue()`. No test constructs tags directly,
+so the change is contained.
+
+Pinned by `tests/test_broker.py::ReceiptTagCoverageTests` (4 tests):
+* a well-formed receipt verifies;
+* a tampered `issued_at` with the genuine tag kept is refused for all three
+  directions (`+10`, `+30`, `-999`);
+* float rounding cannot forge a tag;
+* a real broker-issued receipt verifies and its shifted-`issued_at` forgery is
+  refused, proving the broker passes the field through.
+
+Also verified no defect in the surrounding primitive: 17 adversarial receipt shapes
+(random/short/missing tag, wrong key, expired, `decision="deny"`, bad revision,
+oversized target, ungranted field, bytes field, unicode homoglyph, NaN/inf/`-0.0`/
+`1e308` expiry, negative issue) each produce a typed refusal — no crash, no
+unauthenticated accept.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **864 tests OK**
+(860 + 4); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
