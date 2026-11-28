@@ -2349,3 +2349,30 @@ MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
   `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
   `tests/test_broker.py` now runs 21 tests (17 + 4 receipt-tag coverage).
   MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.
+
+---
+
+### 2026-11-28 — Executor confinement verified; one missing escape case added (head on `p1/boru-core-vertical-slice`)
+
+Continuing the autonomous audit into the other core primitive, the alias-confined
+executor was probed with 13 hostile targets against a directory seeded with real
+escape structures: a symlink to `/etc`, a symlink to `../../..`, a nested symlink
+to `/etc/passwd`, and a symlink to a **sibling directory outside the alias root**.
+
+**Result: 0 escapes, 0 crashes.** Every hostile target is refused with a typed
+`PolicyViolation`; only the legitimate in-alias name returns metadata
+(`{'exists': True, 'size': 8}`). The confinement already holds — this is negative
+evidence, recorded rather than claimed.
+
+**One genuine coverage gap found while comparing the probe against the suite:**
+`test_symlinked_target_is_not_followed` links to a file *inside* the same root, so
+it never exercises the classic **"symlink to a sibling directory outside the alias
+root"** escape — a single-segment target that no path rule can catch and only
+`O_NOFOLLOW` at the alias root can refuse. Added
+`test_a_symlink_to_a_sibling_outside_the_alias_is_not_followed`, which seeds a real
+sibling directory holding a "SIBLING SECRET" file and refuses both the
+single-segment and multi-segment forms.
+
+**Tests observed:** `python3 -m unittest discover -s tests` → **865 tests OK**
+(864 + 1); `scripts/check_project.py` PASS; `python3 -m compileall -q boru` clean.
+MOCK/STATIC only. Gate 1 remains CLOSED — PASS; PR #14 stays draft.

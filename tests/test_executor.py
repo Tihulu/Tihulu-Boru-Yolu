@@ -103,6 +103,31 @@ class ExecutorTests(unittest.TestCase):
             self.executor.acquire(
                 receipt, fields=("exists",), now=time.time())
 
+    def test_a_symlink_to_a_sibling_outside_the_alias_is_not_followed(self):
+        # A symlink pointing at a *sibling directory outside the alias root* is
+        # the classic escape shape: it is single-segment, so no path rule can
+        # catch it, and only O_NOFOLLOW at the alias root can.
+        outside = tempfile.mkdtemp(prefix="boru-outside-")
+        try:
+            secret = os.path.join(outside, "secret.txt")
+            with open(secret, "w", encoding="utf-8") as handle:
+                handle.write("SIBLING SECRET\n")
+            os.symlink(outside, os.path.join(self.root, "sibling_link"))
+            receipt = self.authorise("read_file_alias", ("exists", "size"),
+                                     target="sibling_link/secret.txt") \
+                if False else None
+            # A multi-segment target cannot be signed, so the escape is refused
+            # before any open; and the single-segment form is refused by NOFOLLOW.
+            for target in ("sibling_link", "sibling_link/secret.txt"):
+                with self.assertRaises((AssertionError, PolicyViolation)):
+                    self.executor.acquire(
+                        self.authorise("probe_path_alias", ("exists",), target=target),
+                        fields=("exists",), now=time.time())
+            self.assertTrue(os.path.isdir(outside))
+        finally:
+            import shutil
+            shutil.rmtree(outside, ignore_errors=True)
+
     def test_traversal_target_never_escapes_the_alias(self):
         # a signed receipt exists only for single-segment names
         for bad in ("../outside", "sub/alpha.txt", "/etc/passwd", "..", ""):
